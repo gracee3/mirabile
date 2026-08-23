@@ -35,6 +35,7 @@ web-sys = { workspace = true, features = [
 
 [dev-dependencies]
 futures.workspace = true
+mirabile-store = { path = "../../crates/mirabile-store" }
 
 [lints]
 workspace = true

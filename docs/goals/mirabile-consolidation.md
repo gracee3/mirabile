@@ -5,7 +5,7 @@
 - Base: `63f081b3c9b0becf5238bdbe2cf3b6964bf09f85` (`origin/main`)
 - Branch: `goal/mirabile-consolidation`
 - Worktree: `/home/emmy/worktrees/mirabile-consolidation`
-- Current phase: 8 - application conformance and web modularization
+- Current phase: 9 - standardized local validation and status finalization
 - Delivery: unmerged goal branch; push only after the complete validation phase
 
 ## Frozen architecture
@@ -52,6 +52,8 @@
 - Phase 6 retained the public `RealApplication<R, C>` facade while splitting private responsibilities into catalog, hydration, workspace, editing, calculation, configuration, projection, and state modules. Existing async observation, latest-wins, last-good Scene, startup, draft, and persistence behavior is unchanged.
 - Phase 7 replaced the conflated `ResolutionLayer` with independent `ConfigurationLayer` precedence and `ValueSource` material provenance. Follow/Pinned/Inline semantics and exact resolved revisions remain explicit.
 - Core `DomainValidate` remains one-object structural validation. Application referential validation now resolves bindings and checks canonical chart sources, session identities, and resolved view-slot assignments during hydration and before workspace command state becomes authoritative.
+- Phase 8 added one reusable scenario suite that runs against both `MockApplication` and `RealApplication`: initialize/settle, projection monotonicity, activation/selection, open/close repair, workspace dirty/save, temporary override promotion, and last-good refresh behavior.
+- The Leptos source now has explicit shell, async dispatcher, library, workspace rail, view host, and inspector modules. Normal presentation remains dependent on `mirabile-app`; the Real conformance fixture uses `mirabile-store` only as a native dev-dependency.
 
 ## Validation status
 
@@ -63,7 +65,8 @@
 - Phase 5: store/app/web package tests (56 tests), strict workspace Clippy, Memory batch rollback, application draft-retention failure, IndexedDB forced mid-batch rollback, IndexedDB application chart save, Chromium Worker/reload contract, formatting, and `git diff --check` passed.
 - Phase 6: `mirabile-app` checks and 33 tests, strict package Clippy, formatting, workspace tests, Chromium browser contract, and `git diff --check` passed.
 - Phase 7: core/app focused tests (52 tests), workspace tests (110 tests), strict workspace Clippy, web WASM check, Chromium IndexedDB/Worker contract, formatting, and `git diff --check` passed.
-- Phase-focused checks: phase 8 onward pending.
+- Phase 8: shared Mock/Real conformance scenarios, workspace tests (112 tests), strict workspace Clippy, web WASM check, Chromium IndexedDB/Worker contract, formatting, and `git diff --check` passed.
+- Phase-focused checks: phase 9 onward pending.
 - Full local verification: pending.
 
 ## Deferred work

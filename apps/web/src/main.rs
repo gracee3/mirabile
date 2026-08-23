@@ -1,9 +1,17 @@
 #[cfg(not(feature = "browser-contract"))]
 mod app;
+#[cfg(all(test, not(feature = "browser-contract")))]
+mod application_conformance;
 #[cfg(all(target_arch = "wasm32", feature = "browser-contract"))]
 mod browser_contract;
 #[cfg(not(feature = "browser-contract"))]
 mod commands;
+#[cfg(not(feature = "browser-contract"))]
+mod dispatcher;
+#[cfg(not(feature = "browser-contract"))]
+mod inspector;
+#[cfg(not(feature = "browser-contract"))]
+mod library;
 #[cfg(all(
     not(feature = "browser-contract"),
     any(test, not(target_arch = "wasm32"))
@@ -11,6 +19,10 @@ mod commands;
 mod mock_application;
 #[cfg(not(feature = "browser-contract"))]
 mod render;
+#[cfg(not(feature = "browser-contract"))]
+mod view_host;
+#[cfg(not(feature = "browser-contract"))]
+mod workspace_rail;
 
 #[cfg(all(target_arch = "wasm32", not(feature = "browser-contract")))]
 fn main() {

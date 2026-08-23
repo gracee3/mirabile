@@ -207,6 +207,19 @@ implementation uses a mock, IndexedDB, memory, workers, a calculation engine, or
 normal WASM shell now constructs `RealApplication::browser_default()` without importing store or
 engine crates.
 
+The web adapter is organized by presentation responsibility: `app` composes the shell and command
+bar; `dispatcher` owns async Application publication; `library`, `workspace_rail`, `view_host`, and
+`inspector` own their respective read-model projections. These production modules consume
+`mirabile-app` rather than repository or calculation-engine APIs. The native-only conformance test
+has a deliberate `mirabile-store` dev-dependency so the same scenario can instantiate a real
+memory-backed application; it is not a presentation dependency.
+
+A reusable conformance scenario runs against both `MockApplication` and `RealApplication`. It
+covers initialization and monotonic projections, activation versus selection, open/close repair,
+dirty and explicit workspace save, session-only display overrides and promotion, plus last-good
+Scene behavior across refresh completion. Storage failure, Worker ordering, conflict, and adapter
+atomicity remain Real-specific tests rather than being simulated as universal mock semantics.
+
 ## RealApplication construction and hydration
 
 `RealApplication<R, C>` is the public facade in `crates/mirabile-app/src/real_application/mod.rs`.
