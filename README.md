@@ -19,7 +19,7 @@ Architecture decisions and state semantics live in [`docs/architecture.md`](docs
 cargo fmt --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-trunk build apps/web/index.html
+cd apps/web && trunk build
 ```
 
 These checks are intentionally local; this repository does not enable hosted CI.
@@ -27,7 +27,8 @@ These checks are intentionally local; this repository does not enable hosted CI.
 The browser build requires the `wasm32-unknown-unknown` Rust target. Run the app with:
 
 ```bash
-trunk serve apps/web/index.html
+cd apps/web
+trunk serve
 ```
 
 ## Status
