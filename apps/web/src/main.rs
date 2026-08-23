@@ -4,7 +4,10 @@ mod app;
 mod browser_contract;
 #[cfg(not(feature = "browser-contract"))]
 mod commands;
-#[cfg(not(feature = "browser-contract"))]
+#[cfg(all(
+    not(feature = "browser-contract"),
+    any(test, not(target_arch = "wasm32"))
+))]
 mod mock_application;
 #[cfg(not(feature = "browser-contract"))]
 mod render;

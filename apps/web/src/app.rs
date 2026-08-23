@@ -2,6 +2,8 @@ use std::{rc::Rc, str::FromStr};
 
 #[cfg(test)]
 use astra_app::ProjectionVersion;
+#[cfg(target_arch = "wasm32")]
+use astra_app::RealApplication;
 use astra_app::{
     Angle, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind, AppReadModel,
     Application, ApplicationStatus, AspectSetDraftMutation, Availability, BindingSourceSummary,
@@ -10,9 +12,10 @@ use astra_app::{
 use leptos::{ev, prelude::*};
 use wasm_bindgen::JsCast;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::mock_application::MockApplication;
 use crate::{
     commands::{CommandId, command_for_key, metadata},
-    mock_application::MockApplication,
     render::WheelScene,
 };
 
@@ -159,6 +162,9 @@ fn publish_command_error(model: RwSignal<AppReadModel>, error: AppError) {
 
 #[component]
 pub fn App() -> impl IntoView {
+    #[cfg(target_arch = "wasm32")]
+    let application: Rc<dyn Application> = Rc::new(RealApplication::browser_default());
+    #[cfg(not(target_arch = "wasm32"))]
     let application: Rc<dyn Application> = Rc::new(MockApplication::new());
     let model = RwSignal::new(AppReadModel::initializing());
     let dispatcher = Dispatcher::new(AppDispatcher { application, model });
@@ -249,7 +255,7 @@ fn ReadyShell(
         <header class="command-bar">
             <div class="brand-block">
                 <span class="brand-mark">"ASTRA"</span>
-                <span class="adapter-badge">"Mock application"</span>
+                <span class="adapter-badge">{application_label()}</span>
             </div>
             <nav class="view-tabs" aria-label="Available views">
                 {move || {
@@ -510,7 +516,7 @@ fn ViewHost(model: RwSignal<AppReadModel>) -> impl IntoView {
                                         <WheelScene
                                             scene
                                             title=format!("{} chart scene", active_view.title)
-                                            description="A mock application Scene of concentric chart rings, point labels, and aspect lines."
+                                            description="A deterministic application Scene of chart rings, point labels, and aspect lines."
                                         />
                                     }.into_any(),
                                 )}
@@ -917,6 +923,16 @@ fn availability_title(availability: &Availability) -> String {
         .disabled_reason()
         .unwrap_or_default()
         .to_owned()
+}
+
+#[cfg(target_arch = "wasm32")]
+const fn application_label() -> &'static str {
+    "Real application · deterministic provider"
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const fn application_label() -> &'static str {
+    "Mock application · frontend test adapter"
 }
 
 #[cfg(test)]

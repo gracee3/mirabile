@@ -1,6 +1,10 @@
+use astra_app::{
+    AppIntent, AppReadModel, Application, AspectSetDraftMutation, ChartPersistence, DraftState,
+    RealApplication, ViewComputationState, bootstrap_ids,
+};
 use astra_core::{
-    CanonicalResource, PointId, PointSelector, PointSet, ResourceEnvelope, ResourceId, Revision,
-    Timestamp,
+    Angle, AspectId, CanonicalResource, PointId, PointSelector, PointSet, ResourceEnvelope,
+    ResourceId, Revision, Timestamp,
 };
 use astra_store::{IndexedDbRepository, RepositoryError, ResourceRepository, ResourceState};
 use leptos::prelude::*;
@@ -163,7 +167,152 @@ async fn run_contract() -> Result<(), String> {
         "failed transaction changed the current head",
     )?;
 
+    run_real_application_reload().await?;
+
     Ok(())
+}
+
+async fn run_real_application_reload() -> Result<(), String> {
+    let database_name = format!("astra-real-application-contract-{}", ResourceId::new());
+    let ids = bootstrap_ids();
+    let first = RealApplication::indexed_db(&database_name);
+    let first_ready = settle_initialization(&first).await?;
+    ensure(
+        first_ready.active_view.as_ref().is_some_and(|view| {
+            view.scene.is_some() && view.computation == ViewComputationState::Fresh
+        }),
+        "first RealApplication did not calculate its initial Scene",
+    )?;
+
+    let opened = first
+        .dispatch(AppIntent::OpenChart {
+            definition_id: ids.chart_definition_b,
+        })
+        .await
+        .map_err(message)?;
+    let chart_b = opened
+        .workspace
+        .active_chart
+        .ok_or_else(|| "opening Chart B did not activate it".to_owned())?;
+    ensure(
+        opened.workspace.charts.iter().any(|chart| {
+            chart.instance_id == chart_b
+                && matches!(
+                    chart.persistence,
+                    ChartPersistence::Saved { definition_id }
+                        if definition_id == ids.chart_definition_b
+                )
+        }),
+        "Chart B was not projected as an open saved ChartDefinition",
+    )?;
+
+    first
+        .dispatch(AppIntent::BeginAspectSetEdit {
+            resource_id: ids.aspect_set_standard,
+        })
+        .await
+        .map_err(message)?;
+    let dirty = first
+        .dispatch(AppIntent::UpdateAspectSetDraft(
+            AspectSetDraftMutation::SetOrb {
+                aspect_id: AspectId::new("conjunction").map_err(message)?,
+                maximum: Angle::from_degrees(6.5).map_err(message)?,
+            },
+        ))
+        .await
+        .map_err(message)?;
+    let preview = settle_pending(&first, dirty).await?;
+    ensure(
+        matches!(
+            preview
+                .resource_editor
+                .aspect_set
+                .as_ref()
+                .map(|draft| &draft.state),
+            Some(DraftState::Dirty { .. })
+        ),
+        "Aspect Set preview did not remain dirty after view refresh",
+    )?;
+    let saving = first
+        .dispatch(AppIntent::SaveDraft)
+        .await
+        .map_err(message)?;
+    let saved = settle_pending(&first, saving).await?;
+    ensure(
+        saved.library.aspect_sets.iter().any(|summary| {
+            summary.resource_id == ids.aspect_set_standard
+                && summary.revision.get() == 2
+                && summary.conjunction_orb == Angle::from_degrees(6.5).expect("finite angle")
+        }),
+        "Aspect Set revision two was not committed by the first RealApplication",
+    )?;
+    drop(first);
+
+    let second = RealApplication::indexed_db(&database_name);
+    let restored = settle_initialization(&second).await?;
+    ensure(
+        restored.workspace.active_chart == Some(chart_b),
+        "the second RealApplication did not restore Chart B as active",
+    )?;
+    ensure(
+        restored.workspace.charts.iter().any(|chart| {
+            chart.instance_id == chart_b
+                && matches!(
+                    chart.persistence,
+                    ChartPersistence::Saved { definition_id }
+                        if definition_id == ids.chart_definition_b
+                )
+        }),
+        "the second RealApplication did not restore Chart B as open",
+    )?;
+    ensure(
+        restored.library.aspect_sets.iter().any(|summary| {
+            summary.resource_id == ids.aspect_set_standard
+                && summary.revision.get() == 2
+                && summary.conjunction_orb == Angle::from_degrees(6.5).expect("finite angle")
+        }),
+        "the second RealApplication did not hydrate Aspect Set revision two",
+    )?;
+    ensure(
+        restored.active_view.as_ref().is_some_and(|view| {
+            view.scene.is_some() && view.computation == ViewComputationState::Fresh
+        }),
+        "the second RealApplication did not reconstruct the persisted workspace view",
+    )?;
+    Ok(())
+}
+
+async fn settle_initialization(
+    application: &RealApplication<astra_app::IndexedDbRepositorySource>,
+) -> Result<AppReadModel, String> {
+    let model = application.initialize().await.map_err(message)?;
+    settle_pending(application, model).await
+}
+
+async fn settle_pending(
+    application: &RealApplication<astra_app::IndexedDbRepositorySource>,
+    mut model: AppReadModel,
+) -> Result<AppReadModel, String> {
+    loop {
+        let view_pending = model.active_view.as_ref().is_some_and(|view| {
+            matches!(
+                view.computation,
+                ViewComputationState::Loading | ViewComputationState::Refreshing
+            )
+        });
+        let save_pending = model
+            .resource_editor
+            .aspect_set
+            .as_ref()
+            .is_some_and(|draft| matches!(draft.state, DraftState::Saving { .. }));
+        if !view_pending && !save_pending {
+            return Ok(model);
+        }
+        model = application
+            .wait_for_update(model.version)
+            .await
+            .map_err(message)?;
+    }
 }
 
 fn point_resource(title: &str) -> CanonicalResource {
