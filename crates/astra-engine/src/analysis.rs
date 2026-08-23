@@ -65,7 +65,7 @@ impl AspectAnalyzer {
         let analysis_key = AnalysisKey::derive(&calc_keys, points, aspects, profile)?;
         let mut selected: Vec<(&PointId, &PointState)> = points
             .direct_points()
-            .filter_map(|id| snapshot.calculation.points.get_key_value(id))
+            .filter_map(|id| snapshot.calculation.point_entry(id))
             .collect();
         selected.sort_by_key(|(point, _)| *point);
         let mut hits = Vec::new();

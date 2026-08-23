@@ -1,0 +1,503 @@
+use astra_core::{
+    CalculationSpec, CalendarSpec, ChartDefinition, ChartRecord, ChartSource, CivilDate,
+    CivilDateTime, CivilTime, CoordinateSystem, CorrectionSpec, EventKind, HouseSystem, Latitude,
+    LocationAssertion, Longitude, PointId, PointSelector, PointSet, ResourceEnvelope, ResourceId,
+    SourceProvenance, SourceType, TemporalAssertion, TimeZoneAssertion, Timestamp, ZodiacSpec,
+};
+use astra_engine::{
+    BackendCapability, CalcKey, CalculationBackend, CalculationEngine, CalculationOutcome,
+    CalculationRequestId, CalculationWorkerFailure, CalculationWorkerFailureCategory,
+    CalculationWorkerRequest, CalculationWorkerResult, DeterministicBackend,
+    ImplementationIdentity, WorkerProtocolVersion, execute_calculation_request,
+};
+
+fn resources() -> (
+    ResourceEnvelope<ChartRecord>,
+    ResourceEnvelope<ChartDefinition>,
+) {
+    let record_id = ResourceId::new();
+    let record = ResourceEnvelope::with_id(
+        record_id,
+        "Calculation fixture",
+        ChartRecord {
+            event_kind: EventKind::Birth,
+            subject: None,
+            time: TemporalAssertion {
+                civil_datetime: CivilDateTime {
+                    date: CivilDate::new(2000, 1, 1).expect("date"),
+                    time: CivilTime::new(12, 0, 0).expect("time"),
+                },
+                calendar: CalendarSpec::ProlepticGregorian,
+                zone: TimeZoneAssertion::UniversalTime,
+                disambiguation: None,
+            },
+            location: LocationAssertion {
+                display_name: "Greenwich".into(),
+                country_region: Some("GB".into()),
+                latitude: Latitude::from_degrees(51.48).expect("latitude"),
+                longitude: Longitude::from_degrees(0.0).expect("longitude"),
+                atlas_provenance: None,
+            },
+            source: SourceProvenance {
+                description: "Calculation contract fixture".into(),
+                source_type: SourceType::UserAssertion,
+                recorded_by: None,
+            },
+            notes: Vec::new(),
+            life_events: Vec::new(),
+        },
+        Timestamp::from_unix_millis(0),
+    );
+    let definition = ResourceEnvelope::new(
+        "Fixture definition",
+        ChartDefinition {
+            source: ChartSource::Radix { record: record_id },
+            calculation: CalculationSpec::default(),
+        },
+        Timestamp::from_unix_millis(0),
+    );
+    (record, definition)
+}
+
+fn point_set(ids: &[&str]) -> PointSet {
+    PointSet {
+        points: ids
+            .iter()
+            .map(|id| PointSelector::Point(PointId::new(*id).expect("point ID")))
+            .collect(),
+    }
+}
+
+fn engine() -> CalculationEngine {
+    CalculationEngine::new(
+        DeterministicBackend.descriptor(),
+        engine_identity(),
+        "fixture-tz-v1",
+    )
+}
+
+fn engine_identity() -> ImplementationIdentity {
+    ImplementationIdentity {
+        id: "astra-calculation-engine".into(),
+        version: "test-v1".into(),
+        revision: Some("engine-r1".into()),
+    }
+}
+
+fn prepared() -> astra_engine::PreparedCalculation {
+    let (record, definition) = resources();
+    engine()
+        .prepare(
+            &definition,
+            &record,
+            &point_set(&["sun", "moon", "mercury"]),
+            &point_set(&["sun", "moon"]),
+        )
+        .expect("prepared request")
+}
+
+fn worker_request() -> CalculationWorkerRequest {
+    let prepared = prepared();
+    CalculationWorkerRequest {
+        protocol_version: WorkerProtocolVersion::CURRENT,
+        request_id: CalculationRequestId::new(41).expect("request ID"),
+        calc_key: prepared.calc_key,
+        backend: DeterministicBackend.descriptor().fingerprint,
+        request: prepared.request,
+    }
+}
+
+#[test]
+fn resolved_request_separates_celestial_houses_and_derived_responsibilities() {
+    let request = prepared().request;
+
+    assert_eq!(
+        request.celestial.requested_points,
+        ["mercury", "moon", "sun"]
+            .into_iter()
+            .map(|id| PointId::new(id).expect("point ID"))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        request.houses.as_ref().map(|houses| houses.system),
+        Some(HouseSystem::Placidus)
+    );
+    assert!(request.derived.points.is_empty());
+
+    let (record, mut definition) = resources();
+    definition.payload.calculation.houses = HouseSystem::NoHouses;
+    let no_houses = engine()
+        .prepare(
+            &definition,
+            &record,
+            &point_set(&["sun"]),
+            &point_set(&["sun"]),
+        )
+        .expect("no-houses request");
+    assert!(no_houses.request.houses.is_none());
+
+    let fortune = engine()
+        .prepare(
+            &definition,
+            &record,
+            &point_set(&["part_of_fortune"]),
+            &point_set(&[]),
+        )
+        .expect("derived request");
+    assert_eq!(fortune.request.derived.points.len(), 1);
+    assert_eq!(
+        fortune.request.celestial.requested_points,
+        ["moon", "sun"]
+            .into_iter()
+            .map(|id| PointId::new(id).expect("point ID"))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn deterministic_backend_advertises_multiple_capabilities_and_rejects_unknown_points() {
+    let descriptor = DeterministicBackend.descriptor();
+    assert!(descriptor.capabilities.celestial.is_some());
+    assert!(descriptor.capabilities.houses.is_some());
+    assert!(descriptor.capabilities.derived.is_none());
+
+    let mut request = prepared().request;
+    request
+        .celestial
+        .requested_points
+        .push(PointId::new("pluto").expect("point ID"));
+    let error = DeterministicBackend
+        .calculate(&request)
+        .expect_err("unsupported point must fail");
+    assert_eq!(
+        error.capability,
+        Some(BackendCapability::CelestialPositions)
+    );
+}
+
+#[test]
+fn provenance_is_structured_and_distinguishes_every_material_component() {
+    let prepared = prepared();
+    let baseline = DeterministicBackend
+        .calculate(&prepared.request)
+        .expect("backend result")
+        .provenance;
+
+    let mut backend_revision = baseline.clone();
+    backend_revision.backend.revision = Some("backend-r2".into());
+    assert_ne!(baseline, backend_revision);
+
+    let mut model = baseline.clone();
+    model
+        .celestial
+        .model
+        .as_mut()
+        .expect("model")
+        .data_fingerprint = Some("different-model-data".into());
+    assert_ne!(baseline, model);
+
+    let mut house_implementation = baseline.clone();
+    house_implementation
+        .houses
+        .as_mut()
+        .expect("houses")
+        .implementation
+        .revision = Some("houses-r2".into());
+    assert_ne!(baseline, house_implementation);
+
+    let mut house_system = baseline.clone();
+    house_system.houses.as_mut().expect("houses").system = HouseSystem::WholeSign;
+    assert_ne!(baseline, house_system);
+
+    let mut coordinates = baseline.clone();
+    coordinates.celestial.coordinates = CoordinateSystem::Topocentric;
+    assert_ne!(baseline, coordinates);
+
+    let mut corrections = baseline.clone();
+    corrections.celestial.corrections = CorrectionSpec {
+        aberration: true,
+        light_time: false,
+        nutation: false,
+    };
+    assert_ne!(baseline, corrections);
+
+    let mut sidereal = baseline.clone();
+    sidereal.celestial.zodiac = astra_engine::ZodiacCalculationRequest::Sidereal {
+        ayanamsa: astra_engine::AyanamsaConfiguration {
+            id: "lahiri".into(),
+            parameters: std::collections::BTreeMap::new(),
+        },
+    };
+    assert_ne!(baseline, sidereal);
+
+    let mut ayanamsa = sidereal.clone();
+    if let astra_engine::ZodiacCalculationRequest::Sidereal { ayanamsa } =
+        &mut ayanamsa.celestial.zodiac
+    {
+        ayanamsa.id = "fagan_bradley".into();
+    }
+    assert_ne!(sidereal, ayanamsa);
+
+    let derived_day_night = astra_engine::DerivedCalculationProvenance {
+        implementation: ImplementationIdentity {
+            id: "astra-derived-fixture".into(),
+            version: "1".into(),
+            revision: Some("derived-r1".into()),
+        },
+        formulas: vec![astra_engine::DerivedFormulaProvenance {
+            point: PointId::new("part_of_fortune").expect("point ID"),
+            formula: astra_engine::DerivedFormula::PartOfFortune {
+                formula: astra_core::FortuneFormula::DayNight,
+            },
+        }],
+    };
+    let mut derived_always = derived_day_night.clone();
+    derived_always.formulas[0].formula = astra_engine::DerivedFormula::PartOfFortune {
+        formula: astra_core::FortuneFormula::AlwaysAscendantPlusMoonMinusSun,
+    };
+    assert_ne!(derived_day_night, derived_always);
+}
+
+#[test]
+fn calculation_value_retains_full_astra_and_backend_provenance() {
+    let prepared = prepared();
+    let backend_result = DeterministicBackend
+        .calculate(&prepared.request)
+        .expect("backend result");
+    let value = engine()
+        .complete(&prepared, backend_result)
+        .expect("calculation value");
+
+    assert_eq!(value.provenance.astra.calculation_engine, engine_identity());
+    assert_eq!(
+        value.provenance.astra.timezone_data_version,
+        "fixture-tz-v1"
+    );
+    assert_eq!(
+        value.provenance.backend,
+        DeterministicBackend.descriptor().fingerprint.backend
+    );
+    assert_eq!(
+        value.provenance.houses.as_ref().map(|houses| houses.system),
+        Some(HouseSystem::Placidus)
+    );
+    assert_eq!(
+        value.provenance.celestial.coordinates,
+        CoordinateSystem::Geocentric
+    );
+}
+
+#[test]
+fn calc_key_changes_for_every_execution_semantic_and_implementation_identity() {
+    let prepared = prepared();
+    let descriptor = DeterministicBackend.descriptor();
+    let baseline = CalcKey::derive(
+        &prepared.request,
+        &engine_identity(),
+        &descriptor.fingerprint,
+    )
+    .expect("baseline key");
+
+    let assert_request_changes = |request: &astra_engine::ResolvedCalculationRequest| {
+        assert_ne!(
+            baseline,
+            CalcKey::derive(request, &engine_identity(), &descriptor.fingerprint)
+                .expect("changed key")
+        );
+    };
+
+    let mut coordinates = prepared.request.clone();
+    coordinates.celestial.coordinates = CoordinateSystem::Topocentric;
+    assert_request_changes(&coordinates);
+
+    let mut corrections = prepared.request.clone();
+    corrections.celestial.corrections.aberration = true;
+    assert_request_changes(&corrections);
+
+    let mut houses = prepared.request.clone();
+    houses.houses.as_mut().expect("houses").system = HouseSystem::WholeSign;
+    assert_request_changes(&houses);
+
+    let mut sidereal = prepared.request.clone();
+    sidereal.zodiac = astra_engine::ZodiacCalculationRequest::Sidereal {
+        ayanamsa: astra_engine::AyanamsaConfiguration {
+            id: "lahiri".into(),
+            parameters: std::collections::BTreeMap::new(),
+        },
+    };
+    sidereal.houses.as_mut().expect("houses").zodiac = sidereal.zodiac.clone();
+    assert_request_changes(&sidereal);
+
+    let mut ayanamsa = sidereal.clone();
+    if let astra_engine::ZodiacCalculationRequest::Sidereal { ayanamsa } = &mut ayanamsa.zodiac {
+        ayanamsa.id = "fagan_bradley".into();
+    }
+    ayanamsa.houses.as_mut().expect("houses").zodiac = ayanamsa.zodiac.clone();
+    assert_request_changes(&ayanamsa);
+
+    let mut requested_points = prepared.request.clone();
+    requested_points
+        .celestial
+        .requested_points
+        .push(PointId::new("venus").expect("point ID"));
+    assert_request_changes(&requested_points);
+
+    let mut backend_revision = descriptor.fingerprint.clone();
+    backend_revision.backend.revision = Some("backend-r2".into());
+    assert_ne!(
+        baseline,
+        CalcKey::derive(&prepared.request, &engine_identity(), &backend_revision)
+            .expect("backend revision key")
+    );
+
+    let mut model = descriptor.fingerprint.clone();
+    model
+        .celestial
+        .as_mut()
+        .expect("celestial")
+        .model
+        .as_mut()
+        .expect("model")
+        .data_fingerprint = Some("different-model-data".into());
+    assert_ne!(
+        baseline,
+        CalcKey::derive(&prepared.request, &engine_identity(), &model).expect("model key")
+    );
+
+    let mut house_implementation = descriptor.fingerprint.clone();
+    house_implementation
+        .houses
+        .as_mut()
+        .expect("houses")
+        .implementation
+        .revision = Some("houses-r2".into());
+    assert_ne!(
+        baseline,
+        CalcKey::derive(&prepared.request, &engine_identity(), &house_implementation)
+            .expect("house implementation key")
+    );
+}
+
+#[test]
+fn canonical_metadata_does_not_enter_resolved_request_or_calc_key() {
+    let (record, definition) = resources();
+    let baseline = engine()
+        .prepare(
+            &definition,
+            &record,
+            &point_set(&["sun"]),
+            &point_set(&["sun"]),
+        )
+        .expect("baseline");
+    let mut metadata_record = record.clone();
+    metadata_record.title = "Renamed resource".into();
+    metadata_record.payload.location.display_name = "Renamed place".into();
+    metadata_record.payload.source.description = "Different source wording".into();
+    metadata_record.payload.notes.push(astra_core::Note {
+        text: "Non-calculation note".into(),
+        created_at: Timestamp::from_unix_millis(1),
+    });
+    metadata_record
+        .payload
+        .life_events
+        .push(astra_core::LifeEvent {
+            title: "Non-calculation event".into(),
+            time: metadata_record.payload.time.clone(),
+            location: None,
+            notes: Vec::new(),
+        });
+    let mut metadata_definition = definition.clone();
+    metadata_definition.title = "Renamed definition".into();
+    let changed = engine()
+        .prepare(
+            &metadata_definition,
+            &metadata_record,
+            &point_set(&["sun"]),
+            &point_set(&["sun"]),
+        )
+        .expect("metadata changed");
+    assert_eq!(baseline.request, changed.request);
+    assert_eq!(baseline.calc_key, changed.calc_key);
+}
+
+#[test]
+fn worker_request_success_and_typed_failure_round_trip() {
+    let request = worker_request();
+    let request_json = serde_json::to_string(&request).expect("request serialization");
+    let decoded_request: CalculationWorkerRequest =
+        serde_json::from_str(&request_json).expect("request deserialization");
+    assert_eq!(request, decoded_request);
+    assert_eq!(decoded_request.request_id.get(), 41);
+    assert_eq!(decoded_request.calc_key, request.calc_key);
+    for forbidden in [
+        "ChartRecord",
+        "ChartDefinition",
+        "ResourceEnvelope",
+        "Workspace",
+    ] {
+        assert!(!request_json.contains(forbidden));
+    }
+
+    let success = execute_calculation_request(&DeterministicBackend, request.clone());
+    assert!(matches!(success.outcome, CalculationOutcome::Success(_)));
+    let success_json = serde_json::to_string(&success).expect("success serialization");
+    let decoded_success: CalculationWorkerResult =
+        serde_json::from_str(&success_json).expect("success deserialization");
+    assert_eq!(success, decoded_success);
+
+    let failure = CalculationWorkerResult {
+        protocol_version: WorkerProtocolVersion::CURRENT,
+        request_id: request.request_id,
+        calc_key: request.calc_key,
+        outcome: CalculationOutcome::Failure(CalculationWorkerFailure {
+            category: CalculationWorkerFailureCategory::BackendFailure,
+            message: "typed fixture failure".into(),
+        }),
+    };
+    let failure_json = serde_json::to_string(&failure).expect("failure serialization");
+    let decoded_failure: CalculationWorkerResult =
+        serde_json::from_str(&failure_json).expect("failure deserialization");
+    assert_eq!(failure, decoded_failure);
+}
+
+#[test]
+fn incompatible_worker_protocol_is_rejected_explicitly() {
+    let mut request = worker_request();
+    request.protocol_version = WorkerProtocolVersion::new(99);
+    let result = execute_calculation_request(&DeterministicBackend, request);
+    assert_eq!(result.protocol_version, WorkerProtocolVersion::CURRENT);
+    assert!(matches!(
+        result.outcome,
+        CalculationOutcome::Failure(CalculationWorkerFailure {
+            category: CalculationWorkerFailureCategory::ProtocolMismatch,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn tropical_sidereal_and_ayanamsa_resolve_to_owned_semantics() {
+    let (record, mut definition) = resources();
+    definition.payload.calculation.zodiac = ZodiacSpec::Sidereal {
+        ayanamsha: " lahiri ".into(),
+    };
+    let request = engine()
+        .prepare(
+            &definition,
+            &record,
+            &point_set(&["sun"]),
+            &point_set(&["sun"]),
+        )
+        .expect("sidereal request")
+        .request;
+    assert_eq!(
+        request.zodiac,
+        astra_engine::ZodiacCalculationRequest::Sidereal {
+            ayanamsa: astra_engine::AyanamsaConfiguration {
+                id: "lahiri".into(),
+                parameters: std::collections::BTreeMap::new(),
+            }
+        }
+    );
+    assert_eq!(request.houses.expect("houses").zodiac, request.zodiac);
+}

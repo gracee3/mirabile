@@ -71,7 +71,7 @@ pub fn layout_wheel(
     point_ids.sort();
 
     for point in &point_ids {
-        let Some(state) = snapshot.calculation.points.get(point) else {
+        let Some(state) = snapshot.calculation.point(point) else {
             continue;
         };
         resolved_points.push((point.clone(), state.longitude));

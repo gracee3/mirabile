@@ -1,40 +1,44 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use astra_core::{
-    AngleState, CalendarSpec, ChartDefinition, ChartRecord, ChartSource, HouseState, Latitude,
-    Longitude, Offset, PointId, PointState, ResolvedTime, ResourceEnvelope, ResourceError,
-    ResourceRevisionRef, TimeZoneAssertion,
+    AngleState, CalendarSpec, ChartDefinition, ChartRecord, ChartSource, HouseState, Offset,
+    PointId, PointSelector, PointSet, PointState, ResolvedTime, ResourceEnvelope, ResourceError,
+    ResourceRevisionRef, TimeZoneAssertion, ZodiacSpec,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    CalcKey, EphemerisError, EphemerisProvider, EphemerisRequest, KeyError, ProviderIdentity,
+    AstraCalculationProvenance, AyanamsaConfiguration, BackendDescriptor, CalcKey,
+    CalculationBackendResult, CalculationContext, CalculationProvenance, CelestialPositionsRequest,
+    DerivedFormula, DerivedPointRequest, DerivedPointsRequest, HouseCalculationRequest,
+    ImplementationIdentity, KeyError, NumericLocation, ResolvedCalculationRequest,
+    ZodiacCalculationRequest,
 };
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct CalculationProvenance {
-    pub engine_version: String,
-    pub ephemeris_provider: String,
-    pub ephemeris_provider_version: String,
-    pub ephemeris_data_version: Option<String>,
-    pub timezone_database_version: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct NumericLocation {
-    pub latitude: Latitude,
-    pub longitude: Longitude,
-}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CalculationValue {
     pub resolved_time: ResolvedTime,
     pub numeric_location: NumericLocation,
-    pub points: BTreeMap<PointId, PointState>,
+    pub celestial_positions: BTreeMap<PointId, PointState>,
     pub houses: Option<HouseState>,
     pub angles: AngleState,
+    pub derived_points: BTreeMap<PointId, PointState>,
     pub provenance: CalculationProvenance,
+}
+
+impl CalculationValue {
+    pub fn point(&self, id: &PointId) -> Option<&PointState> {
+        self.celestial_positions
+            .get(id)
+            .or_else(|| self.derived_points.get(id))
+    }
+
+    pub fn point_entry(&self, id: &PointId) -> Option<(&PointId, &PointState)> {
+        self.celestial_positions
+            .get_key_value(id)
+            .or_else(|| self.derived_points.get_key_value(id))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -51,120 +55,331 @@ pub struct ChartSnapshot {
     pub calculation: CalculationValue,
 }
 
-pub struct CalculationEngine<P> {
-    provider: P,
-    engine_version: String,
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreparedCalculation {
+    pub calc_key: CalcKey,
+    pub request: ResolvedCalculationRequest,
+    pub snapshot_context: SnapshotContext,
+}
+
+/// Astra orchestration: canonical inputs become provider-neutral execution semantics.
+pub struct CalculationEngine {
+    backend: BackendDescriptor,
+    engine_identity: ImplementationIdentity,
     timezone_data_version: String,
 }
 
-impl<P: EphemerisProvider> CalculationEngine<P> {
+impl CalculationEngine {
     pub fn new(
-        provider: P,
-        engine_version: impl Into<String>,
+        backend: BackendDescriptor,
+        calculation_engine: ImplementationIdentity,
         timezone_data_version: impl Into<String>,
     ) -> Self {
         Self {
-            provider,
-            engine_version: engine_version.into(),
+            backend,
+            engine_identity: calculation_engine,
             timezone_data_version: timezone_data_version.into(),
         }
     }
 
-    pub fn provider_identity(&self) -> ProviderIdentity {
-        self.provider.identity()
+    pub fn backend_descriptor(&self) -> &BackendDescriptor {
+        &self.backend
     }
 
-    pub fn calc_key(
+    pub fn calculation_engine_identity(&self) -> &ImplementationIdentity {
+        &self.engine_identity
+    }
+
+    pub fn prepare(
         &self,
         definition: &ResourceEnvelope<ChartDefinition>,
         record: &ResourceEnvelope<ChartRecord>,
-    ) -> Result<CalcKey, CalculationError> {
+        displayed_points: &PointSet,
+        aspected_points: &PointSet,
+    ) -> Result<PreparedCalculation, CalculationError> {
         validate_radix_inputs(definition, record)?;
-        Ok(CalcKey::derive(
-            definition,
-            record,
-            &self.engine_version,
-            &self.provider.identity(),
-            &self.timezone_data_version,
-        )?)
-    }
-
-    pub fn calculate(
-        &self,
-        definition: &ResourceEnvelope<ChartDefinition>,
-        record: &ResourceEnvelope<ChartRecord>,
-    ) -> Result<ChartSnapshot, CalculationError> {
-        let calc_key = self.calc_key(definition, record)?;
-        let calculation = self.calculate_value(record, &definition.payload.calculation)?;
-        Ok(ChartSnapshot {
+        let calculation = &definition.payload.calculation;
+        let context = CalculationContext {
+            time: resolve_time(&record.payload, &self.timezone_data_version)?,
+            location: NumericLocation {
+                latitude: record.payload.location.latitude,
+                longitude: record.payload.location.longitude,
+            },
+        };
+        let zodiac = resolve_zodiac(&calculation.zodiac)?;
+        let (requested_points, derived) = resolve_requested_points(
+            displayed_points,
+            aspected_points,
+            calculation.fortune_formula,
+        )?;
+        let houses = (calculation.houses != astra_core::HouseSystem::NoHouses).then(|| {
+            HouseCalculationRequest {
+                system: calculation.houses,
+                zodiac: zodiac.clone(),
+            }
+        });
+        let request = ResolvedCalculationRequest {
+            context,
+            zodiac,
+            celestial: CelestialPositionsRequest {
+                requested_points,
+                coordinates: calculation.coordinates,
+                corrections: calculation.corrections.clone(),
+                // Nodes and Black Moon stay with the celestial/model capability for now.
+                // A future adapter can refine support without changing canonical resources.
+                lunar_node: calculation.lunar_node,
+                black_moon: calculation.black_moon,
+            },
+            houses,
+            derived,
+        };
+        let calc_key = CalcKey::derive(&request, &self.engine_identity, &self.backend.fingerprint)?;
+        Ok(PreparedCalculation {
             calc_key,
-            context: Self::snapshot_context(definition, record),
-            calculation,
+            request,
+            snapshot_context: snapshot_context(definition, record),
         })
     }
 
-    pub fn snapshot_from_cached(
+    pub fn complete(
         &self,
-        definition: &ResourceEnvelope<ChartDefinition>,
-        record: &ResourceEnvelope<ChartRecord>,
-        calculation: CalculationValue,
-    ) -> Result<ChartSnapshot, CalculationError> {
-        Ok(ChartSnapshot {
-            calc_key: self.calc_key(definition, record)?,
-            context: Self::snapshot_context(definition, record),
-            calculation,
-        })
-    }
-
-    fn calculate_value(
-        &self,
-        record: &ResourceEnvelope<ChartRecord>,
-        calculation: &astra_core::CalculationSpec,
+        prepared: &PreparedCalculation,
+        result: CalculationBackendResult,
     ) -> Result<CalculationValue, CalculationError> {
-        let resolved_time = resolve_time(&record.payload, &self.timezone_data_version)?;
-        let numeric_location = NumericLocation {
-            latitude: record.payload.location.latitude,
-            longitude: record.payload.location.longitude,
-        };
-        let request = EphemerisRequest {
-            time: resolved_time.clone(),
-            location: numeric_location.clone(),
-            calculation: calculation.clone(),
-        };
-        let output = self.provider.calculate(&request)?;
-        let identity = self.provider.identity();
-
+        validate_backend_result(&prepared.request, &self.backend, &result)?;
+        let houses = result.houses.as_ref().map(|houses| HouseState {
+            cusps: houses.cusps.clone(),
+        });
+        let angles = result.houses.as_ref().map_or(
+            AngleState {
+                ascendant: None,
+                midheaven: None,
+            },
+            |houses| houses.angles.clone(),
+        );
+        let backend_provenance = result.provenance;
         Ok(CalculationValue {
-            resolved_time,
-            numeric_location,
-            points: output.points,
-            houses: output.houses,
-            angles: output.angles,
+            resolved_time: prepared.request.context.time.clone(),
+            numeric_location: prepared.request.context.location.clone(),
+            celestial_positions: result.celestial.positions,
+            houses,
+            angles,
+            derived_points: result.derived.positions,
             provenance: CalculationProvenance {
-                engine_version: self.engine_version.clone(),
-                ephemeris_provider: identity.name,
-                ephemeris_provider_version: identity.version,
-                ephemeris_data_version: identity.data_version,
-                timezone_database_version: Some(self.timezone_data_version.clone()),
+                astra: AstraCalculationProvenance {
+                    calculation_engine: self.engine_identity.clone(),
+                    timezone_data_version: self.timezone_data_version.clone(),
+                },
+                backend: backend_provenance.backend,
+                celestial: backend_provenance.celestial,
+                houses: backend_provenance.houses,
+                derived: backend_provenance.derived,
             },
         })
     }
 
-    fn snapshot_context(
-        definition: &ResourceEnvelope<ChartDefinition>,
-        record: &ResourceEnvelope<ChartRecord>,
-    ) -> SnapshotContext {
-        SnapshotContext {
-            definition: ResourceRevisionRef {
-                id: definition.id,
-                revision: definition.revision,
-            },
-            records: vec![ResourceRevisionRef {
-                id: record.id,
-                revision: record.revision,
-            }],
-            location_display_name: record.payload.location.display_name.clone(),
+    pub fn snapshot(
+        prepared: &PreparedCalculation,
+        calculation: CalculationValue,
+    ) -> ChartSnapshot {
+        ChartSnapshot {
+            calc_key: prepared.calc_key.clone(),
+            context: prepared.snapshot_context.clone(),
+            calculation,
         }
+    }
+}
+
+fn resolve_requested_points(
+    displayed: &PointSet,
+    aspected: &PointSet,
+    fortune_formula: astra_core::FortuneFormula,
+) -> Result<(Vec<PointId>, DerivedPointsRequest), CalculationError> {
+    let mut celestial = BTreeSet::new();
+    let mut derived = BTreeMap::new();
+    for selector in displayed.points.iter().chain(&aspected.points) {
+        let PointSelector::Point(point) = selector else {
+            let PointSelector::Category(category) = selector else {
+                unreachable!();
+            };
+            return Err(CalculationError::UnresolvedPointCategory(category.clone()));
+        };
+        if point.as_str() == "part_of_fortune" {
+            derived.insert(
+                point.clone(),
+                DerivedPointRequest {
+                    point: point.clone(),
+                    formula: DerivedFormula::PartOfFortune {
+                        formula: fortune_formula,
+                    },
+                },
+            );
+            celestial.insert(PointId::new("sun").expect("built-in point ID is valid"));
+            celestial.insert(PointId::new("moon").expect("built-in point ID is valid"));
+        } else {
+            celestial.insert(point.clone());
+        }
+    }
+    Ok((
+        celestial.into_iter().collect(),
+        DerivedPointsRequest {
+            points: derived.into_values().collect(),
+        },
+    ))
+}
+
+fn resolve_zodiac(value: &ZodiacSpec) -> Result<ZodiacCalculationRequest, CalculationError> {
+    match value {
+        ZodiacSpec::Tropical => Ok(ZodiacCalculationRequest::Tropical),
+        ZodiacSpec::Sidereal { ayanamsha } => {
+            let id = ayanamsha.trim();
+            if id.is_empty() {
+                return Err(CalculationError::InvalidAyanamsa);
+            }
+            Ok(ZodiacCalculationRequest::Sidereal {
+                ayanamsa: AyanamsaConfiguration {
+                    id: id.into(),
+                    parameters: BTreeMap::new(),
+                },
+            })
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn validate_backend_result(
+    request: &ResolvedCalculationRequest,
+    descriptor: &BackendDescriptor,
+    result: &CalculationBackendResult,
+) -> Result<(), CalculationError> {
+    let expected_points = request
+        .celestial
+        .requested_points
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let actual_points = result
+        .celestial
+        .positions
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if expected_points != actual_points {
+        return Err(CalculationError::BackendResultMismatch(
+            "celestial result point set did not match the request".into(),
+        ));
+    }
+    let expected_derived = request
+        .derived
+        .points
+        .iter()
+        .map(|point| point.point.clone())
+        .collect::<BTreeSet<_>>();
+    let actual_derived = result
+        .derived
+        .positions
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if expected_derived != actual_derived {
+        return Err(CalculationError::BackendResultMismatch(
+            "derived result point set did not match the request".into(),
+        ));
+    }
+    if request.houses.is_some() != result.houses.is_some() {
+        return Err(CalculationError::BackendResultMismatch(
+            "house result presence did not match the request".into(),
+        ));
+    }
+    if descriptor.fingerprint.backend != result.provenance.backend {
+        return Err(CalculationError::BackendResultMismatch(
+            "backend result identity did not match the selected backend".into(),
+        ));
+    }
+    let celestial = descriptor.fingerprint.celestial.as_ref().ok_or_else(|| {
+        CalculationError::BackendResultMismatch("selected backend lacks celestial identity".into())
+    })?;
+    if celestial.implementation != result.provenance.celestial.implementation
+        || celestial.model != result.provenance.celestial.model
+        || request.celestial.coordinates != result.provenance.celestial.coordinates
+        || request.celestial.corrections != result.provenance.celestial.corrections
+        || request.zodiac != result.provenance.celestial.zodiac
+    {
+        return Err(CalculationError::BackendResultMismatch(
+            "celestial provenance did not match the request and descriptor".into(),
+        ));
+    }
+    match (&request.houses, &result.provenance.houses) {
+        (Some(expected), Some(actual)) => {
+            let component = descriptor.fingerprint.houses.as_ref().ok_or_else(|| {
+                CalculationError::BackendResultMismatch(
+                    "selected backend lacks house identity".into(),
+                )
+            })?;
+            if component.implementation != actual.implementation
+                || expected.system != actual.system
+                || expected.zodiac != actual.zodiac
+            {
+                return Err(CalculationError::BackendResultMismatch(
+                    "house provenance did not match the request and descriptor".into(),
+                ));
+            }
+        }
+        (None, None) => {}
+        _ => {
+            return Err(CalculationError::BackendResultMismatch(
+                "house provenance presence did not match the request".into(),
+            ));
+        }
+    }
+    match (&request.derived.points[..], &result.provenance.derived) {
+        ([], None) => {}
+        (expected, Some(actual)) => {
+            let component = descriptor.fingerprint.derived.as_ref().ok_or_else(|| {
+                CalculationError::BackendResultMismatch(
+                    "selected backend lacks derived identity".into(),
+                )
+            })?;
+            let expected_formulas = expected
+                .iter()
+                .map(|point| (point.point.clone(), point.formula.clone()))
+                .collect::<BTreeMap<_, _>>();
+            let actual_formulas = actual
+                .formulas
+                .iter()
+                .map(|point| (point.point.clone(), point.formula.clone()))
+                .collect::<BTreeMap<_, _>>();
+            if component.implementation != actual.implementation
+                || expected_formulas != actual_formulas
+            {
+                return Err(CalculationError::BackendResultMismatch(
+                    "derived provenance did not match the request and descriptor".into(),
+                ));
+            }
+        }
+        _ => {
+            return Err(CalculationError::BackendResultMismatch(
+                "derived provenance presence did not match the request".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn snapshot_context(
+    definition: &ResourceEnvelope<ChartDefinition>,
+    record: &ResourceEnvelope<ChartRecord>,
+) -> SnapshotContext {
+    SnapshotContext {
+        definition: ResourceRevisionRef {
+            id: definition.id,
+            revision: definition.revision,
+        },
+        records: vec![ResourceRevisionRef {
+            id: record.id,
+            revision: record.revision,
+        }],
+        location_display_name: record.payload.location.display_name.clone(),
     }
 }
 
@@ -192,8 +407,6 @@ fn resolve_time(
         TimeZoneAssertion::FixedOffset(value) => *value,
         TimeZoneAssertion::UniversalTime => Offset::UTC,
         TimeZoneAssertion::LocalMeanTime => {
-            // Longitude is constrained to ±180 degrees, so this rounded value
-            // is guaranteed to fit in i32 and in the supported offset range.
             #[allow(clippy::cast_possible_truncation)]
             let seconds = (record.location.longitude.degrees() * 240.0).round() as i32;
             Offset::from_seconds(seconds).map_err(|_| TimeResolutionError::InvalidOffset)?
@@ -252,12 +465,16 @@ pub enum CalculationError {
     },
     #[error("derived chart recipes are established but not calculated in this milestone")]
     DerivedChartNotImplemented,
+    #[error("point category {0:?} must be resolved before calculation")]
+    UnresolvedPointCategory(String),
+    #[error("sidereal ayanamsa identity must not be empty")]
+    InvalidAyanamsa,
+    #[error("backend result integrity failure: {0}")]
+    BackendResultMismatch(String),
     #[error(transparent)]
     InvalidResource(#[from] ResourceError),
     #[error(transparent)]
     Time(#[from] TimeResolutionError),
-    #[error(transparent)]
-    Ephemeris(#[from] EphemerisError),
     #[error(transparent)]
     Key(#[from] KeyError),
 }

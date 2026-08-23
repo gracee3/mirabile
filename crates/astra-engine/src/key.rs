@@ -1,14 +1,13 @@
 use std::fmt;
 
 use astra_core::{
-    AnalysisProfile, Angle, AspectId, AspectSet, CalculationSpec, ChartDefinition, ChartRecord,
-    DomainValidate, DomainValidationError, Latitude, Longitude, PointId, PointSelector, PointSet,
-    ResourceEnvelope, ResourceError, TemporalAssertion, Theme,
+    AnalysisProfile, Angle, AspectId, AspectSet, DomainValidate, DomainValidationError, PointId,
+    PointSelector, PointSet, ResourceError, Theme,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::ProviderIdentity;
+use crate::{BackendFingerprint, ImplementationIdentity, ResolvedCalculationRequest};
 
 macro_rules! content_key {
     ($name:ident) => {
@@ -37,42 +36,23 @@ content_key!(RenderKey);
 
 #[derive(Serialize)]
 struct CalcKeyInput<'a> {
-    temporal_assertion: &'a TemporalAssertion,
-    numeric_location: NumericLocationMaterial,
-    calculation: &'a CalculationSpec,
-    engine_version: &'a str,
-    provider: &'a ProviderIdentity,
-    timezone_data_version: &'a str,
-}
-
-#[derive(Serialize)]
-struct NumericLocationMaterial {
-    latitude: Latitude,
-    longitude: Longitude,
+    request: &'a ResolvedCalculationRequest,
+    calculation_engine: &'a ImplementationIdentity,
+    backend: &'a BackendFingerprint,
 }
 
 impl CalcKey {
     pub fn derive(
-        definition: &ResourceEnvelope<ChartDefinition>,
-        record: &ResourceEnvelope<ChartRecord>,
-        engine_version: &str,
-        provider: &ProviderIdentity,
-        timezone_data_version: &str,
+        request: &ResolvedCalculationRequest,
+        calculation_engine: &ImplementationIdentity,
+        backend: &BackendFingerprint,
     ) -> Result<Self, KeyError> {
-        definition.validate()?;
-        record.validate()?;
         hash(
             "calc",
             &CalcKeyInput {
-                temporal_assertion: &record.payload.time,
-                numeric_location: NumericLocationMaterial {
-                    latitude: record.payload.location.latitude,
-                    longitude: record.payload.location.longitude,
-                },
-                calculation: &definition.payload.calculation,
-                engine_version,
-                provider,
-                timezone_data_version,
+                request,
+                calculation_engine,
+                backend,
             },
         )
         .map(Self)

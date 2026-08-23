@@ -8,25 +8,96 @@ use astra_core::{
     ZodiacDisplaySpec,
 };
 use astra_engine::{
-    AnalysisKey, AspectAnalyzer, CalculationEngine, ComputationCache, DeterministicEphemeris,
-    EphemerisError, EphemerisOutput, EphemerisProvider, EphemerisRequest, KeyError,
-    ProviderIdentity, Scene, layout_wheel, render_key,
+    AnalysisKey, AspectAnalyzer, BackendDescriptor, CalcKey, CalculationBackend,
+    CalculationBackendError, CalculationBackendResult, CalculationEngine, CalculationError,
+    CalculationValue, ChartSnapshot, ComputationCache, DeterministicBackend,
+    ImplementationIdentity, KeyError, ResolvedCalculationRequest, Scene, layout_wheel, render_key,
 };
 
 #[derive(Clone, Copy, Debug)]
-struct AlternateIdentityProvider;
+struct AlternateIdentityBackend;
 
-impl EphemerisProvider for AlternateIdentityProvider {
-    fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity {
-            name: "alternate-test-provider".into(),
-            version: "2".into(),
-            data_version: Some("alternate-data".into()),
+impl CalculationBackend for AlternateIdentityBackend {
+    fn descriptor(&self) -> BackendDescriptor {
+        let mut descriptor = DeterministicBackend.descriptor();
+        descriptor.fingerprint.backend.id = "alternate-test-backend".into();
+        descriptor.fingerprint.backend.version = "2".into();
+        descriptor.fingerprint.backend.revision = Some("alternate-r1".into());
+        descriptor
+    }
+
+    fn calculate(
+        &self,
+        request: &ResolvedCalculationRequest,
+    ) -> Result<CalculationBackendResult, CalculationBackendError> {
+        let mut result = DeterministicBackend.calculate(request)?;
+        result.provenance.backend = self.descriptor().fingerprint.backend;
+        Ok(result)
+    }
+}
+
+struct TestEngine<B> {
+    engine: CalculationEngine,
+    backend: B,
+}
+
+impl<B: CalculationBackend> TestEngine<B> {
+    fn new(backend: B, engine_version: &str, timezone_data_version: &str) -> Self {
+        let descriptor = backend.descriptor();
+        Self {
+            engine: CalculationEngine::new(
+                descriptor,
+                ImplementationIdentity {
+                    id: "astra-test-calculation-engine".into(),
+                    version: engine_version.into(),
+                    revision: None,
+                },
+                timezone_data_version,
+            ),
+            backend,
         }
     }
 
-    fn calculate(&self, request: &EphemerisRequest) -> Result<EphemerisOutput, EphemerisError> {
-        DeterministicEphemeris.calculate(request)
+    fn prepare(
+        &self,
+        definition: &ResourceEnvelope<ChartDefinition>,
+        record: &ResourceEnvelope<ChartRecord>,
+    ) -> Result<astra_engine::PreparedCalculation, CalculationError> {
+        self.engine
+            .prepare(definition, record, &points(), &points())
+    }
+
+    fn calc_key(
+        &self,
+        definition: &ResourceEnvelope<ChartDefinition>,
+        record: &ResourceEnvelope<ChartRecord>,
+    ) -> Result<CalcKey, CalculationError> {
+        self.prepare(definition, record)
+            .map(|prepared| prepared.calc_key)
+    }
+
+    fn calculate(
+        &self,
+        definition: &ResourceEnvelope<ChartDefinition>,
+        record: &ResourceEnvelope<ChartRecord>,
+    ) -> Result<ChartSnapshot, CalculationError> {
+        let prepared = self.prepare(definition, record)?;
+        let backend = self
+            .backend
+            .calculate(&prepared.request)
+            .expect("test backend calculation succeeds");
+        let value = self.engine.complete(&prepared, backend)?;
+        Ok(CalculationEngine::snapshot(&prepared, value))
+    }
+
+    fn snapshot_from_cached(
+        &self,
+        definition: &ResourceEnvelope<ChartDefinition>,
+        record: &ResourceEnvelope<ChartRecord>,
+        calculation: CalculationValue,
+    ) -> Result<ChartSnapshot, CalculationError> {
+        let prepared = self.prepare(definition, record)?;
+        Ok(CalculationEngine::snapshot(&prepared, calculation))
     }
 }
 
@@ -157,7 +228,7 @@ fn birth_time_changes_calculation_key() {
     let (record, definition) = sample_resources();
     let mut edited = record.clone();
     edited.payload.time.civil_datetime.time = CivilTime::new(12, 1, 0).expect("valid time");
-    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
 
     assert_ne!(
         engine.calc_key(&definition, &record).expect("first key"),
@@ -184,7 +255,7 @@ fn metadata_only_rename_does_not_invalidate_calculation() {
     renamed.payload.location.display_name = "Different atlas label".into();
     let mut renamed_definition = definition.clone();
     renamed_definition.title = "Renamed definition".into();
-    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
 
     assert_eq!(
         engine.calc_key(&definition, &record).expect("first key"),
@@ -197,7 +268,7 @@ fn metadata_only_rename_does_not_invalidate_calculation() {
 #[test]
 fn every_calculation_dependency_changes_the_calculation_key() {
     let (record, definition) = sample_resources();
-    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
     let original = engine.calc_key(&definition, &record).expect("original key");
 
     let mut moved = record.clone();
@@ -217,19 +288,19 @@ fn every_calculation_dependency_changes_the_calculation_key() {
     );
     assert_ne!(
         original,
-        CalculationEngine::new(DeterministicEphemeris, "engine-v2", "fixture-tz-v1")
+        TestEngine::new(DeterministicBackend, "engine-v2", "fixture-tz-v1")
             .calc_key(&definition, &record)
             .expect("engine identity key")
     );
     assert_ne!(
         original,
-        CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v2")
+        TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v2")
             .calc_key(&definition, &record)
             .expect("timezone identity key")
     );
     assert_ne!(
         original,
-        CalculationEngine::new(AlternateIdentityProvider, "engine-v1", "fixture-tz-v1")
+        TestEngine::new(AlternateIdentityBackend, "engine-v1", "fixture-tz-v1")
             .calc_key(&definition, &record)
             .expect("provider identity key")
     );
@@ -238,7 +309,7 @@ fn every_calculation_dependency_changes_the_calculation_key() {
 #[test]
 fn analysis_identity_ignores_labels_classification_and_order() {
     let (record, definition) = sample_resources();
-    let snapshot = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1")
+    let snapshot = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1")
         .calculate(&definition, &record)
         .expect("snapshot");
     let baseline_points = points();
@@ -303,7 +374,7 @@ fn analysis_identity_ignores_labels_classification_and_order() {
 #[test]
 fn unresolved_point_categories_fail_at_analysis_and_layout_boundaries() {
     let (record, definition) = sample_resources();
-    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
     let snapshot = engine.calculate(&definition, &record).expect("snapshot");
     let unresolved = PointSet {
         points: vec![PointSelector::Category("planets".into())],
@@ -336,7 +407,7 @@ fn unresolved_point_categories_fail_at_analysis_and_layout_boundaries() {
 #[test]
 fn aspect_change_reuses_snapshot_and_changes_only_downstream_keys() {
     let (record, definition) = sample_resources();
-    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
     let snapshot = engine.calculate(&definition, &record).expect("snapshot");
     let broad = AspectAnalyzer::analyze(
         &snapshot,
@@ -361,7 +432,7 @@ fn aspect_change_reuses_snapshot_and_changes_only_downstream_keys() {
 #[test]
 fn theme_changes_render_key_but_not_calculation_analysis_or_layout() {
     let (record, definition) = sample_resources();
-    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
     let snapshot = engine.calculate(&definition, &record).expect("snapshot");
     let analysis = AspectAnalyzer::analyze(
         &snapshot,
@@ -399,7 +470,7 @@ fn defaults_do_not_rewrite_existing_chart_definition() {
 #[test]
 fn disposable_cache_can_be_reconstructed_from_canonical_inputs() {
     let (record, definition) = sample_resources();
-    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
     let snapshot = engine.calculate(&definition, &record).expect("snapshot");
     let analysis = AspectAnalyzer::analyze(
         &snapshot,
@@ -431,7 +502,7 @@ fn disposable_cache_can_be_reconstructed_from_canonical_inputs() {
 #[test]
 fn cached_calculation_reuses_values_with_current_resource_context() {
     let (record, definition) = sample_resources();
-    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
     let snapshot = engine.calculate(&definition, &record).expect("snapshot");
     let mut cache = ComputationCache::default();
     cache.insert_snapshot(snapshot.clone());
@@ -488,7 +559,7 @@ fn julian_day_fixtures_cover_offsets_calendars_year_zero_and_lmt_sign() {
         };
         record.payload.location.longitude =
             Longitude::from_degrees(longitude).expect("valid longitude");
-        CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1")
+        TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1")
             .calculate(&definition, &record)
             .expect("calculation")
             .calculation
@@ -613,7 +684,7 @@ fn julian_day_fixtures_cover_offsets_calendars_year_zero_and_lmt_sign() {
 #[test]
 fn layout_produces_astrology_free_scene_primitives() {
     let (record, definition) = sample_resources();
-    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
     let snapshot = engine.calculate(&definition, &record).expect("snapshot");
     let analysis = AspectAnalyzer::analyze(
         &snapshot,
@@ -632,7 +703,7 @@ fn layout_produces_astrology_free_scene_primitives() {
 #[test]
 fn layout_identity_uses_only_consumed_geometry_and_resolved_points() {
     let (record, definition) = sample_resources();
-    let snapshot = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1")
+    let snapshot = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1")
         .calculate(&definition, &record)
         .expect("snapshot");
     let displayed = points();
