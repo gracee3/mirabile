@@ -10,3 +10,9 @@ This plan was written after inspecting the clean README-only repository on 2026-
 6. Encode the handoff's acceptance behaviors as native Rust tests, then run format, unit tests, clippy, native workspace checks, and the Trunk/WASM build where the installed target permits.
 
 Out of scope for this milestone: production astronomy, historical timezone resolution, a real calculation worker, temporal-query execution, sync transport, encryption, OPFS assets, import bundles, multi-tab leadership, and professional visual polish. Their boundaries are documented now and must remain additive.
+
+## Outcome
+
+The planned vertical slice is implemented. Native tests exercise domain invariants, resource binding/precedence, draft isolation, revision conflicts/history, portable JSON, calculation and analysis invalidation, presentation-only invalidation, workspace/library separation, and cache reconstruction. The web app persists the demonstration AspectSet and its revisions in IndexedDB; other canonical resource types use the same repository contract but do not yet have UI workflows.
+
+`CalcRequest`/`CalcResult` establish the worker protocol, but calculation still runs synchronously in the milestone UI. Query expressions, derivation recipes, composite views, sync transport, vaults, OPFS, and temporal execution remain honest skeletons or documented boundaries rather than implemented features.

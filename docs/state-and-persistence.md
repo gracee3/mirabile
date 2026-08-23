@@ -17,6 +17,8 @@ Device-local `WorkspaceUiState` is not part of a portable `Workspace`.
 
 `ResourceRepository` provides create, optimistic revision save, current read, historical revision read, delete, and typed listing. `MemoryRepository` retains every revision for deterministic tests. `IndexedDbRepository` stores current resources and revision history in separate object stores and uses the resource's stable ID as the logical key.
 
+The milestone browser UI uses that IndexedDB adapter for the demonstration AspectSet. It seeds revision 1 on first use, reloads the current revision on later visits, and commits Save through `Command::SaveResourceDraft`. Chart records, definitions, workspaces, and other resource kinds serialize through the same repository format, but their browser editing workflows are not implemented yet.
+
 Repository writes accept a fully versioned resource and reject missing, duplicate, skipped, or stale revisions. Sync will later append operations after a successful local transaction; ordinary local writes must not wait on a server.
 
 Portable JSON serializes only resource envelopes and typed payloads. IndexedDB store names, device state, sync heads, cache indexes, server tokens, and machine paths are not portable fields.

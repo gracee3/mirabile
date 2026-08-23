@@ -49,6 +49,8 @@ Keys name derived computations; they are not canonical resources. A changed depe
 
 Mutation intent is represented by commands in `astra-core`. The milestone UI keeps separate signals for canonical resources, editor state, source inputs, and presentation theme. Memoized values resolve effective analysis inputs and run downstream pure functions. Components do not calculate positions or mutate browser storage directly.
 
+The AspectSet editor dispatches `SaveResourceDraft` through the resource command handler. The handler applies repository revision rules in one place; the component replaces its canonical signal only after IndexedDB confirms the local transaction. Draft edits and Cancel are ephemeral transitions and therefore never touch the repository.
+
 A production worker is intentionally deferred. The calculation request/result types and `CalculationEngine` boundary are native and serializable so the same calculation can move behind a Web Worker without changing domain or view models.
 
 ## Intentional skeletons
