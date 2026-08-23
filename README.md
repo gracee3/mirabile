@@ -22,6 +22,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 trunk build apps/web/index.html
 ```
 
+These checks are intentionally local; this repository does not enable hosted CI.
+
 The browser build requires the `wasm32-unknown-unknown` Rust target. Run the app with:
 
 ```bash
