@@ -36,13 +36,20 @@ use crate::{
     ViewSummary, WorkspaceReadModel, bootstrap_ids, bootstrap_resources,
     workspace_commands::apply_workspace_command,
 };
+#[cfg(all(target_arch = "wasm32", feature = "xalen-backend"))]
+use crate::{apparent_place_bootstrap_resources, migrate_legacy_bootstrap_resource};
 
 pub const DEFAULT_INDEXED_DB_NAME: &str = "astra";
+
+type BootstrapResources = fn() -> Vec<CanonicalResource>;
+type BootstrapMigration = fn(&CanonicalResource, &CanonicalResource) -> Option<CanonicalResource>;
 
 pub struct RealApplication<R, C = InlineCalculationRuntime<DeterministicBackend>> {
     repository: R,
     engine: CalculationEngine,
     runtime: C,
+    bootstrap_resources: BootstrapResources,
+    bootstrap_migration: Option<BootstrapMigration>,
     runtime_receive_gate: Mutex<()>,
     state: RefCell<RealState>,
 }
@@ -72,6 +79,15 @@ where
     C: CalculationRuntime,
 {
     pub fn with_runtime(repository: R, runtime: C) -> Self {
+        Self::with_runtime_and_bootstrap(repository, runtime, bootstrap_resources, None)
+    }
+
+    fn with_runtime_and_bootstrap(
+        repository: R,
+        runtime: C,
+        bootstrap: BootstrapResources,
+        migration: Option<BootstrapMigration>,
+    ) -> Self {
         let descriptor = runtime.backend_descriptor();
         Self {
             repository,
@@ -80,11 +96,13 @@ where
                 ImplementationIdentity {
                     id: "astra-calculation-engine".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
-                    revision: Some("calculation-runtime-v1".into()),
+                    revision: Some("calculation-runtime-v2".into()),
                 },
                 "deterministic-tz-v1",
             ),
             runtime,
+            bootstrap_resources: bootstrap,
+            bootstrap_migration: migration,
             runtime_receive_gate: Mutex::new(()),
             state: RefCell::new(RealState::default()),
         }
@@ -179,7 +197,28 @@ impl ResourceRepository for IndexedDbRepositorySource {
 
 #[cfg(target_arch = "wasm32")]
 impl RealApplication<IndexedDbRepositorySource, crate::WorkerCalculationRuntime> {
+    #[cfg(feature = "xalen-backend")]
+    pub fn indexed_db_with_runtime(
+        database_name: impl Into<String>,
+        runtime: crate::WorkerCalculationRuntime,
+    ) -> Self {
+        Self::with_runtime_and_bootstrap(
+            IndexedDbRepositorySource::new(database_name),
+            runtime,
+            apparent_place_bootstrap_resources,
+            Some(migrate_legacy_bootstrap_resource),
+        )
+    }
+
     pub fn indexed_db(database_name: impl Into<String>) -> Self {
+        #[cfg(feature = "xalen-backend")]
+        {
+            return Self::indexed_db_with_runtime(
+                database_name,
+                crate::WorkerCalculationRuntime::xalen(),
+            );
+        }
+        #[cfg(not(feature = "xalen-backend"))]
         Self::with_runtime(
             IndexedDbRepositorySource::new(database_name),
             crate::WorkerCalculationRuntime::deterministic(),
@@ -351,7 +390,7 @@ where
     }
 
     async fn ensure_bootstrap(&self) -> AppResult<()> {
-        for resource in bootstrap_resources() {
+        for resource in (self.bootstrap_resources)() {
             let id = resource.id();
             match self.repository.get_head(id).await.map_err(|error| {
                 initialization_error(format!("Could not inspect bootstrap resource {id}"), &error)
@@ -365,7 +404,21 @@ where
                         ));
                     }
                 },
-                Some(ResourceState::Present(existing)) if existing.kind() == resource.kind() => {}
+                Some(ResourceState::Present(existing)) if existing.kind() == resource.kind() => {
+                    if let Some(migration) = self.bootstrap_migration
+                        && let Some(migrated) = migration(&existing, &resource)
+                    {
+                        self.repository
+                            .save(existing.revision(), migrated)
+                            .await
+                            .map_err(|error| {
+                                initialization_error(
+                                    format!("Could not migrate bootstrap resource {id}"),
+                                    &error,
+                                )
+                            })?;
+                    }
+                }
                 Some(ResourceState::Present(existing)) => {
                     return Err(AppError::new(
                         AppErrorKind::Initialization,

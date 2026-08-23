@@ -4,6 +4,8 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(feature = "xalen-backend")]
+use astra_engine::XalenBackend;
 use astra_engine::{
     BackendDescriptor, CalculationOutcome, CalculationWorkerRequest, CalculationWorkerResult,
     DeterministicBackend, ImplementationIdentity,
@@ -43,6 +45,27 @@ struct WorkerTransportState {
 impl WorkerCalculationRuntime {
     pub fn deterministic() -> Self {
         let descriptor = astra_engine::CalculationBackend::descriptor(&DeterministicBackend);
+        match create_worker() {
+            Ok(worker) => Self::with_worker(descriptor, worker),
+            Err(error) => Self {
+                inner: Rc::new(WorkerRuntimeInner {
+                    descriptor,
+                    worker: None,
+                    startup_error: Some(error),
+                    state: Rc::new(RefCell::new(WorkerTransportState::default())),
+                    inbox: RuntimeInbox::default(),
+                    completed_results: Rc::new(Cell::new(0)),
+                    last_backend: Rc::new(RefCell::new(None)),
+                    _onmessage: None,
+                    _onerror: None,
+                }),
+            },
+        }
+    }
+
+    #[cfg(feature = "xalen-backend")]
+    pub fn xalen() -> Self {
+        let descriptor = astra_engine::CalculationBackend::descriptor(&XalenBackend);
         match create_worker() {
             Ok(worker) => Self::with_worker(descriptor, worker),
             Err(error) => Self {

@@ -8,7 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+default = ["xalen-backend"]
 browser-contract = ["dep:astra-core", "dep:astra-store", "astra-store/browser-contract"]
+xalen-backend = ["astra-app/xalen-backend", "astra-engine/xalen-backend"]
 
 [dependencies]
 astra-app.workspace = true

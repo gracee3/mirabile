@@ -176,11 +176,8 @@ async fn run_contract() -> Result<(), String> {
 async fn run_real_application_reload() -> Result<(), String> {
     let database_name = format!("astra-real-application-contract-{}", ResourceId::new());
     let ids = bootstrap_ids();
-    let first_runtime = WorkerCalculationRuntime::deterministic();
-    let first = RealApplication::with_runtime(
-        IndexedDbRepositorySource::new(&database_name),
-        first_runtime.clone(),
-    );
+    let first_runtime = WorkerCalculationRuntime::xalen();
+    let first = RealApplication::indexed_db_with_runtime(&database_name, first_runtime.clone());
     let first_ready = settle_initialization(&first).await?;
     ensure(
         first_ready.active_view.as_ref().is_some_and(|view| {
@@ -195,8 +192,8 @@ async fn run_real_application_reload() -> Result<(), String> {
     ensure(
         first_runtime
             .last_backend_identity()
-            .is_some_and(|identity| identity.id == astra_engine::DeterministicBackend::ID),
-        "Web Worker result did not identify the deterministic backend",
+            .is_some_and(|identity| identity.id == astra_engine::XalenBackend::ID),
+        "Web Worker result did not identify the XALEN backend",
     )?;
 
     let opened = first
@@ -263,11 +260,8 @@ async fn run_real_application_reload() -> Result<(), String> {
     )?;
     drop(first);
 
-    let second_runtime = WorkerCalculationRuntime::deterministic();
-    let second = RealApplication::with_runtime(
-        IndexedDbRepositorySource::new(&database_name),
-        second_runtime.clone(),
-    );
+    let second_runtime = WorkerCalculationRuntime::xalen();
+    let second = RealApplication::indexed_db_with_runtime(&database_name, second_runtime.clone());
     let restored = settle_initialization(&second).await?;
     ensure(
         restored.workspace.active_chart == Some(chart_b),
@@ -301,6 +295,12 @@ async fn run_real_application_reload() -> Result<(), String> {
     ensure(
         second_runtime.completed_results() > 0,
         "reloaded RealApplication did not calculate through a Web Worker",
+    )?;
+    ensure(
+        second_runtime
+            .last_backend_identity()
+            .is_some_and(|identity| identity.id == astra_engine::XalenBackend::ID),
+        "reloaded Web Worker result did not identify the XALEN backend",
     )?;
     Ok(())
 }

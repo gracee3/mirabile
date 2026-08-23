@@ -1,3 +1,5 @@
+#[cfg(all(target_arch = "wasm32", feature = "xalen-backend"))]
+use astra_engine::XalenBackend;
 #[cfg(target_arch = "wasm32")]
 use astra_engine::{CalculationWorkerRequest, DeterministicBackend, execute_calculation_request};
 #[cfg(target_arch = "wasm32")]
@@ -28,6 +30,13 @@ fn main() {
                 return;
             }
         };
+        #[cfg(feature = "xalen-backend")]
+        let result = if request.backend.backend.id == XalenBackend::ID {
+            execute_calculation_request(&XalenBackend, request)
+        } else {
+            execute_calculation_request(&DeterministicBackend, request)
+        };
+        #[cfg(not(feature = "xalen-backend"))]
         let result = execute_calculation_request(&DeterministicBackend, request);
         match serde_json::to_string(&result) {
             Ok(encoded) => {

@@ -136,6 +136,55 @@ pub(crate) fn bootstrap_resources() -> Vec<CanonicalResource> {
     ]
 }
 
+/// Browser seed compatible with an apparent-place astronomical backend.
+///
+/// The canonical schema is unchanged; only the two checked-in example chart
+/// definitions opt into all three corrections explicitly.
+#[cfg(any(all(target_arch = "wasm32", feature = "xalen-backend"), test))]
+pub(crate) fn apparent_place_bootstrap_resources() -> Vec<CanonicalResource> {
+    let mut resources = bootstrap_resources();
+    for resource in &mut resources {
+        if let CanonicalResource::ChartDefinition(definition) = resource {
+            definition.payload.calculation.corrections = astra_core::CorrectionSpec {
+                aberration: true,
+                light_time: true,
+                nutation: true,
+            };
+        }
+    }
+    resources
+}
+
+/// Safely upgrades only a byte-for-byte untouched legacy seed resource.
+///
+/// A user-modified resource never equals the checked-in legacy value and is
+/// therefore left alone. Only chart definitions differ between the legacy and
+/// apparent-place seed sets.
+#[cfg(any(all(target_arch = "wasm32", feature = "xalen-backend"), test))]
+pub(crate) fn migrate_legacy_bootstrap_resource(
+    existing: &CanonicalResource,
+    desired: &CanonicalResource,
+) -> Option<CanonicalResource> {
+    let legacy = bootstrap_resources()
+        .into_iter()
+        .find(|resource| resource.id() == existing.id())?;
+    if existing != &legacy || existing == desired {
+        return None;
+    }
+    let (CanonicalResource::ChartDefinition(existing), CanonicalResource::ChartDefinition(desired)) =
+        (existing, desired)
+    else {
+        return None;
+    };
+    existing
+        .next_with_payload(
+            desired.payload.clone(),
+            Timestamp::from_unix_millis(existing.modified_at.unix_millis().saturating_add(1)),
+        )
+        .ok()
+        .map(CanonicalResource::ChartDefinition)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn chart_record(
     id: ResourceId,
@@ -352,5 +401,38 @@ mod tests {
             .payload
             .domain_validate()
             .expect("bootstrap workspace validates");
+    }
+
+    #[test]
+    fn apparent_seed_migrates_only_untouched_legacy_definitions() {
+        let legacy = bootstrap_resources()
+            .into_iter()
+            .find(|resource| matches!(resource, CanonicalResource::ChartDefinition(_)))
+            .expect("legacy definition");
+        let desired = apparent_place_bootstrap_resources()
+            .into_iter()
+            .find(|resource| resource.id() == legacy.id())
+            .expect("apparent definition");
+        let migrated =
+            migrate_legacy_bootstrap_resource(&legacy, &desired).expect("untouched seed migrates");
+        let CanonicalResource::ChartDefinition(migrated) = migrated else {
+            panic!("migration preserves the definition kind")
+        };
+        assert_eq!(migrated.revision.get(), 2);
+        assert_eq!(
+            migrated.payload.calculation.corrections,
+            astra_core::CorrectionSpec {
+                aberration: true,
+                light_time: true,
+                nutation: true,
+            }
+        );
+
+        let mut user_modified = legacy;
+        let CanonicalResource::ChartDefinition(definition) = &mut user_modified else {
+            unreachable!()
+        };
+        definition.title = "User title".into();
+        assert!(migrate_legacy_bootstrap_resource(&user_modified, &desired).is_none());
     }
 }
