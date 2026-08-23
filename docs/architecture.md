@@ -88,6 +88,8 @@ it is never silently omitted or substituted.
 `BackendFingerprint` contains:
 
 - the overall `ImplementationIdentity { id, version, revision }`;
+- optional time-conversion implementation, input/output scales, leap-second
+  model, and Delta-T model;
 - celestial implementation identity plus optional neutral `EphemerisModelIdentity`;
 - optional house implementation identity;
 - optional derived implementation identity.
@@ -120,12 +122,15 @@ the complete selected backend fingerprint. The request already contains resolved
 timezone-data identity, numeric location, requested points, coordinate/correction configuration,
 zodiac/ayanamsa semantics, optional house request/system, and derived requests/formulas. The
 fingerprint adds backend/component implementation versions and revisions plus underlying
-model/data identity.
+model/data identity. This includes the selected time-conversion implementation,
+leap-second table, and Delta-T model before execution.
 
 Consequently, materially different backend revisions, models/data, house implementations,
-coordinates, corrections, requested point sets, tropical/sidereal modes, or ayanamsas cannot share
-a key. Titles, subject display details, notes, source wording, life events, atlas display labels,
-resource revisions, and other non-calculation metadata remain absent.
+time implementations/models, coordinates, corrections, requested point sets,
+tropical/sidereal modes, or ayanamsas cannot share a key. Completion also checks returned
+time-conversion provenance against that selected fingerprint. Titles, subject display details,
+notes, source wording, life events, atlas display labels, resource revisions, and other
+non-calculation metadata remain absent.
 
 `AnalysisKey`, `LayoutKey`, and `RenderKey` retain their prior consumed-material rules.
 `CalculationValue`, not canonical context, is cached by `CalcKey`. Current resources always rebuild
@@ -166,6 +171,8 @@ CalculationWorkerResult
 Failure categories distinguish invalid input, unsupported capability, backend failure, protocol
 mismatch, and internal execution failure. Unsupported protocol requests are rejected explicitly.
 Backend-native errors never cross the protocol.
+The current protocol is version 3; version 3 adds the selected time pipeline to
+`BackendFingerprint`.
 
 The semantic contract is ordinary serializable Astra data. Although the immediate Worker links
 the XALEN and deterministic backends, neither `CalculationBackend` request/result types nor the
@@ -202,13 +209,12 @@ latest request succeeds                    → new Scene + Fresh
 latest request fails                       → old Scene + Failed
 ```
 
-## Future provider preparation
+## Provider isolation
 
-XALEN is the planned initial/default real implementation, but it is not integrated and is not a
-dependency in this slice. Its future adapter maps Astra requests to a pinned XALEN API and maps
-results/provenance back; XALEN public types do not define canonical resources, `CalculationValue`,
-the worker protocol, read models, or snapshots. No known contract change is required beyond small
-provider-neutral capability additions if the pinned API exposes a presently unknown semantic.
+XALEN is the initial/default real browser implementation. Its adapter maps Astra requests to a
+pinned XALEN API and maps results/provenance back; XALEN public types do not define canonical
+resources, `CalculationValue`, the worker protocol, read models, or snapshots. The only contract
+extensions required were provider-neutral time-scale labels and time-pipeline identity.
 
 Swiss Ephemeris is a first-class optional professional/reference backend, but no Swiss code, data,
 dependency, flags, or native constants are present. Its AGPL/professional dual licensing requires
@@ -217,7 +223,7 @@ serializable contract permits a separately distributed adapter, executable, or l
 
 ## Intentional exclusions
 
-Real planetary accuracy, XALEN and Swiss adapters, new house/ayanamsa/derived-point mathematics,
-derived charts, transits, relationships, temporal/query execution, OPFS, sync, encryption, and new
-frontend UX remain out of scope. The implemented deterministic runtime proves the provider and
-execution boundary without claiming those capabilities.
+Swiss adapters, broader bodies/ayanamsas/derived-point mathematics, derived charts, transits,
+relationships, temporal/query execution, OPFS, sync, encryption, and new frontend UX remain out of
+scope. `DeterministicBackend` remains a controlled test implementation without claiming
+astronomical authority.

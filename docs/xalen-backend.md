@@ -24,7 +24,7 @@ Status: implementation handoff audit, pinned for the first offline analytical ra
 | --- | --- | --- | --- |
 | `AstroInstant` produced by `resolve_time` | `xalen_time::JdUTC` | Yes with the provider-neutral `TimeScale::Utc` label | Astra subtracts the asserted civil offset and therefore computes a UTC-clock Julian date. It is not UT1 or TT. |
 | Celestial ephemeris time | `JdUTC::to_tt()` then `Almanac::geocentric_*_tt` | Yes for ordinary post-1972 UTC instants | XALEN applies its embedded IERS leap-second table for UTC to TAI, then the defined TT-TAI offset of 32.184 seconds. The backend passes TT, not relabelled UTC/UT1, to the low-level analytical provider. Pre-1972 UTC is rejected because rubber seconds are not modeled; a civil `23:59:60` label is outside Astra's current civil-time schema. |
-| House rotation time | `JdTT::to_ut1(&StephensonMorrisonHohenkerk2016)` | Model-derived | House computation receives UT1 derived iteratively from the same TT using XALEN's SMH2016 Delta-T implementation. The time-conversion implementation and model identities are retained in provider-neutral provenance. |
+| House rotation time | `JdTT::to_ut1(&StephensonMorrisonHohenkerk2016)` | Model-derived | House computation receives UT1 derived iteratively from the same TT using XALEN's SMH2016 Delta-T implementation. The time-conversion implementation and model identities are retained in the pre-execution backend fingerprint, `CalcKey`, and result provenance. |
 | Geocentric coordinates | `Almanac::geocentric_ecliptic_tt` | Yes | Apparent geocentric ecliptic-of-date longitude/latitude. |
 | Right ascension and declination | `Almanac::geocentric_equatorial_tt` | Yes | Apparent ecliptic place rotated by XALEN with the true obliquity of date. |
 | Longitude speed | `Almanac::geocentric_speed_tt` | Yes within XALEN's definition | Central finite difference over plus/minus 0.5 TT day, returned in degrees per day. |
@@ -82,6 +82,21 @@ types are converted to Astra-owned request/result types before returning. Normal
 browser wiring constructs the XALEN descriptor on the UI thread and the XALEN
 backend inside the calculation Worker; the worker protocol, canonical resources,
 `CalculationValue`, analysis, layout, and frontend remain XALEN-free.
+Native construction uses `RealApplication::with_xalen_backend`, which selects the
+same apparent-place bootstrap profile as the browser constructor.
+
+The static time fingerprint records `xalen-time`, UTC input, TT celestial time,
+UT1 house time, the embedded IERS 1972-2017 leap-second table, and SMH2016
+Delta-T before execution. All of this material participates in `CalcKey`.
+Completion rejects time provenance that differs from the selected fingerprint.
+
+## Distribution notices
+
+The browser distribution includes `THIRD_PARTY_NOTICES.md`, the complete XALEN
+Apache-2.0 license, the ERFA BSD-3-Clause notice, and the `vsop87` MIT license.
+Trunk copies these files into every distribution and the browser contract checks
+their presence and exact content. The notice explicitly states that Astra does
+not bundle XALEN's optional Hipparcos catalog or NC data crate.
 
 `scripts/check-xalen-dependencies.sh` audits the actual `astra-engine` and
 `astra-web` feature trees. XALEN's own `xalen-ephem` manifest necessarily brings

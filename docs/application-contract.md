@@ -213,7 +213,8 @@ and create only missing resources; deleted or wrong-kind bootstrap identities fa
 instead of being silently replaced. General atomic multi-resource chart creation remains deferred.
 Normal XALEN browser construction uses the same stable seed identities with the two example chart
 definitions explicitly requesting apparent-place corrections. An untouched legacy seed definition
-is migrated to that profile as a new revision; any user-modified definition is preserved.
+is migrated to that profile as a new revision; any user-modified definition is preserved. Native
+inline XALEN construction uses `RealApplication::with_xalen_backend` and the same profile.
 
 The bootstrap Workspace stores its AspectSet as `Follow(Standard)`. Point sets, analysis profile,
 theme, wheel template, and view document are honest inline values with no fabricated identity. The
@@ -227,6 +228,8 @@ Normal WASM operation communicates with the Trunk-built Web Worker and linked
 Optimistic resource saves still await the retained repository. `snapshot()` never receives runtime
 results or drives pending work. The deterministic backend remains a demo/test implementation for
 native and controlled runtime tests, not real astronomy.
+Trunk also copies the XALEN/ERFA/VSOP third-party notices and license texts into
+the browser distribution; the browser contract fails if those assets are absent or changed.
 
 Each view tracks its current expected `(CalculationRequestId, CalcKey)`. A runtime result is
 accepted only when both match that view and its protocol version is current. Accepted success is

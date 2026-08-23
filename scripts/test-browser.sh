@@ -27,6 +27,24 @@ trap cleanup EXIT
   env -u NO_COLOR trunk build --features browser-contract --dist "${dist_dir}"
 )
 
+for required_asset in \
+  "${dist_dir}/THIRD_PARTY_NOTICES.md" \
+  "${dist_dir}/third_party_licenses/Apache-2.0.txt" \
+  "${dist_dir}/third_party_licenses/vsop87-MIT.txt"
+do
+  if [[ ! -f "${required_asset}" ]]; then
+    echo "Browser distribution is missing third-party notice asset: ${required_asset}" >&2
+    exit 1
+  fi
+done
+cmp "${workspace_dir}/THIRD_PARTY_NOTICES.md" "${dist_dir}/THIRD_PARTY_NOTICES.md"
+cmp \
+  "${workspace_dir}/third_party_licenses/Apache-2.0.txt" \
+  "${dist_dir}/third_party_licenses/Apache-2.0.txt"
+cmp \
+  "${workspace_dir}/third_party_licenses/vsop87-MIT.txt" \
+  "${dist_dir}/third_party_licenses/vsop87-MIT.txt"
+
 python3 -m http.server 18080 --bind 127.0.0.1 --directory "${dist_dir}" >"${server_log}" 2>&1 &
 server_pid=$!
 
