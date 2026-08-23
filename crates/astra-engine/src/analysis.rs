@@ -63,10 +63,11 @@ impl AspectAnalyzer {
     ) -> Result<ChartAnalysis, AnalysisError> {
         let calc_keys = [snapshot.calc_key.clone()];
         let analysis_key = AnalysisKey::derive(&calc_keys, points, aspects, profile)?;
-        let selected: Vec<(&PointId, &PointState)> = points
+        let mut selected: Vec<(&PointId, &PointState)> = points
             .direct_points()
-            .filter_map(|id| snapshot.points.get_key_value(id))
+            .filter_map(|id| snapshot.calculation.points.get_key_value(id))
             .collect();
+        selected.sort_by_key(|(point, _)| *point);
         let mut hits = Vec::new();
 
         for (index, (lhs_id, lhs)) in selected.iter().enumerate() {
@@ -101,6 +102,7 @@ impl AspectAnalyzer {
                 .total_cmp(&rhs.orb.degrees())
                 .then_with(|| lhs.lhs.cmp(&rhs.lhs))
                 .then_with(|| lhs.rhs.cmp(&rhs.rhs))
+                .then_with(|| lhs.aspect.cmp(&rhs.aspect))
         });
         if let Some(maximum) = profile.maximum_hits {
             hits.truncate(maximum as usize);

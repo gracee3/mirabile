@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+browser-contract = []
+
 [dependencies]
 astra-core = { path = "../astra-core" }
 async-trait.workspace = true

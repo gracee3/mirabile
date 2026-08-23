@@ -1,18 +1,22 @@
-use astra_core::{CanonicalResource, ResourceId, ResourceKind, Revision};
+use std::rc::Rc;
+
+use astra_core::{CanonicalResource, ResourceId, ResourceKind, Revision, Timestamp};
 use async_trait::async_trait;
 use rexie::{ObjectStore, Rexie, TransactionMode};
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 
 use crate::{
-    RepositoryError, ResourceRepository, resource_from_json, resource_to_json, validate_create,
-    validate_save,
+    RepositoryError, ResourceRepository, ResourceState, ResourceTombstone, resource_from_json,
+    resource_to_json, validate_create, validate_delete, validate_save,
 };
 
 const CURRENT_STORE: &str = "resources";
 const REVISION_STORE: &str = "resource_revisions";
 
+#[derive(Clone, Debug)]
 pub struct IndexedDbRepository {
-    database: Rexie,
+    database: Rc<Rexie>,
 }
 
 impl IndexedDbRepository {
@@ -24,7 +28,33 @@ impl IndexedDbRepository {
             .build()
             .await
             .map_err(adapter_error)?;
-        Ok(Self { database })
+        Ok(Self {
+            database: Rc::new(database),
+        })
+    }
+
+    #[cfg(feature = "browser-contract")]
+    pub async fn force_history_key_collision(
+        &self,
+        id: ResourceId,
+        revision: Revision,
+    ) -> Result<(), RepositoryError> {
+        let state = self
+            .get_head(id)
+            .await?
+            .ok_or(RepositoryError::NotFound(id))?;
+        let transaction = self
+            .database
+            .transaction(&[REVISION_STORE], TransactionMode::ReadWrite)
+            .map_err(adapter_error)?;
+        let store = transaction.store(REVISION_STORE).map_err(adapter_error)?;
+        let json = JsValue::from_str(&state_to_storage_json(&state)?);
+        store
+            .add(&json, Some(&JsValue::from_str(&revision_key(id, revision))))
+            .await
+            .map_err(adapter_error)?;
+        transaction.done().await.map_err(adapter_error)?;
+        Ok(())
     }
 }
 
@@ -49,14 +79,14 @@ impl ResourceRepository for IndexedDbRepository {
             return Err(RepositoryError::AlreadyExists(id));
         }
         let revisions = transaction.store(REVISION_STORE).map_err(adapter_error)?;
-        current
-            .add(&json, Some(&current_key))
-            .await
-            .map_err(adapter_error)?;
-        revisions
-            .add(&json, Some(&revision_key))
-            .await
-            .map_err(adapter_error)?;
+        if let Err(error) = current.add(&json, Some(&current_key)).await {
+            let _ = transaction.abort().await;
+            return Err(adapter_error(error));
+        }
+        if let Err(error) = revisions.add(&json, Some(&revision_key)).await {
+            let _ = transaction.abort().await;
+            return Err(adapter_error(error));
+        }
         transaction.done().await.map_err(adapter_error)?;
         Ok(())
     }
@@ -80,22 +110,31 @@ impl ResourceRepository for IndexedDbRepository {
             .await
             .map_err(adapter_error)?
             .ok_or(RepositoryError::NotFound(id))?;
-        let current = from_js_string(current_value)?;
+        let current = state_from_js_string(&current_value)?;
         validate_save(&current, expected_revision, &resource)?;
         let revision_store = transaction.store(REVISION_STORE).map_err(adapter_error)?;
-        current_store
-            .put(&json, Some(&current_key))
-            .await
-            .map_err(adapter_error)?;
-        revision_store
-            .add(&json, Some(&revision_key))
-            .await
-            .map_err(adapter_error)?;
+        // Put current first deliberately. A subsequent history-key failure must
+        // abort this whole transaction, which the browser contract verifies.
+        if let Err(error) = current_store.put(&json, Some(&current_key)).await {
+            let _ = transaction.abort().await;
+            return Err(adapter_error(error));
+        }
+        if let Err(error) = revision_store.add(&json, Some(&revision_key)).await {
+            let _ = transaction.abort().await;
+            return Err(adapter_error(error));
+        }
         transaction.done().await.map_err(adapter_error)?;
         Ok(())
     }
 
     async fn get(&self, id: ResourceId) -> Result<Option<CanonicalResource>, RepositoryError> {
+        Ok(match self.get_head(id).await? {
+            Some(ResourceState::Present(resource)) => Some(resource),
+            Some(ResourceState::Deleted(_)) | None => None,
+        })
+    }
+
+    async fn get_head(&self, id: ResourceId) -> Result<Option<ResourceState>, RepositoryError> {
         let transaction = self
             .database
             .transaction(&[CURRENT_STORE], TransactionMode::ReadOnly)
@@ -106,14 +145,14 @@ impl ResourceRepository for IndexedDbRepository {
             .await
             .map_err(adapter_error)?;
         transaction.done().await.map_err(adapter_error)?;
-        value.map(from_js_string).transpose()
+        value.as_ref().map(state_from_js_string).transpose()
     }
 
     async fn get_revision(
         &self,
         id: ResourceId,
         revision: Revision,
-    ) -> Result<Option<CanonicalResource>, RepositoryError> {
+    ) -> Result<Option<ResourceState>, RepositoryError> {
         let transaction = self
             .database
             .transaction(&[REVISION_STORE], TransactionMode::ReadOnly)
@@ -124,7 +163,7 @@ impl ResourceRepository for IndexedDbRepository {
             .await
             .map_err(adapter_error)?;
         transaction.done().await.map_err(adapter_error)?;
-        value.map(from_js_string).transpose()
+        value.as_ref().map(state_from_js_string).transpose()
     }
 
     async fn list(
@@ -140,38 +179,84 @@ impl ResourceRepository for IndexedDbRepository {
         transaction.done().await.map_err(adapter_error)?;
         let mut resources = values
             .into_iter()
-            .map(from_js_string)
+            .map(|value| state_from_js_string(&value))
+            .filter_map(|result| match result {
+                Ok(ResourceState::Present(resource)) => Some(Ok(resource)),
+                Ok(ResourceState::Deleted(_)) => None,
+                Err(error) => Some(Err(error)),
+            })
             .collect::<Result<Vec<_>, _>>()?;
         resources.retain(|resource| kind.is_none_or(|expected| resource.kind() == expected));
         resources.sort_by_key(CanonicalResource::id);
         Ok(resources)
     }
 
-    async fn delete(&self, id: ResourceId) -> Result<(), RepositoryError> {
-        let key = JsValue::from_str(&id.to_string());
+    async fn delete(
+        &self,
+        id: ResourceId,
+        expected_revision: Revision,
+        deleted_at: Timestamp,
+    ) -> Result<ResourceTombstone, RepositoryError> {
+        let current_key = JsValue::from_str(&id.to_string());
         let transaction = self
             .database
-            .transaction(&[CURRENT_STORE], TransactionMode::ReadWrite)
+            .transaction(&[CURRENT_STORE, REVISION_STORE], TransactionMode::ReadWrite)
             .map_err(adapter_error)?;
-        let store = transaction.store(CURRENT_STORE).map_err(adapter_error)?;
-        if !store.key_exists(key.clone()).await.map_err(adapter_error)? {
-            return Err(RepositoryError::NotFound(id));
+        let current_store = transaction.store(CURRENT_STORE).map_err(adapter_error)?;
+        let current_value = current_store
+            .get(current_key.clone())
+            .await
+            .map_err(adapter_error)?
+            .ok_or(RepositoryError::NotFound(id))?;
+        let current = state_from_js_string(&current_value)?;
+        let tombstone = validate_delete(&current, expected_revision, deleted_at)?;
+        let deleted = ResourceState::Deleted(tombstone.clone());
+        let json = JsValue::from_str(&state_to_storage_json(&deleted)?);
+        let history_key = JsValue::from_str(&revision_key(id, tombstone.revision));
+        let revision_store = transaction.store(REVISION_STORE).map_err(adapter_error)?;
+        if let Err(error) = current_store.put(&json, Some(&current_key)).await {
+            let _ = transaction.abort().await;
+            return Err(adapter_error(error));
         }
-        store.delete(key).await.map_err(adapter_error)?;
+        if let Err(error) = revision_store.add(&json, Some(&history_key)).await {
+            let _ = transaction.abort().await;
+            return Err(adapter_error(error));
+        }
         transaction.done().await.map_err(adapter_error)?;
-        Ok(())
+        Ok(tombstone)
     }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "storage_type", content = "value", rename_all = "snake_case")]
+enum StorageEnvelope {
+    Tombstone(ResourceTombstone),
 }
 
 fn revision_key(id: ResourceId, revision: Revision) -> String {
     format!("{id}@{revision}")
 }
 
-fn from_js_string(value: JsValue) -> Result<CanonicalResource, RepositoryError> {
+fn state_to_storage_json(state: &ResourceState) -> Result<String, RepositoryError> {
+    match state {
+        ResourceState::Present(resource) => resource_to_json(resource),
+        ResourceState::Deleted(tombstone) => Ok(serde_json::to_string(
+            &StorageEnvelope::Tombstone(tombstone.clone()),
+        )?),
+    }
+}
+
+fn state_from_js_string(value: &JsValue) -> Result<ResourceState, RepositoryError> {
     let json = value
         .as_string()
         .ok_or_else(|| RepositoryError::Adapter("IndexedDB value is not JSON text".into()))?;
-    resource_from_json(&json)
+    let probe: serde_json::Value = serde_json::from_str(&json)?;
+    if probe.get("storage_type").is_some() {
+        return match serde_json::from_value::<StorageEnvelope>(probe)? {
+            StorageEnvelope::Tombstone(tombstone) => Ok(ResourceState::Deleted(tombstone)),
+        };
+    }
+    resource_from_json(&json).map(ResourceState::Present)
 }
 
 fn adapter_error(error: impl std::fmt::Display) -> RepositoryError {

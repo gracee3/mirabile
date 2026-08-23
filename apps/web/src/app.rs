@@ -7,7 +7,94 @@ use astra_engine::{
 use leptos::ev;
 use leptos::prelude::*;
 
-use crate::{demo, render::WheelScene};
+use crate::{demo, persistence::BrowserRepository, render::WheelScene};
+
+#[derive(Clone, Debug)]
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+enum BrowserLibraryState {
+    Loading,
+    Ready {
+        repository: BrowserRepository,
+        canonical: ResourceEnvelope<AspectSet>,
+        editor: EditorState<AspectSet>,
+    },
+    Error {
+        message: String,
+    },
+}
+
+type LibrarySignal = RwSignal<BrowserLibraryState, LocalStorage>;
+
+impl BrowserLibraryState {
+    fn effective_aspects(&self) -> Option<AspectSet> {
+        match self {
+            Self::Ready {
+                canonical, editor, ..
+            } => Some(editor.effective(&canonical.payload).clone()),
+            Self::Loading | Self::Error { .. } => None,
+        }
+    }
+
+    fn edit_orb(&mut self, orb: Angle) -> bool {
+        let Self::Ready {
+            canonical, editor, ..
+        } = self
+        else {
+            return false;
+        };
+        if editor.is_saving() {
+            return false;
+        }
+        *editor = editor.clone().edit(&canonical.payload, |draft| {
+            if let Some(conjunction) = draft.aspects.first_mut() {
+                conjunction.orbs.maximum = orb;
+            }
+        });
+        true
+    }
+
+    fn cancel(&mut self) -> bool {
+        let Self::Ready {
+            canonical, editor, ..
+        } = self
+        else {
+            return false;
+        };
+        *editor = editor.clone().cancel(canonical.revision);
+        true
+    }
+
+    fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready { .. })
+    }
+
+    fn is_saving(&self) -> bool {
+        matches!(self, Self::Ready { editor, .. } if editor.is_saving())
+    }
+
+    fn can_save(&self) -> bool {
+        matches!(self, Self::Ready { editor, .. } if editor.is_dirty() && !editor.is_saving())
+    }
+
+    fn can_cancel(&self) -> bool {
+        self.can_save()
+    }
+
+    fn revision_text(&self) -> String {
+        match self {
+            Self::Ready { canonical, .. } => canonical.revision.to_string(),
+            Self::Loading | Self::Error { .. } => "—".into(),
+        }
+    }
+
+    fn editor_text(&self) -> &'static str {
+        match self {
+            Self::Loading => "Loading",
+            Self::Error { .. } => "Unavailable",
+            Self::Ready { editor, .. } => editor_label(editor),
+        }
+    }
+}
 
 #[component]
 #[allow(clippy::too_many_lines)]
@@ -17,19 +104,19 @@ pub fn App() -> impl IntoView {
     let points = RwSignal::new(demo::points());
     let analysis_profile = RwSignal::new(demo::analysis_profile());
     let wheel = RwSignal::new(demo::wheel());
-    let canonical_aspects = RwSignal::new(demo::aspect_resource());
-    let editor = RwSignal::new(EditorState::clean(
-        canonical_aspects.get_untracked().revision,
-    ));
+    let library = RwSignal::new_local(BrowserLibraryState::Loading);
     let theme = RwSignal::new(demo::dark_theme());
     let dark_mode = RwSignal::new(true);
     let storage_status = RwSignal::new(String::from("Opening local library…"));
+    let operation_epoch = RwSignal::new(0_u64);
 
-    initialize_local_resource(canonical_aspects, editor, storage_status);
+    start_local_resource(library, storage_status, operation_epoch);
 
     let effective_aspects = Memo::new(move |_| {
-        let canonical = canonical_aspects.get();
-        editor.get().effective(&canonical.payload).clone()
+        library
+            .get()
+            .effective_aspects()
+            .unwrap_or_else(|| demo::aspect_resource().payload)
     });
     let snapshot = Memo::new(move |_| {
         CalculationEngine::new(
@@ -54,7 +141,7 @@ pub fn App() -> impl IntoView {
     let layout = Memo::new(move |_| {
         snapshot.get().and_then(|snapshot| {
             analysis.get().and_then(|analysis| {
-                layout_wheel(&snapshot, &analysis, &points.get(), &wheel.get(), None)
+                layout_wheel(&snapshot, &analysis, &points.get(), &wheel.get())
                     .map_err(|error| error.to_string())
             })
         })
@@ -85,23 +172,22 @@ pub fn App() -> impl IntoView {
         let Ok(orb) = Angle::from_degrees(value) else {
             return;
         };
-        if editor.get_untracked().is_saving() {
-            return;
+        let mut accepted = false;
+        library.update(|state| accepted = state.edit_orb(orb));
+        if accepted {
+            storage_status.set("Previewing an uncommitted draft".into());
         }
-        let canonical = canonical_aspects.get_untracked();
-        editor.update(|state| {
-            *state = state.clone().edit(&canonical.payload, |draft| {
-                if let Some(conjunction) = draft.aspects.first_mut() {
-                    conjunction.orbs.maximum = orb;
-                }
-            });
-        });
-        storage_status.set("Previewing an uncommitted draft".into());
     };
 
     let save = move |_| {
-        let base = canonical_aspects.get_untracked();
-        let prior_editor = editor.get_untracked();
+        let BrowserLibraryState::Ready {
+            repository,
+            canonical: base,
+            editor: prior_editor,
+        } = library.get_untracked()
+        else {
+            return;
+        };
         if !prior_editor.is_dirty() || prior_editor.is_saving() {
             return;
         }
@@ -115,24 +201,35 @@ pub fn App() -> impl IntoView {
             expected_revision: base.revision,
             resource: CanonicalResource::AspectSet(next.clone()),
         };
-        editor.set(prior_editor.clone().begin_save());
+        let token = next_epoch(operation_epoch);
+        library.update(|state| {
+            if let BrowserLibraryState::Ready { editor, .. } = state {
+                *editor = prior_editor.clone().begin_save();
+            }
+        });
         storage_status.set("Saving locally…".into());
         save_local_revision(
+            repository,
             base,
             next,
             command,
             prior_editor,
-            canonical_aspects,
-            editor,
+            token,
+            operation_epoch,
+            library,
             storage_status,
         );
     };
 
     let cancel = move |_| {
-        let revision = canonical_aspects.get_untracked().revision;
-        editor.update(|state| *state = state.clone().cancel(revision));
-        storage_status.set("Draft canceled; canonical revision restored".into());
+        let mut accepted = false;
+        library.update(|state| accepted = state.cancel());
+        if accepted {
+            storage_status.set("Draft canceled; canonical revision restored".into());
+        }
     };
+
+    let retry = move |_| start_local_resource(library, storage_status, operation_epoch);
 
     let toggle_theme = move |_| {
         let next_dark = !dark_mode.get_untracked();
@@ -183,6 +280,21 @@ pub fn App() -> impl IntoView {
                         "The draft feeds analysis immediately. The canonical resource changes only after a successful local revision write."
                     </p>
 
+                    {move || match library.get() {
+                        BrowserLibraryState::Loading => view! {
+                            <p class="status" data-editor-state="loading">"Opening IndexedDB before enabling edits…"</p>
+                        }.into_any(),
+                        BrowserLibraryState::Error { message } => view! {
+                            <div data-editor-state="error">
+                                <p class="error" role="alert">{message}</p>
+                                <button class="secondary" type="button" on:click=retry>"Retry"</button>
+                            </div>
+                        }.into_any(),
+                        BrowserLibraryState::Ready { .. } => view! {
+                            <p class="status" data-editor-state="ready">"Local repository ready"</p>
+                        }.into_any(),
+                    }}
+
                     <label for="conjunction-orb">
                         "Maximum orb"
                         <output for="conjunction-orb">
@@ -196,7 +308,7 @@ pub fn App() -> impl IntoView {
                         max="12"
                         step="0.5"
                         prop:value=move || format!("{:.1}", conjunction_orb(&effective_aspects.get()))
-                        disabled=move || editor.get().is_saving()
+                        disabled=move || !library.get().is_ready() || library.get().is_saving()
                         on:input=edit_orb
                     />
 
@@ -204,7 +316,7 @@ pub fn App() -> impl IntoView {
                         <button
                             class="primary"
                             type="button"
-                            disabled=move || !editor.get().is_dirty() || editor.get().is_saving()
+                            disabled=move || !library.get().can_save()
                             on:click=save
                         >
                             "Save revision"
@@ -212,7 +324,7 @@ pub fn App() -> impl IntoView {
                         <button
                             class="secondary"
                             type="button"
-                            disabled=move || !editor.get().is_dirty() || editor.get().is_saving()
+                            disabled=move || !library.get().can_cancel()
                             on:click=cancel
                         >
                             "Cancel"
@@ -222,11 +334,11 @@ pub fn App() -> impl IntoView {
                     <dl class="facts">
                         <div>
                             <dt>"Canonical revision"</dt>
-                            <dd>{move || canonical_aspects.get().revision.to_string()}</dd>
+                            <dd>{move || library.get().revision_text()}</dd>
                         </div>
                         <div>
                             <dt>"Editor"</dt>
-                            <dd>{move || editor_label(&editor.get())}</dd>
+                            <dd>{move || library.get().editor_text()}</dd>
                         </div>
                         <div>
                             <dt>"Aspect hits"</dt>
@@ -247,12 +359,12 @@ pub fn App() -> impl IntoView {
                 <div class="key-grid">
                     <KeyCard
                         label="CalcKey"
-                        detail="civil time + location + calculation + provider"
+                        detail="civil time + numeric location + calculation + provider"
                         value=Signal::derive(move || key_text(snapshot.get().map(|value| value.calc_key)))
                     />
                     <KeyCard
                         label="AnalysisKey"
-                        detail="CalcKey + points + aspects + analysis profile"
+                        detail="CalcKey + resolved points + numeric aspect rules"
                         value=Signal::derive(move || key_text(analysis.get().map(|value| value.analysis_key)))
                     />
                     <KeyCard
@@ -306,70 +418,150 @@ fn key_text<T: std::fmt::Display>(value: Result<T, String>) -> String {
     )
 }
 
-fn initialize_local_resource(
-    canonical: RwSignal<ResourceEnvelope<AspectSet>>,
-    editor: RwSignal<EditorState<AspectSet>>,
-    status: RwSignal<String>,
-) {
+fn next_epoch(epoch: RwSignal<u64>) -> u64 {
+    let next = epoch.get_untracked().wrapping_add(1);
+    epoch.set(next);
+    next
+}
+
+fn start_local_resource(library: LibrarySignal, status: RwSignal<String>, epoch: RwSignal<u64>) {
+    let token = next_epoch(epoch);
+    library.set(BrowserLibraryState::Loading);
+    status.set("Opening local library…".into());
     #[cfg(target_arch = "wasm32")]
     {
-        let seed = canonical.get_untracked();
+        let seed = demo::aspect_resource();
         leptos::task::spawn_local(async move {
-            match crate::persistence::load_or_seed(seed).await {
-                Ok(resource) => {
-                    let revision = resource.revision;
-                    canonical.set(resource);
-                    editor.set(EditorState::clean(revision));
+            let result = crate::persistence::open_and_load(seed).await;
+            if epoch.get_untracked() != token {
+                return;
+            }
+            match result {
+                Ok((repository, canonical)) => {
+                    let revision = canonical.revision;
+                    library.set(BrowserLibraryState::Ready {
+                        repository,
+                        canonical,
+                        editor: EditorState::clean(revision),
+                    });
                     status.set(format!("Local library ready at revision {revision}"));
                 }
-                Err(error) => status.set(format!("Local persistence unavailable: {error}")),
+                Err(error) => {
+                    let message = format!("Local persistence unavailable: {error}");
+                    library.set(BrowserLibraryState::Error {
+                        message: message.clone(),
+                    });
+                    status.set(message);
+                }
             }
         });
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (canonical, editor);
-        status.set("IndexedDB is available in the WASM build".into());
+        let _ = token;
+        library.set(BrowserLibraryState::Error {
+            message: "IndexedDB is available only in the WASM build".into(),
+        });
+        status.set("IndexedDB is available only in the WASM build".into());
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
 fn save_local_revision(
+    repository: BrowserRepository,
     base: ResourceEnvelope<AspectSet>,
     next: ResourceEnvelope<AspectSet>,
     command: Command,
     prior_editor: EditorState<AspectSet>,
-    canonical: RwSignal<ResourceEnvelope<AspectSet>>,
-    editor: RwSignal<EditorState<AspectSet>>,
+    token: u64,
+    epoch: RwSignal<u64>,
+    library: LibrarySignal,
     status: RwSignal<String>,
 ) {
     #[cfg(target_arch = "wasm32")]
     leptos::task::spawn_local(async move {
-        match crate::persistence::save_command(base, command).await {
+        let result = crate::persistence::save_command(&repository, command).await;
+        if epoch.get_untracked() != token {
+            return;
+        }
+        match result {
             Ok(()) => {
                 let revision = next.revision;
-                canonical.set(next);
-                editor.set(prior_editor.saved(revision));
-                status.set(format!("Saved locally as revision {revision}"));
+                let mut applied = false;
+                library.update(|state| {
+                    if let BrowserLibraryState::Ready {
+                        canonical, editor, ..
+                    } = state
+                        && canonical.id == base.id
+                        && canonical.revision == base.revision
+                        && editor.is_saving()
+                        && editor.base_revision() == base.revision
+                    {
+                        *canonical = next.clone();
+                        *editor = prior_editor.clone().saved(revision);
+                        applied = true;
+                    }
+                });
+                if applied {
+                    status.set(format!("Saved locally as revision {revision}"));
+                }
             }
             Err(error) => {
-                if let Some(remote_revision) = crate::persistence::conflict_revision(&error) {
-                    editor.set(prior_editor.conflict(remote_revision));
-                } else {
-                    editor.set(prior_editor);
+                let remote_revision = crate::persistence::conflict_revision(&error);
+                let mut applied = false;
+                library.update(|state| {
+                    if let BrowserLibraryState::Ready {
+                        canonical, editor, ..
+                    } = state
+                        && canonical.id == base.id
+                        && canonical.revision == base.revision
+                        && editor.is_saving()
+                        && editor.base_revision() == base.revision
+                    {
+                        *editor = remote_revision.map_or_else(
+                            || prior_editor.clone(),
+                            |revision| prior_editor.clone().conflict(revision),
+                        );
+                        applied = true;
+                    }
+                });
+                if applied {
+                    status.set(format!("Save failed: {error}"));
                 }
-                status.set(format!("Save failed: {error}"));
             }
         }
     });
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (base, command);
-        let revision = next.revision;
-        canonical.set(next);
-        editor.set(prior_editor.saved(revision));
-        status.set(format!(
-            "Committed in native preview as revision {revision}"
-        ));
+        let _ = (
+            repository,
+            base,
+            next,
+            command,
+            prior_editor,
+            token,
+            epoch,
+            library,
+            status,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loading_and_error_states_reject_edits() {
+        let orb = Angle::from_degrees(6.0).expect("valid angle");
+        let mut loading = BrowserLibraryState::Loading;
+        let mut error = BrowserLibraryState::Error {
+            message: "failed".into(),
+        };
+
+        assert!(!loading.edit_orb(orb));
+        assert!(!error.edit_orb(orb));
+        assert!(!loading.can_save());
+        assert!(!error.can_save());
     }
 }

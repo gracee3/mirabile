@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use astra_core::{
-    AngleState, CalendarSpec, ChartDefinition, ChartRecord, ChartSource, HouseState, LocationRole,
-    Offset, PointId, PointState, ResolvedLocation, ResolvedTime, ResourceEnvelope,
+    AngleState, CalendarSpec, ChartDefinition, ChartRecord, ChartSource, HouseState, Latitude,
+    Longitude, Offset, PointId, PointState, ResolvedTime, ResourceEnvelope, ResourceError,
     ResourceRevisionRef, TimeZoneAssertion,
 };
 use serde::{Deserialize, Serialize};
@@ -19,19 +19,36 @@ pub struct CalculationProvenance {
     pub ephemeris_provider_version: String,
     pub ephemeris_data_version: Option<String>,
     pub timezone_database_version: Option<String>,
-    pub calculation_profile_revision: Option<astra_core::Revision>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ChartSnapshot {
-    pub definition: ResourceRevisionRef,
-    pub calc_key: CalcKey,
+pub struct NumericLocation {
+    pub latitude: Latitude,
+    pub longitude: Longitude,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CalculationValue {
     pub resolved_time: ResolvedTime,
-    pub location: ResolvedLocation,
+    pub numeric_location: NumericLocation,
     pub points: BTreeMap<PointId, PointState>,
     pub houses: Option<HouseState>,
     pub angles: AngleState,
     pub provenance: CalculationProvenance,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SnapshotContext {
+    pub definition: ResourceRevisionRef,
+    pub records: Vec<ResourceRevisionRef>,
+    pub location_display_name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ChartSnapshot {
+    pub calc_key: CalcKey,
+    pub context: SnapshotContext,
+    pub calculation: CalculationValue,
 }
 
 pub struct CalculationEngine<P> {
@@ -62,6 +79,7 @@ impl<P: EphemerisProvider> CalculationEngine<P> {
         definition: &ResourceEnvelope<ChartDefinition>,
         record: &ResourceEnvelope<ChartRecord>,
     ) -> Result<CalcKey, CalculationError> {
+        validate_radix_inputs(definition, record)?;
         Ok(CalcKey::derive(
             definition,
             record,
@@ -76,42 +94,49 @@ impl<P: EphemerisProvider> CalculationEngine<P> {
         definition: &ResourceEnvelope<ChartDefinition>,
         record: &ResourceEnvelope<ChartRecord>,
     ) -> Result<ChartSnapshot, CalculationError> {
-        match &definition.payload.source {
-            ChartSource::Radix { record: expected } if *expected == record.id => {}
-            ChartSource::Radix { record: expected } => {
-                return Err(CalculationError::RecordMismatch {
-                    expected: *expected,
-                    actual: record.id,
-                });
-            }
-            ChartSource::Derived { .. } => {
-                return Err(CalculationError::DerivedChartNotImplemented);
-            }
-        }
+        let calc_key = self.calc_key(definition, record)?;
+        let calculation = self.calculate_value(record, &definition.payload.calculation)?;
+        Ok(ChartSnapshot {
+            calc_key,
+            context: Self::snapshot_context(definition, record),
+            calculation,
+        })
+    }
 
+    pub fn snapshot_from_cached(
+        &self,
+        definition: &ResourceEnvelope<ChartDefinition>,
+        record: &ResourceEnvelope<ChartRecord>,
+        calculation: CalculationValue,
+    ) -> Result<ChartSnapshot, CalculationError> {
+        Ok(ChartSnapshot {
+            calc_key: self.calc_key(definition, record)?,
+            context: Self::snapshot_context(definition, record),
+            calculation,
+        })
+    }
+
+    fn calculate_value(
+        &self,
+        record: &ResourceEnvelope<ChartRecord>,
+        calculation: &astra_core::CalculationSpec,
+    ) -> Result<CalculationValue, CalculationError> {
         let resolved_time = resolve_time(&record.payload, &self.timezone_data_version)?;
-        let location = ResolvedLocation {
-            display_name: record.payload.location.display_name.clone(),
+        let numeric_location = NumericLocation {
             latitude: record.payload.location.latitude,
             longitude: record.payload.location.longitude,
-            role: LocationRole::Asserted,
         };
         let request = EphemerisRequest {
             time: resolved_time.clone(),
-            location: location.clone(),
-            calculation: definition.payload.calculation.clone(),
+            location: numeric_location.clone(),
+            calculation: calculation.clone(),
         };
         let output = self.provider.calculate(&request)?;
         let identity = self.provider.identity();
 
-        Ok(ChartSnapshot {
-            definition: ResourceRevisionRef {
-                id: definition.id,
-                revision: definition.revision,
-            },
-            calc_key: self.calc_key(definition, record)?,
+        Ok(CalculationValue {
             resolved_time,
-            location,
+            numeric_location,
             points: output.points,
             houses: output.houses,
             angles: output.angles,
@@ -121,9 +146,41 @@ impl<P: EphemerisProvider> CalculationEngine<P> {
                 ephemeris_provider_version: identity.version,
                 ephemeris_data_version: identity.data_version,
                 timezone_database_version: Some(self.timezone_data_version.clone()),
-                calculation_profile_revision: None,
             },
         })
+    }
+
+    fn snapshot_context(
+        definition: &ResourceEnvelope<ChartDefinition>,
+        record: &ResourceEnvelope<ChartRecord>,
+    ) -> SnapshotContext {
+        SnapshotContext {
+            definition: ResourceRevisionRef {
+                id: definition.id,
+                revision: definition.revision,
+            },
+            records: vec![ResourceRevisionRef {
+                id: record.id,
+                revision: record.revision,
+            }],
+            location_display_name: record.payload.location.display_name.clone(),
+        }
+    }
+}
+
+fn validate_radix_inputs(
+    definition: &ResourceEnvelope<ChartDefinition>,
+    record: &ResourceEnvelope<ChartRecord>,
+) -> Result<(), CalculationError> {
+    definition.validate()?;
+    record.validate()?;
+    match &definition.payload.source {
+        ChartSource::Radix { record: expected } if *expected == record.id => Ok(()),
+        ChartSource::Radix { record: expected } => Err(CalculationError::RecordMismatch {
+            expected: *expected,
+            actual: record.id,
+        }),
+        ChartSource::Derived { .. } => Err(CalculationError::DerivedChartNotImplemented),
     }
 }
 
@@ -195,6 +252,8 @@ pub enum CalculationError {
     },
     #[error("derived chart recipes are established but not calculated in this milestone")]
     DerivedChartNotImplemented,
+    #[error(transparent)]
+    InvalidResource(#[from] ResourceError),
     #[error(transparent)]
     Time(#[from] TimeResolutionError),
     #[error(transparent)]

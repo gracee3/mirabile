@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+browser-contract = ["astra-store/browser-contract"]
+
 [dependencies]
 astra-core = { path = "../../crates/astra-core" }
 astra-engine = { path = "../../crates/astra-engine" }

@@ -2,10 +2,12 @@ use std::collections::BTreeMap;
 
 use astra_core::{
     Angle, AngleState, AngularVelocity, CalculationSpec, HouseState, PointId, PointState,
-    ResolvedLocation, ResolvedTime,
+    ResolvedTime,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::NumericLocation;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProviderIdentity {
@@ -17,7 +19,7 @@ pub struct ProviderIdentity {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EphemerisRequest {
     pub time: ResolvedTime,
-    pub location: ResolvedLocation,
+    pub location: NumericLocation,
     pub calculation: CalculationSpec,
 }
 

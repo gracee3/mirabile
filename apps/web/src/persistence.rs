@@ -9,37 +9,41 @@ use astra_store::{
 const DATABASE_NAME: &str = "astra-foundation";
 
 #[cfg(target_arch = "wasm32")]
-pub async fn load_or_seed(
+pub type BrowserRepository = IndexedDbRepository;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug)]
+pub struct BrowserRepository;
+
+#[cfg(target_arch = "wasm32")]
+pub async fn open_and_load(
     seed: ResourceEnvelope<AspectSet>,
-) -> Result<ResourceEnvelope<AspectSet>, RepositoryError> {
+) -> Result<(BrowserRepository, ResourceEnvelope<AspectSet>), RepositoryError> {
     let repository = IndexedDbRepository::open(DATABASE_NAME).await?;
-    match repository.get(seed.id).await? {
-        Some(CanonicalResource::AspectSet(resource)) => Ok(resource),
-        Some(other) => Err(RepositoryError::KindChanged {
-            expected: astra_core::ResourceKind::AspectSet,
-            actual: other.kind(),
-        }),
+    let canonical = match repository.get(seed.id).await? {
+        Some(CanonicalResource::AspectSet(resource)) => resource,
+        Some(other) => {
+            return Err(RepositoryError::KindChanged {
+                expected: astra_core::ResourceKind::AspectSet,
+                actual: other.kind(),
+            });
+        }
         None => {
             repository
                 .create(CanonicalResource::AspectSet(seed.clone()))
                 .await?;
-            Ok(seed)
+            seed
         }
-    }
+    };
+    Ok((repository, canonical))
 }
 
 #[cfg(target_arch = "wasm32")]
 pub async fn save_command(
-    base: ResourceEnvelope<AspectSet>,
+    repository: &BrowserRepository,
     command: Command,
 ) -> Result<(), RepositoryError> {
-    let repository = IndexedDbRepository::open(DATABASE_NAME).await?;
-    if repository.get(base.id).await?.is_none() {
-        repository
-            .create(CanonicalResource::AspectSet(base.clone()))
-            .await?;
-    }
-    execute_resource_command(&repository, command).await?;
+    execute_resource_command(repository, command).await?;
     Ok(())
 }
 

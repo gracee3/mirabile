@@ -1,8 +1,11 @@
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use thiserror::Error;
 
-use crate::Offset;
+use crate::{
+    DomainValidate, DomainValidationError, DomainValidationIssue, Offset, validation::nonempty,
+};
 
+/// A civil date using astronomical year numbering; year 0 is 1 BCE.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct CivilDate {
     year: i32,
@@ -15,7 +18,9 @@ impl CivilDate {
         if !(1..=12).contains(&month) {
             return Err(CivilTimeError::InvalidMonth(month));
         }
-        let maximum = days_in_month(year, month);
+        // Calendar-independent construction deliberately permits February 29.
+        // The enclosing TemporalAssertion applies the selected calendar rules.
+        let maximum = structural_days_in_month(month);
         if day == 0 || day > maximum {
             return Err(CivilTimeError::InvalidDay { day, maximum });
         }
@@ -151,6 +156,39 @@ pub struct TemporalAssertion {
     pub disambiguation: Option<TimeChoice>,
 }
 
+impl DomainValidate for TemporalAssertion {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        let date = self.civil_datetime.date;
+        if date.month() == 2 && date.day() == 29 {
+            let valid = match &self.calendar {
+                CalendarSpec::ProlepticGregorian => is_gregorian_leap_year(date.year()),
+                CalendarSpec::Julian => is_julian_leap_year(date.year()),
+                CalendarSpec::HistoricalTransition { .. } => true,
+            };
+            if !valid {
+                return Err(DomainValidationError::new(
+                    "civil_datetime.date",
+                    DomainValidationIssue::InvalidDate {
+                        calendar: match self.calendar {
+                            CalendarSpec::ProlepticGregorian => "proleptic Gregorian",
+                            CalendarSpec::Julian => "Julian",
+                            CalendarSpec::HistoricalTransition { .. } => "historical transition",
+                        }
+                        .into(),
+                    },
+                ));
+            }
+        }
+        if let CalendarSpec::HistoricalTransition { identifier } = &self.calendar {
+            nonempty(identifier, "calendar.identifier")?;
+        }
+        if let TimeZoneAssertion::NamedZone(name) = &self.zone {
+            nonempty(name, "zone.value")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct AstroInstant(f64);
@@ -201,17 +239,20 @@ pub enum CivilTimeError {
     InvalidInstant,
 }
 
-const fn days_in_month(year: i32, month: u8) -> u8 {
+const fn structural_days_in_month(month: u8) -> u8 {
     match month {
         4 | 6 | 9 | 11 => 30,
-        2 if is_leap_year(year) => 29,
-        2 => 28,
+        2 => 29,
         _ => 31,
     }
 }
 
-const fn is_leap_year(year: i32) -> bool {
+const fn is_gregorian_leap_year(year: i32) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+const fn is_julian_leap_year(year: i32) -> bool {
+    year % 4 == 0
 }
 
 #[cfg(test)]
@@ -219,9 +260,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn civil_date_checks_leap_days() {
+    fn civil_date_defers_leap_day_rules_to_the_calendar_assertion() {
         assert!(CivilDate::new(2000, 2, 29).is_ok());
-        assert!(CivilDate::new(1900, 2, 29).is_err());
-        assert!(serde_json::from_str::<CivilDate>(r#"{"year":1900,"month":2,"day":29}"#).is_err());
+        assert!(CivilDate::new(1900, 2, 29).is_ok());
+        assert!(serde_json::from_str::<CivilDate>(r#"{"year":1900,"month":2,"day":29}"#).is_ok());
+    }
+
+    #[test]
+    fn calendar_rules_distinguish_gregorian_and_julian_leap_days() {
+        let assertion = |calendar| TemporalAssertion {
+            civil_datetime: CivilDateTime {
+                date: CivilDate::new(1900, 2, 29).expect("structurally valid date"),
+                time: CivilTime::new(0, 0, 0).expect("valid time"),
+            },
+            calendar,
+            zone: TimeZoneAssertion::UniversalTime,
+            disambiguation: None,
+        };
+
+        assert!(
+            assertion(CalendarSpec::ProlepticGregorian)
+                .domain_validate()
+                .is_err()
+        );
+        assert!(assertion(CalendarSpec::Julian).domain_validate().is_ok());
     }
 }

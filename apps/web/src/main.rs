@@ -1,15 +1,31 @@
+#[cfg(not(feature = "browser-contract"))]
 mod app;
+#[cfg(all(target_arch = "wasm32", feature = "browser-contract"))]
+mod browser_contract;
+#[cfg(not(feature = "browser-contract"))]
 mod demo;
+#[cfg(not(feature = "browser-contract"))]
 mod persistence;
+#[cfg(not(feature = "browser-contract"))]
 mod render;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(feature = "browser-contract")))]
 fn main() {
     leptos::mount::mount_to_body(app::App);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(target_arch = "wasm32", feature = "browser-contract"))]
+fn main() {
+    leptos::mount::mount_to_body(browser_contract::BrowserContract);
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "browser-contract")))]
 fn main() {
     std::hint::black_box(app::App);
     println!("astra-web is a WebAssembly CSR application; use Trunk to run it");
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "browser-contract"))]
+fn main() {
+    println!("the browser contract must run on wasm32-unknown-unknown");
 }

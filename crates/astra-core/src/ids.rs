@@ -157,6 +157,12 @@ impl SchemaVersion {
     }
 }
 
+impl fmt::Display for SchemaVersion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 impl<'de> Deserialize<'de> for SchemaVersion {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

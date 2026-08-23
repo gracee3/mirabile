@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use astra_core::{PointId, PointSet, Theme, ViewDocument, WheelTemplate};
+use astra_core::{DomainValidate, PointId, PointSelector, PointSet, Theme, WheelTemplate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -43,15 +43,9 @@ pub fn layout_wheel(
     analysis: &ChartAnalysis,
     displayed_points: &PointSet,
     wheel: &WheelTemplate,
-    view: Option<&ViewDocument>,
 ) -> Result<WheelLayout, LayoutError> {
-    let key = LayoutKey::derive(
-        &analysis.analysis_key,
-        displayed_points,
-        wheel,
-        view,
-        "wheel-layout-v1",
-    )?;
+    displayed_points.domain_validate()?;
+    wheel.domain_validate()?;
     let center_x = 200.0;
     let center_y = 200.0;
     let zodiac_radius = wheel
@@ -63,11 +57,24 @@ pub fn layout_wheel(
     let aspect_radius = wheel.aspect_field.radius;
     let mut points = Vec::new();
     let mut aspect_anchors = BTreeMap::new();
+    let mut resolved_points = Vec::new();
 
-    for point in displayed_points.direct_points() {
-        let Some(state) = snapshot.points.get(point) else {
+    let mut point_ids = Vec::with_capacity(displayed_points.points.len());
+    for selector in &displayed_points.points {
+        match selector {
+            PointSelector::Point(point) => point_ids.push(point.clone()),
+            PointSelector::Category(category) => {
+                return Err(LayoutError::UnresolvedPointCategory(category.clone()));
+            }
+        }
+    }
+    point_ids.sort();
+
+    for point in &point_ids {
+        let Some(state) = snapshot.calculation.points.get(point) else {
             continue;
         };
+        resolved_points.push((point.clone(), state.longitude));
         let radians = (state.longitude.degrees() - 90.0).to_radians();
         let x = center_x + zodiac_radius * radians.cos();
         let y = center_y + zodiac_radius * radians.sin();
@@ -83,15 +90,30 @@ pub fn layout_wheel(
         });
     }
 
-    let aspects = analysis
+    let mut aspect_pairs = analysis
         .aspects
         .iter()
         .filter_map(|hit| {
-            let (x1, y1) = aspect_anchors.get(&hit.lhs)?;
-            let (x2, y2) = aspect_anchors.get(&hit.rhs)?;
+            if !aspect_anchors.contains_key(&hit.lhs) || !aspect_anchors.contains_key(&hit.rhs) {
+                return None;
+            }
+            let (lhs, rhs) = if hit.lhs <= hit.rhs {
+                (hit.lhs.clone(), hit.rhs.clone())
+            } else {
+                (hit.rhs.clone(), hit.lhs.clone())
+            };
+            Some((lhs, rhs))
+        })
+        .collect::<Vec<_>>();
+    aspect_pairs.sort();
+    let aspects = aspect_pairs
+        .iter()
+        .filter_map(|(lhs, rhs)| {
+            let (x1, y1) = aspect_anchors.get(lhs)?;
+            let (x2, y2) = aspect_anchors.get(rhs)?;
             Some(AspectSegment {
-                lhs: hit.lhs.clone(),
-                rhs: hit.rhs.clone(),
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
                 x1: *x1,
                 y1: *y1,
                 x2: *x2,
@@ -99,6 +121,13 @@ pub fn layout_wheel(
             })
         })
         .collect();
+    let key = LayoutKey::derive(
+        &resolved_points,
+        &aspect_pairs,
+        zodiac_radius,
+        aspect_radius,
+        "wheel-layout-v1",
+    )?;
 
     Ok(WheelLayout {
         key,
@@ -248,4 +277,8 @@ pub fn render_key(layout: &WheelLayout, theme: &Theme) -> Result<RenderKey, KeyE
 pub enum LayoutError {
     #[error(transparent)]
     Key(#[from] KeyError),
+    #[error(transparent)]
+    InvalidDomain(#[from] astra_core::DomainValidationError),
+    #[error("point category {0:?} must be resolved before layout")]
+    UnresolvedPointCategory(String),
 }

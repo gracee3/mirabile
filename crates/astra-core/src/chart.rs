@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Angle, AngularVelocity, AstroInstant, Latitude, Longitude, PointId, ResourceId,
-    TemporalAssertion, Timestamp,
+    Angle, AngularVelocity, AstroInstant, DomainValidate, DomainValidationError,
+    DomainValidationIssue, Latitude, Longitude, PointId, ResourceId, TemporalAssertion, Timestamp,
+    validation::{finite, nonempty, positive},
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -241,4 +242,143 @@ pub struct AngleState {
 pub struct PointPosition {
     pub point: PointId,
     pub instant: AstroInstant,
+}
+
+impl DomainValidate for ChartRecord {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        if let EventKind::Other(label) = &self.event_kind {
+            nonempty(label, "event_kind.value")?;
+        }
+        if let Some(subject) = &self.subject {
+            nonempty(&subject.display_name, "subject.display_name")?;
+            if let Some(pronouns) = &subject.pronouns {
+                nonempty(pronouns, "subject.pronouns")?;
+            }
+        }
+        self.time
+            .domain_validate()
+            .map_err(|error| error.prepend("time"))?;
+        self.location
+            .domain_validate()
+            .map_err(|error| error.prepend("location"))?;
+        nonempty(&self.source.description, "source.description")?;
+        if let Some(recorded_by) = &self.source.recorded_by {
+            nonempty(recorded_by, "source.recorded_by")?;
+        }
+        for (index, note) in self.notes.iter().enumerate() {
+            nonempty(&note.text, &format!("notes[{index}].text"))?;
+        }
+        for (index, event) in self.life_events.iter().enumerate() {
+            event
+                .domain_validate()
+                .map_err(|error| error.prepend(&format!("life_events[{index}]")))?;
+        }
+        Ok(())
+    }
+}
+
+impl DomainValidate for LifeEvent {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        nonempty(&self.title, "title")?;
+        self.time
+            .domain_validate()
+            .map_err(|error| error.prepend("time"))?;
+        if let Some(location) = &self.location {
+            location
+                .domain_validate()
+                .map_err(|error| error.prepend("location"))?;
+        }
+        for (index, note) in self.notes.iter().enumerate() {
+            nonempty(&note.text, &format!("notes[{index}].text"))?;
+        }
+        Ok(())
+    }
+}
+
+impl DomainValidate for LocationAssertion {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        nonempty(&self.display_name, "display_name")?;
+        if let Some(country_region) = &self.country_region {
+            nonempty(country_region, "country_region")?;
+        }
+        if let Some(atlas) = &self.atlas_provenance {
+            nonempty(&atlas.provider, "atlas_provenance.provider")?;
+            if let Some(record_id) = &atlas.record_id {
+                nonempty(record_id, "atlas_provenance.record_id")?;
+            }
+            if let Some(data_version) = &atlas.data_version {
+                nonempty(data_version, "atlas_provenance.data_version")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl DomainValidate for ChartDefinition {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        match &self.source {
+            ChartSource::Radix { .. } => {}
+            ChartSource::Derived { recipe } => recipe.domain_validate()?,
+        }
+        self.calculation.domain_validate()
+    }
+}
+
+impl DomainValidate for DerivationSpec {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        match self {
+            Self::Transit { at, location } => {
+                at.domain_validate().map_err(|error| error.prepend("at"))?;
+                location
+                    .domain_validate()
+                    .map_err(|error| error.prepend("location"))?;
+            }
+            Self::Harmonic { harmonic, .. } => positive(*harmonic, "harmonic")?,
+            Self::Relocation { location, .. } => location.domain_validate()?,
+            Self::Composite { charts, .. } => {
+                if charts.len() < 2 {
+                    return Err(DomainValidationError::new(
+                        "charts",
+                        DomainValidationIssue::InvalidStructure {
+                            requirement: "must contain at least two charts".into(),
+                        },
+                    ));
+                }
+                let mut unique = charts.clone();
+                unique.sort_unstable();
+                unique.dedup();
+                if unique.len() != charts.len() {
+                    return Err(DomainValidationError::new(
+                        "charts",
+                        DomainValidationIssue::Duplicate,
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl DomainValidate for CalculationSpec {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        if let ZodiacSpec::Sidereal { ayanamsha } = &self.zodiac {
+            nonempty(ayanamsha, "zodiac.value")?;
+        }
+        Ok(())
+    }
+}
+
+impl DomainValidate for PointState {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        for (path, value) in [
+            ("longitude", self.longitude.degrees()),
+            ("latitude", self.latitude.degrees()),
+            ("declination", self.declination.degrees()),
+            ("right_ascension", self.right_ascension.degrees()),
+            ("speed_longitude", self.speed_longitude.as_degrees_per_day()),
+        ] {
+            finite(value, path)?;
+        }
+        Ok(())
+    }
 }

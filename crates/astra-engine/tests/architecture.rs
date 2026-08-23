@@ -2,14 +2,33 @@ use astra_core::{
     AnalysisProfile, Angle, AspectClass, AspectDefinition, AspectFieldSpec, AspectId, AspectSet,
     CalculationSpec, CalendarSpec, ChartDefinition, ChartRecord, ChartSlotId, ChartSource,
     CivilDate, CivilDateTime, CivilTime, EventKind, HouseDisplaySpec, HouseSystem, LabelSpec,
-    Latitude, LocationAssertion, Longitude, OrbPolicy, PointId, PointSelector, PointSet,
-    ResourceEnvelope, ResourceId, RingGeometry, RingSpec, SourceProvenance, SourceType,
-    TemporalAssertion, Theme, TimeZoneAssertion, Timestamp, WheelTemplate, ZodiacDisplaySpec,
+    Latitude, LocationAssertion, Longitude, Note, Offset, OrbPolicy, PointId, PointSelector,
+    PointSet, ResourceEnvelope, ResourceId, RingGeometry, RingSpec, SourceProvenance, SourceType,
+    SubjectInfo, TemporalAssertion, Theme, TimeZoneAssertion, Timestamp, WheelTemplate,
+    ZodiacDisplaySpec,
 };
 use astra_engine::{
-    AspectAnalyzer, CalculationEngine, ComputationCache, DeterministicEphemeris, Scene,
-    layout_wheel, render_key,
+    AnalysisKey, AspectAnalyzer, CalculationEngine, ComputationCache, DeterministicEphemeris,
+    EphemerisError, EphemerisOutput, EphemerisProvider, EphemerisRequest, KeyError,
+    ProviderIdentity, Scene, layout_wheel, render_key,
 };
+
+#[derive(Clone, Copy, Debug)]
+struct AlternateIdentityProvider;
+
+impl EphemerisProvider for AlternateIdentityProvider {
+    fn identity(&self) -> ProviderIdentity {
+        ProviderIdentity {
+            name: "alternate-test-provider".into(),
+            version: "2".into(),
+            data_version: Some("alternate-data".into()),
+        }
+    }
+
+    fn calculate(&self, request: &EphemerisRequest) -> Result<EphemerisOutput, EphemerisError> {
+        DeterministicEphemeris.calculate(request)
+    }
+}
 
 fn sample_resources() -> (
     ResourceEnvelope<ChartRecord>,
@@ -151,12 +170,167 @@ fn metadata_only_rename_does_not_invalidate_calculation() {
     let (record, definition) = sample_resources();
     let mut renamed = record.clone();
     renamed.title = "Renamed example person".into();
+    renamed.description = Some("resource-level description".into());
+    renamed.tags = vec!["example".into()];
+    renamed.payload.subject = Some(SubjectInfo {
+        display_name: "Different display name".into(),
+        pronouns: Some("they/them".into()),
+    });
+    renamed.payload.notes.push(Note {
+        text: "Non-calculation note".into(),
+        created_at: Timestamp::from_unix_millis(1),
+    });
+    renamed.payload.source.description = "Different source wording".into();
+    renamed.payload.location.display_name = "Different atlas label".into();
+    let mut renamed_definition = definition.clone();
+    renamed_definition.title = "Renamed definition".into();
     let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
 
     assert_eq!(
         engine.calc_key(&definition, &record).expect("first key"),
-        engine.calc_key(&definition, &renamed).expect("renamed key")
+        engine
+            .calc_key(&renamed_definition, &renamed)
+            .expect("metadata-edited key")
     );
+}
+
+#[test]
+fn every_calculation_dependency_changes_the_calculation_key() {
+    let (record, definition) = sample_resources();
+    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let original = engine.calc_key(&definition, &record).expect("original key");
+
+    let mut moved = record.clone();
+    moved.payload.location.longitude = Longitude::from_degrees(1.0).expect("valid longitude");
+    assert_ne!(
+        original,
+        engine.calc_key(&definition, &moved).expect("moved key")
+    );
+
+    let mut reconfigured = definition.clone();
+    reconfigured.payload.calculation.houses = HouseSystem::WholeSign;
+    assert_ne!(
+        original,
+        engine
+            .calc_key(&reconfigured, &record)
+            .expect("configuration key")
+    );
+    assert_ne!(
+        original,
+        CalculationEngine::new(DeterministicEphemeris, "engine-v2", "fixture-tz-v1")
+            .calc_key(&definition, &record)
+            .expect("engine identity key")
+    );
+    assert_ne!(
+        original,
+        CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v2")
+            .calc_key(&definition, &record)
+            .expect("timezone identity key")
+    );
+    assert_ne!(
+        original,
+        CalculationEngine::new(AlternateIdentityProvider, "engine-v1", "fixture-tz-v1")
+            .calc_key(&definition, &record)
+            .expect("provider identity key")
+    );
+}
+
+#[test]
+fn analysis_identity_ignores_labels_classification_and_order() {
+    let (record, definition) = sample_resources();
+    let snapshot = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1")
+        .calculate(&definition, &record)
+        .expect("snapshot");
+    let baseline_points = points();
+    let baseline_aspects = aspects(8.0);
+    let baseline = AnalysisKey::derive(
+        std::slice::from_ref(&snapshot.calc_key),
+        &baseline_points,
+        &baseline_aspects,
+        &AnalysisProfile::default(),
+    )
+    .expect("baseline key");
+
+    let mut display_only = baseline_aspects.clone();
+    display_only.aspects.reverse();
+    for aspect in &mut display_only.aspects {
+        aspect.name = format!("Renamed {}", aspect.name);
+        aspect.classification = AspectClass::Custom;
+    }
+    let mut reordered_points = baseline_points.clone();
+    reordered_points.points.reverse();
+    let unused_profile = AnalysisProfile {
+        include_patterns: true,
+        ..AnalysisProfile::default()
+    };
+    assert_eq!(
+        baseline,
+        AnalysisKey::derive(
+            std::slice::from_ref(&snapshot.calc_key),
+            &reordered_points,
+            &display_only,
+            &unused_profile,
+        )
+        .expect("display-only key")
+    );
+
+    let mut numerical = baseline_aspects.clone();
+    numerical.aspects[0].angle = Angle::from_degrees(1.0).expect("valid angle");
+    assert_ne!(
+        baseline,
+        AnalysisKey::derive(
+            std::slice::from_ref(&snapshot.calc_key),
+            &baseline_points,
+            &numerical,
+            &AnalysisProfile::default(),
+        )
+        .expect("numerical key")
+    );
+    let mut fewer_points = baseline_points.clone();
+    fewer_points.points.pop();
+    assert_ne!(
+        baseline,
+        AnalysisKey::derive(
+            std::slice::from_ref(&snapshot.calc_key),
+            &fewer_points,
+            &baseline_aspects,
+            &AnalysisProfile::default(),
+        )
+        .expect("coverage key")
+    );
+}
+
+#[test]
+fn unresolved_point_categories_fail_at_analysis_and_layout_boundaries() {
+    let (record, definition) = sample_resources();
+    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let snapshot = engine.calculate(&definition, &record).expect("snapshot");
+    let unresolved = PointSet {
+        points: vec![PointSelector::Category("planets".into())],
+    };
+    let analysis_error = AspectAnalyzer::analyze(
+        &snapshot,
+        &unresolved,
+        &aspects(8.0),
+        &AnalysisProfile::default(),
+    )
+    .expect_err("category must be resolved");
+    assert!(matches!(
+        analysis_error,
+        astra_engine::AnalysisError::Key(KeyError::UnresolvedPointCategory(_))
+    ));
+
+    let analysis = AspectAnalyzer::analyze(
+        &snapshot,
+        &points(),
+        &aspects(8.0),
+        &AnalysisProfile::default(),
+    )
+    .expect("resolved analysis");
+    assert!(matches!(
+        layout_wheel(&snapshot, &analysis, &unresolved, &wheel()),
+        Err(astra_engine::LayoutError::UnresolvedPointCategory(_))
+    ));
 }
 
 #[test]
@@ -196,7 +370,7 @@ fn theme_changes_render_key_but_not_calculation_analysis_or_layout() {
         &AnalysisProfile::default(),
     )
     .expect("analysis");
-    let layout = layout_wheel(&snapshot, &analysis, &points(), &wheel(), None).expect("layout");
+    let layout = layout_wheel(&snapshot, &analysis, &points(), &wheel()).expect("layout");
     let calc_key = snapshot.calc_key.clone();
     let analysis_key = analysis.analysis_key.clone();
     let layout_key = layout.key.clone();
@@ -255,6 +429,188 @@ fn disposable_cache_can_be_reconstructed_from_canonical_inputs() {
 }
 
 #[test]
+fn cached_calculation_reuses_values_with_current_resource_context() {
+    let (record, definition) = sample_resources();
+    let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
+    let snapshot = engine.calculate(&definition, &record).expect("snapshot");
+    let mut cache = ComputationCache::default();
+    cache.insert_snapshot(snapshot.clone());
+
+    let mut revised_record = record
+        .next_with_payload(record.payload.clone(), Timestamp::from_unix_millis(1))
+        .expect("record revision");
+    revised_record.payload.location.display_name = "Current display label".into();
+    let revised_definition = definition
+        .next_with_payload(definition.payload.clone(), Timestamp::from_unix_millis(1))
+        .expect("definition revision");
+    let current_key = engine
+        .calc_key(&revised_definition, &revised_record)
+        .expect("current key");
+    assert_eq!(current_key, snapshot.calc_key);
+
+    let cached = cache
+        .calculation(&current_key)
+        .expect("cached calculation")
+        .clone();
+    let current = engine
+        .snapshot_from_cached(&revised_definition, &revised_record, cached)
+        .expect("current snapshot context");
+    assert_eq!(current.calculation, snapshot.calculation);
+    assert_eq!(current.context.definition.revision.get(), 2);
+    assert_eq!(current.context.records[0].revision.get(), 2);
+    assert_eq!(
+        current.context.location_display_name,
+        "Current display label"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn julian_day_fixtures_cover_offsets_calendars_year_zero_and_lmt_sign() {
+    fn calculate_jd(
+        year: i32,
+        month: u8,
+        day: u8,
+        hour: u8,
+        calendar: CalendarSpec,
+        zone: TimeZoneAssertion,
+        longitude: f64,
+    ) -> f64 {
+        let (mut record, definition) = sample_resources();
+        record.payload.time = TemporalAssertion {
+            civil_datetime: CivilDateTime {
+                date: CivilDate::new(year, month, day).expect("valid structural date"),
+                time: CivilTime::new(hour, 0, 0).expect("valid time"),
+            },
+            calendar,
+            zone,
+            disambiguation: None,
+        };
+        record.payload.location.longitude =
+            Longitude::from_degrees(longitude).expect("valid longitude");
+        CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1")
+            .calculate(&definition, &record)
+            .expect("calculation")
+            .calculation
+            .resolved_time
+            .instant
+            .julian_day()
+    }
+
+    let assert_close = |actual: f64, expected: f64| {
+        assert!((actual - expected).abs() < 1.0e-9, "{actual} != {expected}");
+    };
+    assert_close(
+        calculate_jd(
+            2000,
+            1,
+            1,
+            12,
+            CalendarSpec::ProlepticGregorian,
+            TimeZoneAssertion::UniversalTime,
+            0.0,
+        ),
+        2_451_545.0,
+    );
+    assert_close(
+        calculate_jd(
+            2000,
+            1,
+            1,
+            14,
+            CalendarSpec::ProlepticGregorian,
+            TimeZoneAssertion::FixedOffset(Offset::from_seconds(7_200).expect("valid offset")),
+            0.0,
+        ),
+        2_451_545.0,
+    );
+    assert_close(
+        calculate_jd(
+            2000,
+            1,
+            1,
+            7,
+            CalendarSpec::ProlepticGregorian,
+            TimeZoneAssertion::FixedOffset(Offset::from_seconds(-18_000).expect("valid offset")),
+            0.0,
+        ),
+        2_451_545.0,
+    );
+    assert_close(
+        calculate_jd(
+            2000,
+            1,
+            2,
+            1,
+            CalendarSpec::ProlepticGregorian,
+            TimeZoneAssertion::FixedOffset(Offset::from_seconds(7_200).expect("valid offset")),
+            0.0,
+        ),
+        2_451_545.0 + 11.0 / 24.0,
+    );
+    assert_close(
+        calculate_jd(
+            1900,
+            3,
+            1,
+            0,
+            CalendarSpec::ProlepticGregorian,
+            TimeZoneAssertion::UniversalTime,
+            0.0,
+        ),
+        2_415_079.5,
+    );
+    assert_close(
+        calculate_jd(
+            1900,
+            3,
+            1,
+            0,
+            CalendarSpec::Julian,
+            TimeZoneAssertion::UniversalTime,
+            0.0,
+        ),
+        2_415_092.5,
+    );
+    assert_close(
+        calculate_jd(
+            0,
+            1,
+            1,
+            0,
+            CalendarSpec::ProlepticGregorian,
+            TimeZoneAssertion::UniversalTime,
+            0.0,
+        ),
+        1_721_059.5,
+    );
+    assert_close(
+        calculate_jd(
+            2000,
+            1,
+            1,
+            12,
+            CalendarSpec::ProlepticGregorian,
+            TimeZoneAssertion::LocalMeanTime,
+            15.0,
+        ),
+        2_451_545.0 - 1.0 / 24.0,
+    );
+    assert_close(
+        calculate_jd(
+            2000,
+            1,
+            1,
+            12,
+            CalendarSpec::ProlepticGregorian,
+            TimeZoneAssertion::LocalMeanTime,
+            -15.0,
+        ),
+        2_451_545.0 + 1.0 / 24.0,
+    );
+}
+
+#[test]
 fn layout_produces_astrology_free_scene_primitives() {
     let (record, definition) = sample_resources();
     let engine = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1");
@@ -266,9 +622,47 @@ fn layout_produces_astrology_free_scene_primitives() {
         &AnalysisProfile::default(),
     )
     .expect("analysis");
-    let layout = layout_wheel(&snapshot, &analysis, &points(), &wheel(), None).expect("layout");
+    let layout = layout_wheel(&snapshot, &analysis, &points(), &wheel()).expect("layout");
     let scene = Scene::from_wheel(&layout);
 
     assert!(!scene.circles.is_empty());
     assert_eq!(scene.labels.len(), layout.points.len());
+}
+
+#[test]
+fn layout_identity_uses_only_consumed_geometry_and_resolved_points() {
+    let (record, definition) = sample_resources();
+    let snapshot = CalculationEngine::new(DeterministicEphemeris, "engine-v1", "fixture-tz-v1")
+        .calculate(&definition, &record)
+        .expect("snapshot");
+    let displayed = points();
+    let analysis = AspectAnalyzer::analyze(
+        &snapshot,
+        &displayed,
+        &aspects(8.0),
+        &AnalysisProfile::default(),
+    )
+    .expect("analysis");
+    let baseline_wheel = wheel();
+    let baseline =
+        layout_wheel(&snapshot, &analysis, &displayed, &baseline_wheel).expect("baseline layout");
+
+    let mut display_only = baseline_wheel.clone();
+    display_only.rings[0].geometry.inner_radius = 120.0;
+    display_only.rings[0].point_role = astra_core::PointRole::Transit;
+    display_only.labels.show_degrees = false;
+    display_only.houses.show_numbers = false;
+    let mut reordered = displayed.clone();
+    reordered.points.reverse();
+    let equivalent =
+        layout_wheel(&snapshot, &analysis, &reordered, &display_only).expect("equivalent layout");
+    assert_eq!(baseline.key, equivalent.key);
+    assert_eq!(baseline.points, equivalent.points);
+    assert_eq!(baseline.aspects, equivalent.aspects);
+
+    let mut geometry_change = baseline_wheel;
+    geometry_change.rings[0].geometry.outer_radius = 160.0;
+    let changed =
+        layout_wheel(&snapshot, &analysis, &displayed, &geometry_change).expect("changed layout");
+    assert_ne!(baseline.key, changed.key);
 }

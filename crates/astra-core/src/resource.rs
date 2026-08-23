@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    AnalysisProfile, Angle, AspectId, ChartDefinition, ChartRecord, PointId, QueryDefinition,
-    ResourceId, Revision, RevisionError, SchemaVersion, Theme, Timestamp, ViewDocument,
-    WheelTemplate, Workspace,
+    AnalysisProfile, Angle, AspectId, ChartDefinition, ChartRecord, DomainValidate,
+    DomainValidationError, DomainValidationIssue, PointId, QueryDefinition, ResourceId, Revision,
+    RevisionError, SchemaVersion, Theme, Timestamp, ViewDocument, WheelTemplate, Workspace,
+    validation::{in_range, nonempty, positive},
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -27,7 +28,7 @@ pub enum ResourceKind {
     Workspace,
 }
 
-pub trait ResourcePayload {
+pub trait ResourcePayload: DomainValidate {
     const KIND: ResourceKind;
 }
 
@@ -75,6 +76,36 @@ impl<T: ResourcePayload> ResourceEnvelope<T> {
         if self.title.trim().is_empty() {
             return Err(ResourceError::EmptyTitle);
         }
+        if self.schema_version != SchemaVersion::V1 {
+            return Err(ResourceError::UnsupportedSchemaVersion {
+                actual: self.schema_version,
+            });
+        }
+        if self.modified_at < self.created_at {
+            return Err(ResourceError::Domain(DomainValidationError::new(
+                "modified_at",
+                DomainValidationIssue::Chronology,
+            )));
+        }
+        let mut normalized_tags = self
+            .tags
+            .iter()
+            .enumerate()
+            .map(|(index, tag)| {
+                nonempty(tag, &format!("tags[{index}]"))?;
+                Ok(tag.trim().to_owned())
+            })
+            .collect::<Result<Vec<_>, DomainValidationError>>()?;
+        normalized_tags.sort();
+        if normalized_tags.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(ResourceError::Domain(DomainValidationError::new(
+                "tags",
+                DomainValidationIssue::Duplicate,
+            )));
+        }
+        self.payload
+            .domain_validate()
+            .map_err(|error| error.prepend("payload"))?;
         Ok(())
     }
 
@@ -307,7 +338,75 @@ impl ResourcePayload for Workspace {
     const KIND: ResourceKind = ResourceKind::Workspace;
 }
 
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+impl DomainValidate for PointSet {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        let mut selectors = self.points.clone();
+        selectors.sort_by(|lhs, rhs| selector_key(lhs).cmp(&selector_key(rhs)));
+        if selectors
+            .windows(2)
+            .any(|pair| selector_key(&pair[0]) == selector_key(&pair[1]))
+        {
+            return Err(DomainValidationError::new(
+                "points",
+                DomainValidationIssue::Duplicate,
+            ));
+        }
+        for (index, selector) in self.points.iter().enumerate() {
+            if let PointSelector::Category(category) = selector {
+                nonempty(category, &format!("points[{index}].value"))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn selector_key(selector: &PointSelector) -> (u8, &str) {
+    match selector {
+        PointSelector::Point(point) => (0, point.as_str()),
+        PointSelector::Category(category) => (1, category.as_str()),
+    }
+}
+
+impl DomainValidate for AspectSet {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        let mut ids = self
+            .aspects
+            .iter()
+            .map(|aspect| aspect.id.clone())
+            .collect::<Vec<_>>();
+        ids.sort();
+        if ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(DomainValidationError::new(
+                "aspects.id",
+                DomainValidationIssue::Duplicate,
+            ));
+        }
+        for (index, aspect) in self.aspects.iter().enumerate() {
+            nonempty(&aspect.name, &format!("aspects[{index}].name"))?;
+            in_range(
+                aspect.angle.degrees(),
+                0.0,
+                180.0,
+                true,
+                &format!("aspects[{index}].angle"),
+            )?;
+            in_range(
+                aspect.orbs.maximum.degrees(),
+                0.0,
+                180.0,
+                true,
+                &format!("aspects[{index}].orbs.maximum"),
+            )?;
+            positive(
+                aspect.orbs.applying_multiplier,
+                &format!("aspects[{index}].orbs.applying_multiplier"),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ResourceError {
     #[error("resource title must not be empty")]
     EmptyTitle,
@@ -316,6 +415,10 @@ pub enum ResourceError {
         declared: ResourceKind,
         payload: ResourceKind,
     },
+    #[error("portable schema version {actual} is unsupported")]
+    UnsupportedSchemaVersion { actual: SchemaVersion },
+    #[error(transparent)]
+    Domain(#[from] DomainValidationError),
     #[error(transparent)]
     Revision(#[from] RevisionError),
 }

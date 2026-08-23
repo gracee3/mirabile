@@ -1,23 +1,31 @@
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
-use astra_core::{CanonicalResource, ResourceId, ResourceKind, Revision};
+use astra_core::{CanonicalResource, ResourceId, ResourceKind, Revision, Timestamp};
 use async_trait::async_trait;
 
-use crate::{RepositoryError, ResourceRepository, validate_create, validate_save};
+use crate::{
+    RepositoryError, ResourceRepository, ResourceState, ResourceTombstone, validate_create,
+    validate_delete, validate_save,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct MemoryRepository {
-    current: RefCell<BTreeMap<ResourceId, CanonicalResource>>,
-    history: RefCell<BTreeMap<(ResourceId, Revision), CanonicalResource>>,
+    state: Rc<RefCell<MemoryState>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct MemoryState {
+    current: BTreeMap<ResourceId, ResourceState>,
+    history: BTreeMap<(ResourceId, Revision), ResourceState>,
 }
 
 impl MemoryRepository {
     pub fn current_count(&self) -> usize {
-        self.current.borrow().len()
+        self.state.borrow().current.len()
     }
 
     pub fn revision_count(&self) -> usize {
-        self.history.borrow().len()
+        self.state.borrow().history.len()
     }
 }
 
@@ -26,13 +34,15 @@ impl ResourceRepository for MemoryRepository {
     async fn create(&self, resource: CanonicalResource) -> Result<(), RepositoryError> {
         validate_create(&resource)?;
         let id = resource.id();
-        if self.current.borrow().contains_key(&id) {
+        let mut state = self.state.borrow_mut();
+        if state.current.contains_key(&id) {
             return Err(RepositoryError::AlreadyExists(id));
         }
-        self.history
-            .borrow_mut()
+        let resource = ResourceState::Present(resource);
+        state
+            .history
             .insert((id, resource.revision()), resource.clone());
-        self.current.borrow_mut().insert(id, resource);
+        state.current.insert(id, resource);
         Ok(())
     }
 
@@ -42,28 +52,37 @@ impl ResourceRepository for MemoryRepository {
         resource: CanonicalResource,
     ) -> Result<(), RepositoryError> {
         let id = resource.id();
-        {
-            let current = self.current.borrow();
-            let existing = current.get(&id).ok_or(RepositoryError::NotFound(id))?;
-            validate_save(existing, expected_revision, &resource)?;
-        }
-        self.history
-            .borrow_mut()
+        let mut state = self.state.borrow_mut();
+        let existing = state
+            .current
+            .get(&id)
+            .ok_or(RepositoryError::NotFound(id))?;
+        validate_save(existing, expected_revision, &resource)?;
+        let resource = ResourceState::Present(resource);
+        state
+            .history
             .insert((id, resource.revision()), resource.clone());
-        self.current.borrow_mut().insert(id, resource);
+        state.current.insert(id, resource);
         Ok(())
     }
 
     async fn get(&self, id: ResourceId) -> Result<Option<CanonicalResource>, RepositoryError> {
-        Ok(self.current.borrow().get(&id).cloned())
+        Ok(match self.state.borrow().current.get(&id) {
+            Some(ResourceState::Present(resource)) => Some(resource.clone()),
+            Some(ResourceState::Deleted(_)) | None => None,
+        })
+    }
+
+    async fn get_head(&self, id: ResourceId) -> Result<Option<ResourceState>, RepositoryError> {
+        Ok(self.state.borrow().current.get(&id).cloned())
     }
 
     async fn get_revision(
         &self,
         id: ResourceId,
         revision: Revision,
-    ) -> Result<Option<CanonicalResource>, RepositoryError> {
-        Ok(self.history.borrow().get(&(id, revision)).cloned())
+    ) -> Result<Option<ResourceState>, RepositoryError> {
+        Ok(self.state.borrow().history.get(&(id, revision)).cloned())
     }
 
     async fn list(
@@ -71,21 +90,41 @@ impl ResourceRepository for MemoryRepository {
         kind: Option<ResourceKind>,
     ) -> Result<Vec<CanonicalResource>, RepositoryError> {
         let mut resources: Vec<_> = self
-            .current
+            .state
             .borrow()
+            .current
             .values()
-            .filter(|resource| kind.is_none_or(|expected| resource.kind() == expected))
-            .cloned()
+            .filter_map(|state| match state {
+                ResourceState::Present(resource)
+                    if kind.is_none_or(|expected| resource.kind() == expected) =>
+                {
+                    Some(resource.clone())
+                }
+                ResourceState::Present(_) | ResourceState::Deleted(_) => None,
+            })
             .collect();
         resources.sort_by_key(CanonicalResource::id);
         Ok(resources)
     }
 
-    async fn delete(&self, id: ResourceId) -> Result<(), RepositoryError> {
-        if self.current.borrow_mut().remove(&id).is_none() {
-            return Err(RepositoryError::NotFound(id));
-        }
-        Ok(())
+    async fn delete(
+        &self,
+        id: ResourceId,
+        expected_revision: Revision,
+        deleted_at: Timestamp,
+    ) -> Result<ResourceTombstone, RepositoryError> {
+        let mut state = self.state.borrow_mut();
+        let current = state
+            .current
+            .get(&id)
+            .ok_or(RepositoryError::NotFound(id))?;
+        let tombstone = validate_delete(current, expected_revision, deleted_at)?;
+        let deleted = ResourceState::Deleted(tombstone.clone());
+        state
+            .history
+            .insert((id, tombstone.revision), deleted.clone());
+        state.current.insert(id, deleted);
+        Ok(tombstone)
     }
 }
 
@@ -133,17 +172,129 @@ mod tests {
 
             assert_eq!(repository.current_count(), 1);
             assert_eq!(repository.revision_count(), 2);
-            assert_eq!(
+            let historical = repository
+                .get_revision(id, Revision::INITIAL)
+                .await
+                .expect("read")
+                .expect("revision exists");
+            let ResourceState::Present(historical) = historical else {
+                panic!("live historical revision")
+            };
+            assert_eq!(historical.title(), "Visible points");
+            let stale = repository.save(Revision::INITIAL, next).await;
+            assert!(matches!(stale, Err(RepositoryError::Conflict { .. })));
+        });
+    }
+
+    #[test]
+    fn deletion_is_versioned_hidden_and_permanent_for_the_stable_id() {
+        block_on(async {
+            let repository = MemoryRepository::default();
+            let resource = point_resource();
+            let id = resource.id();
+            repository
+                .create(resource.clone())
+                .await
+                .expect("create resource");
+
+            let stale = repository
+                .delete(
+                    id,
+                    Revision::new(2).expect("valid revision"),
+                    Timestamp::from_unix_millis(10),
+                )
+                .await;
+            assert!(matches!(stale, Err(RepositoryError::Conflict { .. })));
+
+            let tombstone = repository
+                .delete(id, Revision::INITIAL, Timestamp::from_unix_millis(10))
+                .await
+                .expect("delete resource");
+            assert_eq!(tombstone.revision.get(), 2);
+            assert!(repository.get(id).await.expect("live read").is_none());
+            assert!(repository.list(None).await.expect("list").is_empty());
+            assert!(matches!(
+                repository.get_head(id).await.expect("head"),
+                Some(ResourceState::Deleted(ref value)) if value == &tombstone
+            ));
+            assert!(matches!(
                 repository
                     .get_revision(id, Revision::INITIAL)
                     .await
-                    .expect("read")
-                    .expect("revision exists")
-                    .title(),
-                "Visible points"
+                    .expect("history"),
+                Some(ResourceState::Present(_))
+            ));
+            assert!(matches!(
+                repository
+                    .get_revision(id, tombstone.revision)
+                    .await
+                    .expect("history"),
+                Some(ResourceState::Deleted(ref value)) if value == &tombstone
+            ));
+            let CanonicalResource::PointSet(envelope) = resource.clone() else {
+                panic!("point set")
+            };
+            let after_delete = CanonicalResource::PointSet(
+                envelope
+                    .next_with_payload(
+                        PointSet { points: Vec::new() },
+                        Timestamp::from_unix_millis(11),
+                    )
+                    .expect("next live revision"),
             );
-            let stale = repository.save(Revision::INITIAL, next).await;
-            assert!(matches!(stale, Err(RepositoryError::Conflict { .. })));
+            assert!(matches!(
+                repository
+                    .save(Revision::INITIAL, after_delete)
+                    .await,
+                Err(RepositoryError::ResourceDeleted(value)) if value == id
+            ));
+            assert!(matches!(
+                repository.create(resource).await,
+                Err(RepositoryError::AlreadyExists(value)) if value == id
+            ));
+        });
+    }
+
+    #[test]
+    fn invalid_payloads_are_rejected_on_create_and_save() {
+        block_on(async {
+            let repository = MemoryRepository::default();
+            let mut invalid = point_resource();
+            let CanonicalResource::PointSet(envelope) = &mut invalid else {
+                panic!("point set")
+            };
+            envelope.tags = vec!["duplicate".into(), "duplicate".into()];
+            assert!(matches!(
+                repository.create(invalid).await,
+                Err(RepositoryError::InvalidResource(_))
+            ));
+
+            let first = point_resource();
+            repository
+                .create(first.clone())
+                .await
+                .expect("valid create");
+            let CanonicalResource::PointSet(envelope) = first else {
+                panic!("point set")
+            };
+            let mut invalid_next = envelope
+                .next_with_payload(
+                    PointSet {
+                        points: vec![
+                            PointSelector::Point(PointId::new("sun").expect("valid ID")),
+                            PointSelector::Point(PointId::new("sun").expect("valid ID")),
+                        ],
+                    },
+                    Timestamp::from_unix_millis(1),
+                )
+                .expect("next revision");
+            invalid_next.title = "Invalid duplicate points".into();
+            assert!(matches!(
+                repository
+                    .save(Revision::INITIAL, CanonicalResource::PointSet(invalid_next))
+                    .await,
+                Err(RepositoryError::InvalidResource(_))
+            ));
         });
     }
 }

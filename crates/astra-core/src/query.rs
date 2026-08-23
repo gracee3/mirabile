@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Angle, AspectId, PointId};
+use crate::{
+    Angle, AspectId, DomainValidate, DomainValidationError, DomainValidationIssue, PointId,
+    validation::{in_range, nonempty},
+};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct QueryDefinition {
@@ -58,6 +61,61 @@ pub enum TextComparison {
     Equal,
     Contains,
     StartsWith,
+}
+
+impl DomainValidate for QueryDefinition {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        self.expression.domain_validate()
+    }
+}
+
+impl DomainValidate for QueryExpr {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        match self {
+            Self::Predicate(predicate) => predicate.domain_validate(),
+            Self::And(children) | Self::Or(children) => {
+                if children.is_empty() {
+                    return Err(DomainValidationError::new(
+                        "value",
+                        DomainValidationIssue::InvalidStructure {
+                            requirement: "boolean groups must contain at least one expression"
+                                .into(),
+                        },
+                    ));
+                }
+                for (index, child) in children.iter().enumerate() {
+                    child
+                        .domain_validate()
+                        .map_err(|error| error.prepend(&format!("value[{index}]")))?;
+                }
+                Ok(())
+            }
+            Self::Not(child) => child.domain_validate(),
+        }
+    }
+}
+
+impl DomainValidate for Predicate {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        match self {
+            Self::InSign { sign_index, .. } if *sign_index > 11 => Err(DomainValidationError::new(
+                "sign_index",
+                DomainValidationIssue::OutOfRange {
+                    expected: "between 0 and 11 inclusive".into(),
+                },
+            )),
+            Self::Aspect {
+                orb_override: Some(orb),
+                ..
+            } => in_range(orb.degrees(), 0.0, 180.0, true, "orb_override"),
+            Self::Longitude { value, .. } => in_range(value.degrees(), 0.0, 360.0, false, "value"),
+            Self::ChartField { field, value, .. } => {
+                nonempty(field, "field")?;
+                nonempty(value, "value")
+            }
+            Self::InSign { .. } | Self::Aspect { .. } => Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]

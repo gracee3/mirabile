@@ -12,6 +12,7 @@ pub mod query;
 pub mod resource;
 pub mod time;
 pub mod units;
+pub mod validation;
 pub mod view;
 pub mod workspace;
 
@@ -24,5 +25,6 @@ pub use query::*;
 pub use resource::*;
 pub use time::*;
 pub use units::*;
+pub use validation::*;
 pub use view::*;
 pub use workspace::*;

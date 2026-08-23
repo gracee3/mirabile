@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AnalysisProfile, AspectSet, ChartDefinition, InstanceId, PanelId, PointSet, ResourceBinding,
-    ResourceId, Theme, ViewInstance, ViewInstanceId, WheelTemplate,
+    AnalysisProfile, AspectSet, ChartDefinition, DomainValidate, DomainValidationError,
+    DomainValidationIssue, InstanceId, PanelId, PointSet, ResourceBinding, ResourceId, Theme,
+    ViewInstance, ViewInstanceId, WheelTemplate,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -57,6 +58,127 @@ pub struct WorkspaceUiState {
     pub inspector_open: bool,
     pub focused_panel: Option<PanelId>,
     pub scroll_positions: Vec<(PanelId, f64)>,
+}
+
+impl DomainValidate for Workspace {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        let mut instance_ids = self
+            .chart_instances
+            .iter()
+            .map(WorkspaceChart::instance_id)
+            .collect::<Vec<_>>();
+        instance_ids.sort_unstable();
+        if instance_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(DomainValidationError::new(
+                "chart_instances.instance_id",
+                DomainValidationIssue::Duplicate,
+            ));
+        }
+        for (index, chart) in self.chart_instances.iter().enumerate() {
+            if let WorkspaceChart::Ephemeral { definition, .. } = chart {
+                definition.domain_validate().map_err(|error| {
+                    error.prepend(&format!("chart_instances[{index}].definition"))
+                })?;
+            }
+        }
+        if self
+            .active_chart
+            .is_some_and(|id| instance_ids.binary_search(&id).is_err())
+        {
+            return Err(DomainValidationError::new(
+                "active_chart",
+                DomainValidationIssue::InvalidReference,
+            ));
+        }
+        let mut selected = self.selected_charts.clone();
+        selected.sort_unstable();
+        if selected.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(DomainValidationError::new(
+                "selected_charts",
+                DomainValidationIssue::Duplicate,
+            ));
+        }
+        if selected
+            .iter()
+            .any(|id| instance_ids.binary_search(id).is_err())
+        {
+            return Err(DomainValidationError::new(
+                "selected_charts",
+                DomainValidationIssue::InvalidReference,
+            ));
+        }
+
+        let mut view_ids = self.views.iter().map(|view| view.id).collect::<Vec<_>>();
+        view_ids.sort_unstable();
+        if view_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(DomainValidationError::new(
+                "views.id",
+                DomainValidationIssue::Duplicate,
+            ));
+        }
+        if self
+            .active_view
+            .is_some_and(|id| view_ids.binary_search(&id).is_err())
+        {
+            return Err(DomainValidationError::new(
+                "active_view",
+                DomainValidationIssue::InvalidReference,
+            ));
+        }
+        for (index, view) in self.views.iter().enumerate() {
+            if view
+                .charts
+                .values()
+                .any(|id| instance_ids.binary_search(id).is_err())
+            {
+                return Err(DomainValidationError::new(
+                    format!("views[{index}].charts"),
+                    DomainValidationIssue::InvalidReference,
+                ));
+            }
+            if let ResourceBinding::Inline { value } = &view.document {
+                value
+                    .domain_validate()
+                    .map_err(|error| error.prepend(&format!("views[{index}].document")))?;
+                if view.charts.keys().any(|slot| {
+                    !value
+                        .chart_slots
+                        .iter()
+                        .any(|candidate| candidate.id == *slot)
+                }) {
+                    return Err(DomainValidationError::new(
+                        format!("views[{index}].charts"),
+                        DomainValidationIssue::InvalidReference,
+                    ));
+                }
+            }
+        }
+        self.profile.domain_validate()
+    }
+}
+
+impl DomainValidate for WorkspaceProfile {
+    fn domain_validate(&self) -> Result<(), DomainValidationError> {
+        validate_binding(&self.displayed_points, "displayed_points")?;
+        validate_binding(&self.aspected_points, "aspected_points")?;
+        validate_binding(&self.transit_points, "transit_points")?;
+        validate_binding(&self.aspects, "aspects")?;
+        validate_binding(&self.analysis, "analysis")?;
+        validate_binding(&self.theme, "theme")?;
+        validate_binding(&self.wheel, "wheel")
+    }
+}
+
+fn validate_binding<T: DomainValidate>(
+    binding: &ResourceBinding<T>,
+    path: &str,
+) -> Result<(), DomainValidationError> {
+    if let ResourceBinding::Inline { value } = binding {
+        value
+            .domain_validate()
+            .map_err(|error| error.prepend(path))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

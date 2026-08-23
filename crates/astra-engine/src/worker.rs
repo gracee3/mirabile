@@ -1,7 +1,7 @@
 use astra_core::{ChartDefinition, ChartRecord, ResourceEnvelope};
 use serde::{Deserialize, Serialize};
 
-use crate::ChartSnapshot;
+use crate::{CalcKey, CalculationValue};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CalcRequest {
@@ -15,7 +15,8 @@ pub struct CalcRequest {
 pub enum CalcResult {
     Completed {
         request_id: String,
-        snapshot: Box<ChartSnapshot>,
+        calc_key: CalcKey,
+        calculation: Box<CalculationValue>,
     },
     Failed {
         request_id: String,
