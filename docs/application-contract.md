@@ -203,8 +203,10 @@ engine crates.
 
 ## RealApplication construction and hydration
 
-`RealApplication<R, C>` lives in `crates/mirabile-app/src/real_application.rs`. `R` is a cloneable
-`ResourceRepository`, and `C` implements the application-facing `CalculationRuntime`. Native code
+`RealApplication<R, C>` is the public facade in `crates/mirabile-app/src/real_application/mod.rs`.
+Its private sibling modules separate catalog resolution, hydration/startup, workspace commands,
+draft editing, calculation scheduling, configuration, projection, and state bookkeeping. `R` is a
+cloneable `ResourceRepository`, and `C` implements the application-facing `CalculationRuntime`. Native code
 uses `InlineCalculationRuntime<DeterministicBackend>` or a controlled runtime. The WASM constructor
 uses `WorkerCalculationRuntime` plus `IndexedDbRepositorySource`, which lazily opens one
 `IndexedDbRepository` during initialization and retains its cloneable `Rc<Rexie>` handle for the

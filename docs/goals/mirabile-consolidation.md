@@ -5,7 +5,7 @@
 - Base: `63f081b3c9b0becf5238bdbe2cf3b6964bf09f85` (`origin/main`)
 - Branch: `goal/mirabile-consolidation`
 - Worktree: `/home/emmy/worktrees/mirabile-consolidation`
-- Current phase: 6 - RealApplication responsibility decomposition
+- Current phase: 7 - configuration provenance and validation tiers
 - Delivery: unmerged goal branch; push only after the complete validation phase
 
 ## Frozen architecture
@@ -49,6 +49,7 @@
 - Phase 5 completed the `ChartDraft` lifecycle: start without persistence, assign to a view for payload-only preview, cancel without writes, or save to distinct revision-one `ChartRecord` and `ChartDefinition` resources.
 - `ResourceRepository::create_batch` is the narrow local atomicity primitive. Memory prevalidates and preflights before mutation; IndexedDB uses one current-plus-history read-write transaction. Failure retains the application draft and publishes neither half.
 - Successful chart save replaces the session draft with the same instance as a saved definition reference, updates the library, preserves the record/definition boundary, and dirties workspace membership for an explicit workspace save. Multiple future definitions may still share one record.
+- Phase 6 retained the public `RealApplication<R, C>` facade while splitting private responsibilities into catalog, hydration, workspace, editing, calculation, configuration, projection, and state modules. Existing async observation, latest-wins, last-good Scene, startup, draft, and persistence behavior is unchanged.
 
 ## Validation status
 
@@ -58,7 +59,8 @@
 - Phase 3: `cargo test --workspace` (100 tests), strict workspace Clippy, Chromium IndexedDB/Worker reload contract with explicit workspace save, formatting, and `git diff --check` passed.
 - Phase 4: package suite (105 native tests, including XALEN-enabled coverage), strict workspace Clippy, engine/web WASM checks, Chromium empty-IndexedDB plus explicit-demo reload/Worker contract, formatting, and `git diff --check` passed.
 - Phase 5: store/app/web package tests (56 tests), strict workspace Clippy, Memory batch rollback, application draft-retention failure, IndexedDB forced mid-batch rollback, IndexedDB application chart save, Chromium Worker/reload contract, formatting, and `git diff --check` passed.
-- Phase-focused checks: phase 6 onward pending.
+- Phase 6: `mirabile-app` checks and 33 tests, strict package Clippy, formatting, workspace tests, Chromium browser contract, and `git diff --check` passed.
+- Phase-focused checks: phase 7 onward pending.
 - Full local verification: pending.
 
 ## Deferred work
