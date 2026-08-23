@@ -236,6 +236,22 @@ Canonical preparation adds resource revision context separately; draft preparati
 location. Topocentric calculation, houses, and local-mean-time resolution fail explicitly when
 their required observer assertion is absent.
 
+## Chart draft and atomic create lifecycle
+
+`ChartDraft { title, record, calculation }` is an application aggregate, never a canonical
+resource. `WorkspaceSession` holds draft charts beside the saved chart references in its working
+document. Starting and canceling a draft do not write the library. A draft can be assigned to a
+view and calculated through the payload-only engine seam before it has resource identities.
+
+`SaveChartDraft` creates a new revision-one `ChartRecord` and a distinct revision-one
+`ChartDefinition` whose radix source references that record. `ResourceRepository::create_batch`
+is the narrow atomicity boundary: MemoryRepository prevalidates and preflights the complete batch
+before mutating its maps; IndexedDB writes both current heads and both history entries in one
+read-write transaction. Any validation, identity, or storage failure publishes neither resource,
+and the application retains the draft. Success replaces the session draft with a saved chart
+instance, adds the chart to the library, and marks workspace membership dirty for an explicit
+workspace save.
+
 Calculation requests are submitted through `CalculationRuntime` as soon as the authoritative
 intent is prepared. Native inline and controlled runtimes use the exact versioned worker protocol.
 Normal WASM operation communicates with the Trunk-built Web Worker and linked

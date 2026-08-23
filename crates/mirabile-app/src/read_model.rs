@@ -253,6 +253,8 @@ impl DraftState {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AppAction {
+    SaveChartDraft,
+    CancelChartDraft,
     BeginAspectSetEdit,
     SaveDraft,
     CancelDraft,

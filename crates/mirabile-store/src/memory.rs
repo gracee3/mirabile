@@ -5,7 +5,7 @@ use mirabile_core::{CanonicalResource, ResourceId, ResourceKind, Revision, Times
 
 use crate::{
     RepositoryError, ResourceRepository, ResourceState, ResourceTombstone, validate_create,
-    validate_delete, validate_save,
+    validate_create_batch, validate_delete, validate_save,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -43,6 +43,25 @@ impl ResourceRepository for MemoryRepository {
             .history
             .insert((id, resource.revision()), resource.clone());
         state.current.insert(id, resource);
+        Ok(())
+    }
+
+    async fn create_batch(&self, resources: Vec<CanonicalResource>) -> Result<(), RepositoryError> {
+        validate_create_batch(&resources)?;
+        let mut state = self.state.borrow_mut();
+        for resource in &resources {
+            if state.current.contains_key(&resource.id()) {
+                return Err(RepositoryError::AlreadyExists(resource.id()));
+            }
+        }
+        for resource in resources {
+            let id = resource.id();
+            let resource = ResourceState::Present(resource);
+            state
+                .history
+                .insert((id, resource.revision()), resource.clone());
+            state.current.insert(id, resource);
+        }
         Ok(())
     }
 
@@ -295,6 +314,37 @@ mod tests {
                     .await,
                 Err(RepositoryError::InvalidResource(_))
             ));
+        });
+    }
+
+    #[test]
+    fn create_batch_is_all_or_nothing() {
+        block_on(async {
+            let repository = MemoryRepository::default();
+            let first = point_resource();
+            let existing = point_resource();
+            let first_id = first.id();
+            repository
+                .create(existing.clone())
+                .await
+                .expect("existing resource");
+
+            assert!(matches!(
+                repository.create_batch(vec![first, existing]).await,
+                Err(RepositoryError::AlreadyExists(_))
+            ));
+            assert_eq!(repository.current_count(), 1);
+            assert_eq!(repository.revision_count(), 1);
+            assert!(repository.get(first_id).await.expect("read").is_none());
+
+            let duplicate = point_resource();
+            assert!(matches!(
+                repository
+                    .create_batch(vec![duplicate.clone(), duplicate])
+                    .await,
+                Err(RepositoryError::DuplicateBatchIdentity(_))
+            ));
+            assert_eq!(repository.current_count(), 1);
         });
     }
 }

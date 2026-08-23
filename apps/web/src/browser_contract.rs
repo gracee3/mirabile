@@ -168,6 +168,27 @@ async fn run_contract() -> Result<(), String> {
         "failed transaction changed the current head",
     )?;
 
+    let batch_first = point_resource("Atomic batch first");
+    let batch_second = point_resource("Atomic batch second");
+    let batch_first_id = batch_first.id();
+    let batch_second_id = batch_second.id();
+    first
+        .force_initial_history_collision(batch_second_id)
+        .await
+        .map_err(message)?;
+    ensure(
+        first
+            .create_batch(vec![batch_first, batch_second])
+            .await
+            .is_err(),
+        "forced atomic create-batch collision unexpectedly succeeded",
+    )?;
+    ensure(
+        first.get(batch_first_id).await.map_err(message)?.is_none()
+            && first.get(batch_second_id).await.map_err(message)?.is_none(),
+        "failed atomic create batch left a partially created resource",
+    )?;
+
     run_real_application_reload().await?;
 
     Ok(())
@@ -197,6 +218,39 @@ async fn run_real_application_reload() -> Result<(), String> {
             .map_err(message)?
             .is_empty(),
         "Current Transits startup polluted the canonical IndexedDB library",
+    )?;
+    let current_transits_instance = fresh_ready
+        .workspace
+        .active_chart
+        .ok_or_else(|| "Current Transits draft was not active".to_owned())?;
+    let saved_current_transits = fresh
+        .dispatch(AppIntent::SaveChartDraft {
+            instance_id: current_transits_instance,
+        })
+        .await
+        .map_err(message)?;
+    ensure(
+        saved_current_transits.library.charts.len() == 1
+            && saved_current_transits.workspace.charts.iter().any(|chart| {
+                chart.instance_id == current_transits_instance
+                    && matches!(chart.persistence, ChartPersistence::Saved { .. })
+            }),
+        "IndexedDB ChartDraft save did not publish a saved library chart",
+    )?;
+    ensure(
+        empty_repository
+            .list(Some(mirabile_core::ResourceKind::ChartRecord))
+            .await
+            .map_err(message)?
+            .len()
+            == 1
+            && empty_repository
+                .list(Some(mirabile_core::ResourceKind::ChartDefinition))
+                .await
+                .map_err(message)?
+                .len()
+                == 1,
+        "IndexedDB ChartDraft save did not atomically create one record and one definition",
     )?;
     drop(fresh);
 

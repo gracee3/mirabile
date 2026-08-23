@@ -8,7 +8,7 @@ use wasm_bindgen::JsValue;
 
 use crate::{
     RepositoryError, ResourceRepository, ResourceState, ResourceTombstone, resource_from_json,
-    resource_to_json, validate_create, validate_delete, validate_save,
+    resource_to_json, validate_create, validate_create_batch, validate_delete, validate_save,
 };
 
 const CURRENT_STORE: &str = "resources";
@@ -56,6 +56,27 @@ impl IndexedDbRepository {
         transaction.done().await.map_err(adapter_error)?;
         Ok(())
     }
+
+    #[cfg(feature = "browser-contract")]
+    pub async fn force_initial_history_collision(
+        &self,
+        id: ResourceId,
+    ) -> Result<(), RepositoryError> {
+        let transaction = self
+            .database
+            .transaction(&[REVISION_STORE], TransactionMode::ReadWrite)
+            .map_err(adapter_error)?;
+        let store = transaction.store(REVISION_STORE).map_err(adapter_error)?;
+        store
+            .add(
+                &JsValue::from_str("forced collision"),
+                Some(&JsValue::from_str(&revision_key(id, Revision::INITIAL))),
+            )
+            .await
+            .map_err(adapter_error)?;
+        transaction.done().await.map_err(adapter_error)?;
+        Ok(())
+    }
 }
 
 #[async_trait(?Send)]
@@ -86,6 +107,52 @@ impl ResourceRepository for IndexedDbRepository {
         if let Err(error) = revisions.add(&json, Some(&revision_key)).await {
             let _ = transaction.abort().await;
             return Err(adapter_error(error));
+        }
+        transaction.done().await.map_err(adapter_error)?;
+        Ok(())
+    }
+
+    async fn create_batch(&self, resources: Vec<CanonicalResource>) -> Result<(), RepositoryError> {
+        validate_create_batch(&resources)?;
+        let serialized = resources
+            .iter()
+            .map(|resource| resource_to_json(resource).map(|json| (resource.id(), json)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let transaction = self
+            .database
+            .transaction(&[CURRENT_STORE, REVISION_STORE], TransactionMode::ReadWrite)
+            .map_err(adapter_error)?;
+        let current = transaction.store(CURRENT_STORE).map_err(adapter_error)?;
+        for (id, _) in &serialized {
+            if current
+                .key_exists(JsValue::from_str(&id.to_string()))
+                .await
+                .map_err(adapter_error)?
+            {
+                let _ = transaction.abort().await;
+                return Err(RepositoryError::AlreadyExists(*id));
+            }
+        }
+        let revisions = transaction.store(REVISION_STORE).map_err(adapter_error)?;
+        for (id, json) in serialized {
+            let value = JsValue::from_str(&json);
+            if let Err(error) = current
+                .add(&value, Some(&JsValue::from_str(&id.to_string())))
+                .await
+            {
+                let _ = transaction.abort().await;
+                return Err(adapter_error(error));
+            }
+            if let Err(error) = revisions
+                .add(
+                    &value,
+                    Some(&JsValue::from_str(&revision_key(id, Revision::INITIAL))),
+                )
+                .await
+            {
+                let _ = transaction.abort().await;
+                return Err(adapter_error(error));
+            }
         }
         transaction.done().await.map_err(adapter_error)?;
         Ok(())

@@ -5,7 +5,7 @@
 - Base: `63f081b3c9b0becf5238bdbe2cf3b6964bf09f85` (`origin/main`)
 - Branch: `goal/mirabile-consolidation`
 - Worktree: `/home/emmy/worktrees/mirabile-consolidation`
-- Current phase: 5 - ChartDraft lifecycle and atomic chart creation
+- Current phase: 6 - RealApplication responsibility decomposition
 - Delivery: unmerged goal branch; push only after the complete validation phase
 
 ## Frozen architecture
@@ -46,6 +46,9 @@
 - Fresh Current Transits is an unsaved session `ChartDraft` using the browser/system UTC clock, tropical geocentric positions, the supported Sun-through-Jupiter set, a single wheel, no houses, no geolocation request, and no asserted location.
 - `ChartRecord::location`, provider-neutral numeric calculation location, `CalculationValue` location, and snapshot display location are optional. Geocentric no-house positions accept absence; topocentric positions, houses/angles, and local mean time fail with typed location-required errors.
 - `CalculationEngine::resolve` prepares payload-only semantics independently of resource identity. Canonical calculations attach resource revisions afterward; draft calculations attach an explicitly non-canonical `SnapshotContext`.
+- Phase 5 completed the `ChartDraft` lifecycle: start without persistence, assign to a view for payload-only preview, cancel without writes, or save to distinct revision-one `ChartRecord` and `ChartDefinition` resources.
+- `ResourceRepository::create_batch` is the narrow local atomicity primitive. Memory prevalidates and preflights before mutation; IndexedDB uses one current-plus-history read-write transaction. Failure retains the application draft and publishes neither half.
+- Successful chart save replaces the session draft with the same instance as a saved definition reference, updates the library, preserves the record/definition boundary, and dirties workspace membership for an explicit workspace save. Multiple future definitions may still share one record.
 
 ## Validation status
 
@@ -54,7 +57,8 @@
 - Phase 2: documentation link targets inspected; `cargo fmt --all -- --check`, `cargo test -p mirabile-app` (27 tests), and `git diff --check` passed.
 - Phase 3: `cargo test --workspace` (100 tests), strict workspace Clippy, Chromium IndexedDB/Worker reload contract with explicit workspace save, formatting, and `git diff --check` passed.
 - Phase 4: package suite (105 native tests, including XALEN-enabled coverage), strict workspace Clippy, engine/web WASM checks, Chromium empty-IndexedDB plus explicit-demo reload/Worker contract, formatting, and `git diff --check` passed.
-- Phase-focused checks: phase 5 onward pending.
+- Phase 5: store/app/web package tests (56 tests), strict workspace Clippy, Memory batch rollback, application draft-retention failure, IndexedDB forced mid-batch rollback, IndexedDB application chart save, Chromium Worker/reload contract, formatting, and `git diff --check` passed.
+- Phase-focused checks: phase 6 onward pending.
 - Full local verification: pending.
 
 ## Deferred work

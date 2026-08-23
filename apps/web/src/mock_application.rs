@@ -458,8 +458,29 @@ impl MockState {
                     }
                 },
             );
+        let active_chart_is_draft = self.active_chart.is_some_and(|active| {
+            self.charts.iter().any(|chart| {
+                chart.instance_id == active && chart.persistence == ChartPersistence::Ephemeral
+            })
+        });
 
         vec![
+            capability(
+                AppAction::SaveChartDraft,
+                if active_chart_is_draft {
+                    Availability::Enabled
+                } else {
+                    disabled("The active chart is not an unsaved draft")
+                },
+            ),
+            capability(
+                AppAction::CancelChartDraft,
+                if active_chart_is_draft {
+                    Availability::Enabled
+                } else {
+                    disabled("The active chart is not an unsaved draft")
+                },
+            ),
             capability(AppAction::BeginAspectSetEdit, Availability::Enabled),
             capability(AppAction::SaveDraft, save),
             capability(AppAction::CancelDraft, cancel),
@@ -487,6 +508,62 @@ impl MockState {
     fn apply(&mut self, intent: AppIntent) -> AppResult<()> {
         self.notice = None;
         match intent {
+            AppIntent::StartChartDraft { draft } => {
+                if draft.title.trim().is_empty() {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "A chart draft title must not be empty",
+                    ));
+                }
+                let instance_id = InstanceId::new();
+                self.charts.push(OpenChartSummary {
+                    instance_id,
+                    title: draft.title,
+                    subtitle: "Unsaved chart".into(),
+                    persistence: ChartPersistence::Ephemeral,
+                });
+                self.active_chart = Some(instance_id);
+                self.notice = Some(info(
+                    "Chart draft started without creating canonical resources",
+                ));
+                Ok(())
+            }
+            AppIntent::SaveChartDraft { instance_id } => {
+                let chart = self
+                    .charts
+                    .iter_mut()
+                    .find(|chart| {
+                        chart.instance_id == instance_id
+                            && chart.persistence == ChartPersistence::Ephemeral
+                    })
+                    .ok_or_else(|| not_found("chart draft"))?;
+                let definition_id = ResourceId::new();
+                chart.persistence = ChartPersistence::Saved { definition_id };
+                self.library_charts.push(LibraryChartSummary {
+                    definition_id,
+                    title: chart.title.clone(),
+                    subtitle: chart.subtitle.clone(),
+                });
+                self.workspace.dirty = true;
+                self.notice = Some(success(
+                    "ChartRecord and ChartDefinition were created atomically",
+                ));
+                Ok(())
+            }
+            AppIntent::CancelChartDraft { instance_id } => {
+                let draft_exists = self.charts.iter().any(|chart| {
+                    chart.instance_id == instance_id
+                        && chart.persistence == ChartPersistence::Ephemeral
+                });
+                if !draft_exists {
+                    return Err(not_found("chart draft"));
+                }
+                self.close_chart(instance_id)?;
+                self.notice = Some(info(
+                    "Chart draft canceled; no canonical resources were created",
+                ));
+                Ok(())
+            }
             AppIntent::OpenChart { definition_id } => {
                 self.open_chart(definition_id)?;
                 self.workspace.dirty = true;

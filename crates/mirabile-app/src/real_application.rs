@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -10,9 +10,9 @@ use async_trait::async_trait;
 use futures::{channel::oneshot, lock::Mutex};
 use mirabile_core::{
     AnalysisProfile, AspectSet, CalculationSpec, CanonicalResource, ChartDefinition, ChartRecord,
-    ChartSource, Command, ConfigurationStack, EffectiveConfiguration, InstanceId, PointSet,
-    ResolutionLayer, Resolved, ResourceBinding, ResourceEnvelope, ResourceId, Revision, Theme,
-    Timestamp, ViewDocument, ViewInstance, ViewInstanceId, WheelTemplate, WorkspaceDocument,
+    ChartSource, Command, ConfigurationStack, DomainValidate, EffectiveConfiguration, InstanceId,
+    PointSet, ResolutionLayer, Resolved, ResourceBinding, ResourceEnvelope, ResourceId, Revision,
+    Theme, Timestamp, ViewDocument, ViewInstance, ViewInstanceId, WheelTemplate, WorkspaceDocument,
     WorkspaceDocumentChart, resolve_binding,
 };
 use mirabile_engine::{
@@ -197,6 +197,10 @@ impl ResourceRepository for IndexedDbRepositorySource {
         self.acquire().await?.create(resource).await
     }
 
+    async fn create_batch(&self, resources: Vec<CanonicalResource>) -> Result<(), RepositoryError> {
+        self.acquire().await?.create_batch(resources).await
+    }
+
     async fn save(
         &self,
         expected_revision: Revision,
@@ -311,6 +315,7 @@ where
                 state.editor = None;
                 state.pending.clear();
                 state.inflight.clear();
+                state.saving_chart_drafts.clear();
                 state.notice = Some(info(
                     "Canonical library hydrated and startup session established",
                 ));
@@ -323,6 +328,7 @@ where
                 state.status = ApplicationStatus::Error(error);
                 state.pending.clear();
                 state.inflight.clear();
+                state.saving_chart_drafts.clear();
                 state.notice = None;
                 state.advance()?;
             }
@@ -349,8 +355,21 @@ where
                 "Wait for the pending Aspect Set save to finish",
             ));
         }
+        if !self.state.borrow().saving_chart_drafts.is_empty() {
+            return Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Wait for the pending chart save to finish",
+            ));
+        }
 
         match intent {
+            AppIntent::StartChartDraft { draft } => self.start_chart_draft(*draft)?,
+            AppIntent::SaveChartDraft { instance_id } => {
+                self.save_chart_draft(instance_id).await?;
+            }
+            AppIntent::CancelChartDraft { instance_id } => {
+                self.cancel_chart_draft(instance_id)?;
+            }
             AppIntent::OpenChart { .. }
             | AppIntent::CloseChart { .. }
             | AppIntent::AssignChartSlot { .. }
@@ -466,6 +485,158 @@ where
         }
         session.active_chart = Some(instance_id);
         state.notice = Some(info("Active chart changed; selection was preserved"));
+        state.advance()
+    }
+
+    fn start_chart_draft(&self, draft: crate::ChartDraft) -> AppResult<()> {
+        if draft.title.trim().is_empty() {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                "A chart draft title must not be empty",
+            ));
+        }
+        draft.record.domain_validate().map_err(|error| {
+            AppError::new(
+                AppErrorKind::InvalidIntent,
+                format!("ChartDraft record is invalid: {error}"),
+            )
+        })?;
+        draft.calculation.domain_validate().map_err(|error| {
+            AppError::new(
+                AppErrorKind::InvalidIntent,
+                format!("ChartDraft calculation is invalid: {error}"),
+            )
+        })?;
+        let mut state = self.state.borrow_mut();
+        let session = state.session.as_mut().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })?;
+        let instance_id = InstanceId::new();
+        session
+            .draft_charts
+            .push(crate::WorkspaceSessionDraftChart { instance_id, draft });
+        session.active_chart = Some(instance_id);
+        state.notice = Some(info(
+            "Chart draft started without creating canonical resources",
+        ));
+        state.advance()
+    }
+
+    async fn save_chart_draft(&self, instance_id: InstanceId) -> AppResult<()> {
+        let (record, definition) = {
+            let mut state = self.state.borrow_mut();
+            let draft = state
+                .session()?
+                .draft_charts
+                .iter()
+                .find(|chart| chart.instance_id == instance_id)
+                .map(|chart| chart.draft.clone())
+                .ok_or_else(|| {
+                    AppError::new(
+                        AppErrorKind::NotFound,
+                        format!("Chart draft {instance_id} is not open"),
+                    )
+                })?;
+            let timestamp = Timestamp::from_unix_millis(state.next_timestamp);
+            let record_id = ResourceId::new();
+            let record = ResourceEnvelope::with_id(
+                record_id,
+                format!("{} source", draft.title),
+                draft.record,
+                timestamp,
+            );
+            let definition = ResourceEnvelope::with_id(
+                ResourceId::new(),
+                draft.title,
+                ChartDefinition {
+                    source: ChartSource::Radix { record: record_id },
+                    calculation: draft.calculation,
+                },
+                timestamp,
+            );
+            state.saving_chart_drafts.insert(instance_id);
+            (record, definition)
+        };
+
+        let result = self
+            .repository
+            .create_batch(vec![
+                CanonicalResource::ChartRecord(record.clone()),
+                CanonicalResource::ChartDefinition(definition.clone()),
+            ])
+            .await;
+        if let Err(error) = result {
+            self.state
+                .borrow_mut()
+                .saving_chart_drafts
+                .remove(&instance_id);
+            return Err(repository_app_error(
+                "Could not atomically save the ChartDraft",
+                &error,
+            ));
+        }
+
+        let mut state = self.state.borrow_mut();
+        state.saving_chart_drafts.remove(&instance_id);
+        state.next_timestamp = state.next_timestamp.saturating_add(1);
+        state
+            .catalog
+            .insert_current(CanonicalResource::ChartRecord(record));
+        state
+            .catalog
+            .insert_current(CanonicalResource::ChartDefinition(definition.clone()));
+        let session = state
+            .session
+            .as_mut()
+            .expect("a ready application has a workspace session");
+        session
+            .draft_charts
+            .retain(|chart| chart.instance_id != instance_id);
+        session
+            .document
+            .chart_instances
+            .push(WorkspaceDocumentChart {
+                instance_id,
+                definition: definition.id,
+            });
+        session.mark_document_dirty();
+        state.notice = Some(success(
+            "ChartRecord and ChartDefinition were created atomically; save the workspace to persist membership",
+        ));
+        state.advance()
+    }
+
+    fn cancel_chart_draft(&self, instance_id: InstanceId) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let session = state.session.as_mut().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })?;
+        let index = session
+            .draft_charts
+            .iter()
+            .position(|chart| chart.instance_id == instance_id)
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::NotFound,
+                    format!("Chart draft {instance_id} is not open"),
+                )
+            })?;
+        session.draft_charts.remove(index);
+        session.selected_charts.retain(|id| *id != instance_id);
+        for view in &mut session.document.views {
+            view.charts.retain(|_, chart| *chart != instance_id);
+        }
+        if session.active_chart == Some(instance_id) {
+            session.active_chart = session
+                .document
+                .chart_instances
+                .first()
+                .map(|chart| chart.instance_id)
+                .or_else(|| session.draft_charts.first().map(|chart| chart.instance_id));
+        }
+        state.notice = Some(info(
+            "Chart draft canceled; no canonical resources were created",
+        ));
         state.advance()
     }
 
@@ -1448,6 +1619,7 @@ struct RealState {
     cache: ComputationCache,
     pending: VecDeque<PendingWork>,
     inflight: BTreeMap<CalculationRequestId, PendingViewCalculation>,
+    saving_chart_drafts: BTreeSet<InstanceId>,
     next_request_id: CalculationRequestId,
     waiters: Vec<oneshot::Sender<()>>,
     notice: Option<AppNotice>,
@@ -1467,6 +1639,7 @@ impl Default for RealState {
             cache: ComputationCache::default(),
             pending: VecDeque::new(),
             inflight: BTreeMap::new(),
+            saving_chart_drafts: BTreeSet::new(),
             next_request_id: CalculationRequestId::FIRST,
             waiters: Vec::new(),
             notice: None,
@@ -1735,7 +1908,10 @@ impl RealState {
                     "Workspace Aspect Set binding changed; the workspace is dirty and analysis is refreshing",
                 ))
             }
-            AppIntent::BeginAspectSetEdit { .. }
+            AppIntent::StartChartDraft { .. }
+            | AppIntent::SaveChartDraft { .. }
+            | AppIntent::CancelChartDraft { .. }
+            | AppIntent::BeginAspectSetEdit { .. }
             | AppIntent::UpdateAspectSetDraft(_)
             | AppIntent::SaveDraft
             | AppIntent::CancelDraft
@@ -1952,6 +2128,20 @@ impl RealState {
             .and_then(|session| session.active_view)
             .and_then(|id| self.views.get(&id))
             .map_or_else(|| disabled("No active view"), |_| Availability::Enabled);
+        let active_chart_is_draft = self.session.as_ref().is_some_and(|session| {
+            session.active_chart.is_some_and(|active| {
+                session
+                    .draft_charts
+                    .iter()
+                    .any(|chart| chart.instance_id == active)
+            })
+        });
+        let save_chart_draft = if active_chart_is_draft {
+            Availability::Enabled
+        } else {
+            disabled("The active chart is not an unsaved draft")
+        };
+        let cancel_chart_draft = save_chart_draft.clone();
         let save_workspace = self.session.as_ref().map_or_else(
             || disabled("No workspace session"),
             |session| {
@@ -1978,6 +2168,8 @@ impl RealState {
             },
         );
         vec![
+            capability(AppAction::SaveChartDraft, save_chart_draft),
+            capability(AppAction::CancelChartDraft, cancel_chart_draft),
             capability(AppAction::BeginAspectSetEdit, begin),
             capability(AppAction::SaveDraft, save),
             capability(AppAction::CancelDraft, cancel),
@@ -2423,6 +2615,8 @@ fn repository_app_error(context: &str, error: &RepositoryError) -> AppError {
             AppErrorKind::NotFound
         }
         RepositoryError::AlreadyExists(_)
+        | RepositoryError::EmptyCreateBatch
+        | RepositoryError::DuplicateBatchIdentity(_)
         | RepositoryError::InitialRevisionRequired { .. }
         | RepositoryError::NonSequentialRevision { .. }
         | RepositoryError::IdentityChanged { .. }
@@ -2621,6 +2815,7 @@ mod tests {
         inner: MemoryRepository,
         save_failure: Rc<Cell<InjectedSaveFailure>>,
         fail_next_get: Rc<Cell<bool>>,
+        fail_next_create_batch: Rc<Cell<bool>>,
     }
 
     impl SaveFailureRepository {
@@ -2629,7 +2824,14 @@ mod tests {
                 inner: MemoryRepository::default(),
                 save_failure: Rc::new(Cell::new(save_failure)),
                 fail_next_get: Rc::new(Cell::new(false)),
+                fail_next_create_batch: Rc::new(Cell::new(false)),
             }
+        }
+
+        fn with_atomic_create_failure() -> Self {
+            let repository = Self::new(InjectedSaveFailure::None);
+            repository.fail_next_create_batch.set(true);
+            repository
         }
     }
 
@@ -2637,6 +2839,18 @@ mod tests {
     impl ResourceRepository for SaveFailureRepository {
         async fn create(&self, resource: CanonicalResource) -> Result<(), RepositoryError> {
             self.inner.create(resource).await
+        }
+
+        async fn create_batch(
+            &self,
+            resources: Vec<CanonicalResource>,
+        ) -> Result<(), RepositoryError> {
+            if self.fail_next_create_batch.replace(false) {
+                return Err(RepositoryError::Adapter(
+                    "injected atomic chart create failure".into(),
+                ));
+            }
+            self.inner.create_batch(resources).await
         }
 
         async fn save(
@@ -3005,6 +3219,119 @@ mod tests {
         assert!(!projection.workspace.document_dirty);
         assert_eq!(repository.current_count(), 0);
         assert_eq!(repository.revision_count(), 0);
+    }
+
+    #[test]
+    fn chart_draft_previews_then_atomically_creates_record_and_definition() {
+        let repository = MemoryRepository::default();
+        let application = demo_application(repository.clone());
+        let initial = ready(&application);
+        let view_id = initial.workspace.active_view.expect("active view");
+        let required_slot = initial
+            .active_view
+            .as_ref()
+            .expect("active view projection")
+            .slots
+            .iter()
+            .find(|slot| slot.required)
+            .expect("required slot")
+            .slot
+            .clone();
+        let mut fixture =
+            current_transits_session(946_728_000_000, StartupCalculationProfile::Baseline);
+        let draft = fixture
+            .draft_charts
+            .pop()
+            .expect("current transits provides a draft")
+            .draft;
+
+        let started = block_on(application.dispatch(AppIntent::StartChartDraft {
+            draft: Box::new(draft),
+        }))
+        .expect("draft starts");
+        let instance_id = started.workspace.active_chart.expect("draft is active");
+        assert_eq!(repository.current_count(), 7);
+        assert!(matches!(
+            started
+                .workspace
+                .charts
+                .last()
+                .map(|chart| &chart.persistence),
+            Some(ChartPersistence::Ephemeral)
+        ));
+        assert!(started.availability(AppAction::SaveChartDraft).is_enabled());
+
+        let previewing = block_on(application.dispatch(AppIntent::AssignChartSlot {
+            view_id,
+            slot: required_slot,
+            chart: Some(instance_id),
+        }))
+        .expect("draft can be assigned for preview");
+        let preview = block_on(application.wait_for_update(previewing.version))
+            .expect("draft preview calculation settles");
+        assert!(preview.active_view.is_some_and(|view| {
+            view.scene.is_some() && view.computation == ViewComputationState::Fresh
+        }));
+
+        let saved = block_on(application.dispatch(AppIntent::SaveChartDraft { instance_id }))
+            .expect("chart saves atomically");
+        let saved_chart = saved
+            .workspace
+            .charts
+            .iter()
+            .find(|chart| chart.instance_id == instance_id)
+            .expect("saved chart remains in the session");
+        let ChartPersistence::Saved { definition_id } = saved_chart.persistence else {
+            panic!("saved draft projects a canonical definition")
+        };
+        assert!(saved.workspace.document_dirty);
+        assert_eq!(repository.current_count(), 9);
+        assert_eq!(repository.revision_count(), 9);
+        let CanonicalResource::ChartDefinition(definition) =
+            block_on(repository.get(definition_id))
+                .expect("definition read")
+                .expect("definition exists")
+        else {
+            panic!("saved identity is a ChartDefinition")
+        };
+        let ChartSource::Radix { record } = definition.payload.source else {
+            panic!("saved draft is a radix definition")
+        };
+        assert!(matches!(
+            block_on(repository.get(record)).expect("record read"),
+            Some(CanonicalResource::ChartRecord(_))
+        ));
+    }
+
+    #[test]
+    fn failed_atomic_chart_save_retains_draft_and_cancel_creates_nothing() {
+        let repository = SaveFailureRepository::with_atomic_create_failure();
+        let application = RealApplication::with_repository(repository.clone());
+        let ready = ready(&application);
+        let instance_id = ready
+            .workspace
+            .active_chart
+            .expect("current transits draft");
+
+        let error = block_on(application.dispatch(AppIntent::SaveChartDraft { instance_id }))
+            .expect_err("injected batch failure surfaces");
+        assert_eq!(error.kind, AppErrorKind::Unavailable);
+        let retained = block_on(application.snapshot()).expect("snapshot succeeds");
+        assert!(matches!(
+            retained
+                .workspace
+                .charts
+                .first()
+                .map(|chart| &chart.persistence),
+            Some(ChartPersistence::Ephemeral)
+        ));
+        assert_eq!(repository.inner.current_count(), 0);
+
+        let canceled = block_on(application.dispatch(AppIntent::CancelChartDraft { instance_id }))
+            .expect("retained draft can be canceled");
+        assert!(canceled.workspace.charts.is_empty());
+        assert_eq!(repository.inner.current_count(), 0);
+        assert_eq!(repository.inner.revision_count(), 0);
     }
 
     #[cfg(feature = "xalen-backend")]

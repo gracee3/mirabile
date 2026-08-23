@@ -1,7 +1,18 @@
-use crate::{Angle, AspectId, ChartSlotId, InstanceId, PointId, ResourceId, ViewInstanceId};
+use crate::{
+    Angle, AspectId, ChartDraft, ChartSlotId, InstanceId, PointId, ResourceId, ViewInstanceId,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppIntent {
+    StartChartDraft {
+        draft: Box<ChartDraft>,
+    },
+    SaveChartDraft {
+        instance_id: InstanceId,
+    },
+    CancelChartDraft {
+        instance_id: InstanceId,
+    },
     OpenChart {
         /// Stable identity of the saved `ChartDefinition`, not its source `ChartRecord`.
         definition_id: ResourceId,

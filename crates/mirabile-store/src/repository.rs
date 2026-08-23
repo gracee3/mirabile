@@ -46,6 +46,11 @@ impl ResourceState {
 pub trait ResourceRepository {
     async fn create(&self, resource: CanonicalResource) -> Result<(), RepositoryError>;
 
+    /// Atomically creates every resource in a non-empty local batch.
+    ///
+    /// If any resource is invalid, duplicated, or already present, no resource is created.
+    async fn create_batch(&self, resources: Vec<CanonicalResource>) -> Result<(), RepositoryError>;
+
     async fn save(
         &self,
         expected_revision: Revision,
@@ -81,6 +86,20 @@ pub fn validate_create(resource: &CanonicalResource) -> Result<(), RepositoryErr
         return Err(RepositoryError::InitialRevisionRequired {
             actual: resource.revision(),
         });
+    }
+    Ok(())
+}
+
+pub fn validate_create_batch(resources: &[CanonicalResource]) -> Result<(), RepositoryError> {
+    if resources.is_empty() {
+        return Err(RepositoryError::EmptyCreateBatch);
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for resource in resources {
+        validate_create(resource)?;
+        if !ids.insert(resource.id()) {
+            return Err(RepositoryError::DuplicateBatchIdentity(resource.id()));
+        }
     }
     Ok(())
 }
@@ -151,6 +170,10 @@ pub fn validate_delete(
 
 #[derive(Debug, Error)]
 pub enum RepositoryError {
+    #[error("an atomic create batch must contain at least one resource")]
+    EmptyCreateBatch,
+    #[error("resource {0} occurs more than once in an atomic create batch")]
+    DuplicateBatchIdentity(ResourceId),
     #[error("resource {0} already exists")]
     AlreadyExists(ResourceId),
     #[error("resource {0} was not found")]
