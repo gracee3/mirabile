@@ -1,0 +1,12 @@
+# Architecture foundation implementation plan
+
+This plan was written after inspecting the clean README-only repository on 2026-08-22. The available toolchain is Rust/Cargo 1.97.1 and Trunk 0.21.14; the browser WASM target is not installed on the host.
+
+1. Bootstrap a four-member Rust workspace and a minimal Leptos 0.8 CSR app using Trunk. Keep Leptos and DOM dependencies in `astra-web` only.
+2. Build portable, serializable canonical types in `astra-core`: typed identifiers/units, chart assertions and definitions, typed resource envelopes, bindings, workspaces, views, queries, commands, and draft editor transitions.
+3. Build the derived pipeline in `astra-engine`: provider-neutral calculation, deterministic fake ephemeris, content keys, aspect analysis, layout, and astrology-free scene output.
+4. Put persistence behind an async repository contract in `astra-store`. Preserve revision history in the deterministic memory adapter and provide a thin IndexedDB adapter using the same portable JSON representation without leaking IndexedDB fields into domain resources.
+5. Prove the architecture in `astra-web`: a source chart flows through calculation, analysis, layout, and SVG; an AspectSet draft previews immediately and saves or cancels without mutating canonical state prematurely.
+6. Encode the handoff's acceptance behaviors as native Rust tests, then run format, unit tests, clippy, native workspace checks, and the Trunk/WASM build where the installed target permits.
+
+Out of scope for this milestone: production astronomy, historical timezone resolution, a real calculation worker, temporal-query execution, sync transport, encryption, OPFS assets, import bundles, multi-tab leadership, and professional visual polish. Their boundaries are documented now and must remain additive.

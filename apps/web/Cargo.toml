@@ -1,0 +1,19 @@
+[package]
+name = "astra-web"
+description = "Leptos CSR presentation adapter for Astra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+astra-core = { path = "../../crates/astra-core" }
+astra-engine = { path = "../../crates/astra-engine" }
+astra-store = { path = "../../crates/astra-store" }
+leptos.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = ["HtmlInputElement"] }
+
+[lints]
+workspace = true

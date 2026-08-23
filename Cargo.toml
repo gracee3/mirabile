@@ -1,0 +1,45 @@
+[workspace]
+members = [
+    "apps/web",
+    "crates/astra-core",
+    "crates/astra-engine",
+    "crates/astra-store",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/gracee3/astra"
+
+[workspace.dependencies]
+async-trait = "0.1.89"
+blake3 = "1.8.2"
+leptos = { version = "0.8.20", features = ["csr"] }
+rexie = "0.6.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+uuid = { version = "1.20.0", features = ["js", "serde", "v4"] }
+wasm-bindgen = "0.2.106"
+web-sys = "0.3.83"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+return_self_not_must_use = "allow"
+float_cmp = "allow"
+
+[profile.release]
+lto = true
+opt-level = "z"
+codegen-units = 1
+strip = true
