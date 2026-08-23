@@ -8,7 +8,7 @@ The project is intentionally not an astronomical authority yet. Its current calc
 
 - `crates/astra-core`: portable domain resources, workspace/query/view models, commands, and editor state
 - `crates/astra-engine`: calculation keys, deterministic ephemeris, aspect analysis, layout, and scene primitives
-- `crates/astra-store`: repository contract, revisioned memory repository, JSON format, and IndexedDB adapter
+- `crates/astra-store`: validated repository contract, versioned tombstones, portable JSON, and IndexedDB adapter
 - `apps/web`: Leptos 0.8 CSR presentation adapter and the reactive aspect-draft demo
 
 Architecture decisions and state semantics live in [`docs/architecture.md`](docs/architecture.md), [`docs/domain-model.md`](docs/domain-model.md), and [`docs/state-and-persistence.md`](docs/state-and-persistence.md).
@@ -19,10 +19,14 @@ Architecture decisions and state semantics live in [`docs/architecture.md`](docs
 cargo fmt --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo check -p astra-web --target wasm32-unknown-unknown
 cd apps/web && trunk build
+./scripts/test-browser.sh
 ```
 
-These checks are intentionally local; this repository does not enable hosted CI.
+These checks are intentionally local; this repository does not enable hosted CI. The browser
+script builds a feature-gated IndexedDB contract app, serves it from `target/`, and requires a
+passing DOM marker from an isolated headless Chromium profile.
 
 The browser build requires the `wasm32-unknown-unknown` Rust target. Run the app with:
 

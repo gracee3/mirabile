@@ -15,16 +15,38 @@ Device-local `WorkspaceUiState` is not part of a portable `Workspace`.
 
 ## Repository contract
 
-`ResourceRepository` provides create, optimistic revision save, current read, historical revision read, delete, and typed listing. `MemoryRepository` retains every revision for deterministic tests. `IndexedDbRepository` stores current resources and revision history in separate object stores and uses the resource's stable ID as the logical key.
+`ResourceRepository` provides create, optimistic revision save, live current read, state-aware head/read-history operations, versioned delete, and typed listing. `MemoryRepository` retains every live revision and tombstone for deterministic tests. `IndexedDbRepository` stores current state and revision history in the existing `resources` and `resource_revisions` object stores and uses the resource's stable ID as the logical key.
 
-The milestone browser UI uses that IndexedDB adapter for the demonstration AspectSet. It seeds revision 1 on first use, reloads the current revision on later visits, and commits Save through `Command::SaveResourceDraft`. Chart records, definitions, workspaces, and other resource kinds serialize through the same repository format, but their browser editing workflows are not implemented yet.
+Deletion writes `ResourceTombstone { id, kind, revision, deleted_at }` as the next revision to both
+stores in one transaction. Ordinary `get` and `list` hide tombstones; `get_head` and
+`get_revision` expose `ResourceState::Deleted`. Saves and recreation of a deleted stable ID are
+rejected, while every earlier live revision remains readable. Existing live v1 resources retain
+their raw JSON encoding. Only tombstones use an additive tagged storage envelope, so no IndexedDB
+migration or store rename is required.
+
+The milestone browser UI opens IndexedDB once, retains a cloneable repository handle, seeds or
+reloads the demonstration AspectSet, and reuses that handle for Save. Editor controls cannot accept
+edits until startup reaches `Ready`. An open failure enters `Error` with Retry and never falls back
+to implicit session/in-memory persistence. Operation epochs plus base-revision checks prevent an
+older startup or save callback from overwriting newer state.
 
 Repository writes accept a fully versioned resource and reject missing, duplicate, skipped, or stale revisions. Sync will later append operations after a successful local transaction; ordinary local writes must not wait on a server.
 
-Portable JSON serializes only resource envelopes and typed payloads. IndexedDB store names, device state, sync heads, cache indexes, server tokens, and machine paths are not portable fields.
+Portable JSON serializes only validated schema-v1 resource envelopes and typed payloads. Import
+probes `resource.schema_version` before typed decoding and rejects every non-v1 value without
+attempting to decode it as v1. IndexedDB store names, tombstone envelopes, device state, sync heads,
+cache indexes, server tokens, and machine paths are not portable fields.
 
 ## Draft lifecycle
 
 `EditorState<T>` transitions through clean, dirty, saving, and conflict states. Editing clones the canonical payload into a draft. Preview resolution chooses the draft while dirty/saving/conflicted. Save creates the next canonical revision only after the repository accepts it. Cancel drops the draft and resolves the canonical resource again.
 
 Draft recovery in IndexedDB, cross-tab notifications/locks, OPFS caches, cloud synchronization, encrypted envelopes, and archive bundles are documented extension points and are intentionally deferred.
+
+## Browser repository contract
+
+`scripts/test-browser.sh` uses the checked-in feature-gated harness, Trunk, Python, and an isolated
+headless Chromium profile. It covers create/get/save/history, two database handles, stale save and
+delete conflicts, tombstone reads, permanent stable IDs, and transaction rollback after a forced
+history-key collision. Passing requires the machine-readable `ASTRA_BROWSER_CONTRACT:PASS` DOM
+marker; this is local validation, not hosted CI.

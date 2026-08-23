@@ -16,3 +16,17 @@ Out of scope for this milestone: production astronomy, historical timezone resol
 The planned vertical slice is implemented. Native tests exercise domain invariants, resource binding/precedence, draft isolation, revision conflicts/history, portable JSON, calculation and analysis invalidation, presentation-only invalidation, workspace/library separation, and cache reconstruction. The web app persists the demonstration AspectSet and its revisions in IndexedDB; other canonical resource types use the same repository contract but do not yet have UI workflows.
 
 `CalcRequest`/`CalcResult` establish the worker protocol, but calculation still runs synchronously in the milestone UI. Query expressions, derivation recipes, composite views, sync transport, vaults, OPFS, and temporal execution remain honest skeletons or documented boundaries rather than implemented features.
+
+## P0 architecture hardening
+
+The focused P0 pass keeps the same four crates, deterministic provider, schema v1, and UI scope.
+It adds semantic projections for calculation/analysis/layout keys; splits cached
+`CalculationValue` from current `SnapshotContext`; validates calendars and all canonical payloads;
+probes schema versions before v1 import; records deletion as a permanent versioned tombstone; and
+makes browser startup fail closed while retaining one IndexedDB handle.
+
+Native tests cover semantic invalidation boundaries, canonical validation, Gregorian/Julian and
+Julian Day fixtures, cache/context reuse, and memory-repository tombstones. The feature-gated local
+browser contract covers the matching IndexedDB behavior and transaction rollback. Persisted chart
+lifecycle resources, real astronomy, a calculation Web Worker, `astra-app`, migrations, and hosted
+CI remain out of scope.
