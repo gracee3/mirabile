@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Angle(f64);
 
@@ -28,7 +28,16 @@ impl Angle {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+impl<'de> Deserialize<'de> for Angle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_degrees(f64::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Latitude(f64);
 
@@ -52,7 +61,16 @@ impl Latitude {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+impl<'de> Deserialize<'de> for Latitude {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_degrees(f64::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Longitude(f64);
 
@@ -76,7 +94,16 @@ impl Longitude {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+impl<'de> Deserialize<'de> for Longitude {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_degrees(f64::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct AngularVelocity(f64);
 
@@ -94,7 +121,16 @@ impl AngularVelocity {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+impl<'de> Deserialize<'de> for AngularVelocity {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::degrees_per_day(f64::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Offset(i32);
 
@@ -111,6 +147,15 @@ impl Offset {
 
     pub const fn seconds(self) -> i32 {
         self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for Offset {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_seconds(i32::deserialize(deserializer)?).map_err(D::Error::custom)
     }
 }
 
@@ -143,5 +188,7 @@ mod tests {
     fn coordinates_enforce_physical_bounds() {
         assert!(Latitude::from_degrees(90.1).is_err());
         assert!(Longitude::from_degrees(-180.0).is_ok());
+        assert!(serde_json::from_str::<Latitude>("90.1").is_err());
+        assert!(serde_json::from_str::<Offset>("86401").is_err());
     }
 }

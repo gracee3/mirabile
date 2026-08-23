@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use thiserror::Error;
 
 use crate::Offset;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct CivilDate {
     year: i32,
     month: u8,
@@ -35,11 +35,45 @@ impl CivilDate {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Deserialize)]
+struct CivilDateWire {
+    year: i32,
+    month: u8,
+    day: u8,
+}
+
+impl<'de> Deserialize<'de> for CivilDate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = CivilDateWire::deserialize(deserializer)?;
+        Self::new(value.year, value.month, value.day).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct CivilTime {
     hour: u8,
     minute: u8,
     second: u8,
+}
+
+#[derive(Deserialize)]
+struct CivilTimeWire {
+    hour: u8,
+    minute: u8,
+    second: u8,
+}
+
+impl<'de> Deserialize<'de> for CivilTime {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = CivilTimeWire::deserialize(deserializer)?;
+        Self::new(value.hour, value.minute, value.second).map_err(D::Error::custom)
+    }
 }
 
 impl CivilTime {
@@ -117,7 +151,7 @@ pub struct TemporalAssertion {
     pub disambiguation: Option<TimeChoice>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct AstroInstant(f64);
 
@@ -132,6 +166,15 @@ impl AstroInstant {
 
     pub const fn julian_day(self) -> f64 {
         self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for AstroInstant {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::from_julian_day(f64::deserialize(deserializer)?).map_err(D::Error::custom)
     }
 }
 
@@ -179,5 +222,6 @@ mod tests {
     fn civil_date_checks_leap_days() {
         assert!(CivilDate::new(2000, 2, 29).is_ok());
         assert!(CivilDate::new(1900, 2, 29).is_err());
+        assert!(serde_json::from_str::<CivilDate>(r#"{"year":1900,"month":2,"day":29}"#).is_err());
     }
 }

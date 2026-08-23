@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -54,7 +54,7 @@ uuid_id!(ViewInstanceId);
 
 macro_rules! string_id {
     ($name:ident) => {
-        #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
         #[serde(transparent)]
         pub struct $name(String);
 
@@ -77,6 +77,16 @@ macro_rules! string_id {
                 self.0.fmt(formatter)
             }
         }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let value = String::deserialize(deserializer)?;
+                Self::new(value).map_err(D::Error::custom)
+            }
+        }
     };
 }
 
@@ -85,7 +95,7 @@ string_id!(AspectId);
 string_id!(ChartSlotId);
 string_id!(PanelId);
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct Revision(u64);
 
@@ -118,7 +128,16 @@ impl fmt::Display for Revision {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+impl<'de> Deserialize<'de> for Revision {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(u64::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct SchemaVersion(u32);
 
@@ -135,6 +154,15 @@ impl SchemaVersion {
 
     pub const fn get(self) -> u32 {
         self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for SchemaVersion {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(u32::deserialize(deserializer)?).map_err(D::Error::custom)
     }
 }
 
@@ -178,4 +206,16 @@ pub enum RevisionError {
 pub enum SchemaVersionError {
     #[error("schema version zero is invalid")]
     Zero,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serialized_identifiers_and_versions_reject_invalid_values() {
+        assert!(serde_json::from_str::<PointId>(r#"" ""#).is_err());
+        assert!(serde_json::from_str::<Revision>("0").is_err());
+        assert!(serde_json::from_str::<SchemaVersion>("0").is_err());
+    }
 }
