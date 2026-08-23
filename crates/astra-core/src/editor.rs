@@ -123,6 +123,10 @@ impl<T: Clone> EditorState<T> {
         !matches!(self, Self::Clean { .. })
     }
 
+    pub const fn is_saving(&self) -> bool {
+        matches!(self, Self::Saving { .. })
+    }
+
     pub fn cancel(self, canonical_revision: Revision) -> Self {
         Self::Clean {
             revision: canonical_revision,

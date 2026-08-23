@@ -5,6 +5,7 @@
 
 pub mod chart;
 pub mod command;
+pub mod config;
 pub mod editor;
 pub mod ids;
 pub mod query;
@@ -16,6 +17,7 @@ pub mod workspace;
 
 pub use chart::*;
 pub use command::*;
+pub use config::*;
 pub use editor::*;
 pub use ids::*;
 pub use query::*;

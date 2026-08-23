@@ -61,6 +61,7 @@ version = "0.1.0"
 dependencies = [
  "astra-core",
  "async-trait",
+ "futures",
  "rexie",
  "serde",
  "serde_json",

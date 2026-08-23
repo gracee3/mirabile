@@ -154,6 +154,12 @@ impl Timestamp {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ResourceRevisionRef {
+    pub id: ResourceId,
+    pub revision: Revision,
+}
+
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum IdentifierError {
     #[error("identifier must not be empty")]
