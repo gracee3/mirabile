@@ -1,9 +1,10 @@
 use super::{
     AnalysisProfile, AppResult, AspectSet, AspectSetSummary, BTreeMap, CanonicalResource,
-    ChartDefinition, ChartPersistence, ChartRecord, ChartSource, LibraryChartSummary,
-    OpenChartSummary, PointSet, Resolved, ResourceBinding, ResourceEnvelope, ResourceId, Revision,
-    Theme, ViewDocument, WheelTemplate, WorkspaceDocument, WorkspaceDocumentChart,
-    chart_record_subtitle, conjunction, not_found, push_pin, resolve_binding,
+    ChartDefinition, ChartPersistence, ChartRecord, ChartSource, ConfigurationLayer,
+    LibraryChartSummary, OpenChartSummary, PointSet, Resolved, ResourceBinding, ResourceEnvelope,
+    ResourceId, Revision, Theme, ViewDocument, WheelTemplate, WorkspaceDocument,
+    WorkspaceDocumentChart, chart_record_subtitle, conjunction, not_found, push_pin,
+    resolve_binding,
 };
 
 #[derive(Clone, Default)]
@@ -165,6 +166,7 @@ bound_payload!(ViewDocument, ViewDocument);
 pub(super) fn resolve_typed_binding<T: BoundPayload>(
     binding: &ResourceBinding<T>,
     catalog: &Catalog,
+    layer: ConfigurationLayer,
 ) -> Result<Resolved<T>, mirabile_core::BindingResolutionError> {
     resolve_binding(
         binding,
@@ -176,5 +178,6 @@ pub(super) fn resolve_typed_binding<T: BoundPayload>(
                 .and_then(T::envelope)
                 .cloned()
         },
+        layer,
     )
 }

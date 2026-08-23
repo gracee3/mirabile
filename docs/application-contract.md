@@ -37,6 +37,12 @@ by requesting a new projection.
 The application must never fabricate identity or revision metadata to present an inline value.
 This projection does not change canonical `ResourceBinding` semantics.
 
+Effective configuration records two independent facts. `ConfigurationLayer` says why a value won
+precedence (`BuiltIn`, `UserDefault`, `Workspace`, `ChartDefinition`, `View`, or `Preview`), while
+`ValueSource` says where its material value came from (`Inline`, `Follow { resource_id, revision }`,
+or `Pinned { resource_id, revision }`). A followed workspace value therefore remains both
+`Workspace` layer and `Follow` source; binding origin is never substituted for precedence.
+
 ## Chart Definition identity
 
 Chart library and saved-workspace identity always means a canonical `ChartDefinition`, not the
@@ -217,6 +223,13 @@ before applying an application-level `StartupPolicy`. `RestorePreviousSession` i
 because session recovery is not implemented yet, it falls back to `CurrentTransits`.
 `BlankWorkspace`, `OpenWorkspace(id)`, and the future-facing `OpenWorkspaces(ids)` forms are also
 represented. The current UI activates only the first requested workspace.
+
+After each object has passed core structural validation, hydration performs application-level
+referential validation against the catalog and session graph. It resolves Follow/Pinned bindings,
+checks saved chart-definition/source links, verifies active and selected session identities, and
+checks slot assignments against the resolved `ViewDocument`. Core validators never open a
+repository. Workspace commands validate a cloned candidate session before making it authoritative,
+so a referential failure cannot leave partially mutated application state.
 
 A genuinely empty repository is valid. Fresh startup creates an unsaved `WorkspaceSession` with
 one ephemeral Current Transits `ChartDraft`, a single wheel, system UTC time, tropical geocentric

@@ -1,8 +1,9 @@
 use super::{
-    AppError, AppErrorKind, AppResult, CalculationRuntime, Catalog, HydratedState, RealApplication,
-    ResourceEnvelope, ResourceId, ResourceRepository, ResourceState, StartupPolicy,
-    WorkspaceDocument, WorkspaceSession, blank_workspace_session, current_transits_session,
-    initialization_error, resource_modified_at,
+    AppError, AppErrorKind, AppResult, CalculationRuntime, Catalog, DomainValidate, HydratedState,
+    RealApplication, ResourceEnvelope, ResourceId, ResourceRepository, ResourceState,
+    StartupPolicy, WorkspaceDocument, WorkspaceSession, blank_workspace_session,
+    current_transits_session, initialization_error, resource_modified_at,
+    validation::validate_session_references,
 };
 
 impl<R, C> RealApplication<R, C>
@@ -24,6 +25,18 @@ where
         self.hydrate_pinned_revisions(&mut catalog).await?;
 
         let (workspace, session) = self.startup_session(&catalog)?;
+        session.document.domain_validate().map_err(|error| {
+            AppError::new(
+                AppErrorKind::Initialization,
+                format!("Startup WorkspaceDocument failed structural validation: {error}"),
+            )
+        })?;
+        validate_session_references(&session, &catalog).map_err(|error| {
+            AppError::new(
+                AppErrorKind::Initialization,
+                format!("Startup session failed referential validation: {error}"),
+            )
+        })?;
         Ok(HydratedState {
             catalog,
             workspace,

@@ -552,6 +552,67 @@ fn genuinely_empty_repository_starts_ephemeral_current_transits_without_writes()
 }
 
 #[test]
+fn initialization_separates_structural_from_catalog_referential_validation() {
+    let ids = demo_ids();
+    let repository = MemoryRepository::default();
+    for resource in demo_resources()
+        .into_iter()
+        .filter(|resource| resource.id() != ids.chart_record_a)
+    {
+        block_on(repository.create(resource)).expect("structurally valid resource is accepted");
+    }
+    let application = RealApplication::with_repository_and_policy(
+        repository,
+        StartupPolicy::OpenWorkspace(ids.workspace),
+    );
+
+    let projection = block_on(application.initialize()).expect("error state is projected");
+    assert!(matches!(
+        projection.status,
+        ApplicationStatus::Error(AppError {
+            kind: AppErrorKind::Initialization,
+            ref message,
+        }) if message.contains("referential validation")
+            && message.contains("ChartRecord")
+            && message.contains(&ids.chart_record_a.to_string())
+    ));
+}
+
+#[test]
+fn resolved_required_view_slots_are_referential_application_invariants() {
+    let ids = demo_ids();
+    let repository = MemoryRepository::default();
+    for resource in demo_resources() {
+        let resource = match resource {
+            CanonicalResource::WorkspaceDocument(mut workspace) => {
+                workspace.payload.views[0].charts.clear();
+                workspace
+                    .payload
+                    .domain_validate()
+                    .expect("one-object structural validation does not resolve slot requirements");
+                CanonicalResource::WorkspaceDocument(workspace)
+            }
+            resource => resource,
+        };
+        block_on(repository.create(resource)).expect("structurally valid resource is accepted");
+    }
+    let application = RealApplication::with_repository_and_policy(
+        repository,
+        StartupPolicy::OpenWorkspace(ids.workspace),
+    );
+
+    let projection = block_on(application.initialize()).expect("error state is projected");
+    assert!(matches!(
+        projection.status,
+        ApplicationStatus::Error(AppError {
+            kind: AppErrorKind::Initialization,
+            ref message,
+        }) if message.contains("referential validation")
+            && message.contains("required slot is not assigned")
+    ));
+}
+
+#[test]
 fn chart_draft_previews_then_atomically_creates_record_and_definition() {
     let repository = MemoryRepository::default();
     let application = demo_application(repository.clone());
@@ -1574,14 +1635,19 @@ fn binding_resolver_preserves_inline_follow_and_pinned_semantics() {
     catalog.insert_current(CanonicalResource::PointSet(first.clone()));
     catalog.insert_current(CanonicalResource::PointSet(second.clone()));
 
-    let followed = resolve_typed_binding(&ResourceBinding::<PointSet>::Follow { id }, &catalog)
-        .expect("follow resolves");
+    let followed = resolve_typed_binding(
+        &ResourceBinding::<PointSet>::Follow { id },
+        &catalog,
+        ConfigurationLayer::Workspace,
+    )
+    .expect("follow resolves");
     let pinned = resolve_typed_binding(
         &ResourceBinding::<PointSet>::Pinned {
             id,
             revision: Revision::INITIAL,
         },
         &catalog,
+        ConfigurationLayer::Workspace,
     )
     .expect("pin resolves");
     let inline = resolve_typed_binding(
@@ -1589,16 +1655,28 @@ fn binding_resolver_preserves_inline_follow_and_pinned_semantics() {
             value: PointSet { points: Vec::new() },
         },
         &catalog,
+        ConfigurationLayer::Workspace,
     )
     .expect("inline resolves");
 
-    assert_eq!(followed.revision, Some(second.revision));
-    assert_eq!(followed.layer, ResolutionLayer::FollowedResource);
-    assert_eq!(pinned.revision, Some(Revision::INITIAL));
-    assert_eq!(pinned.layer, ResolutionLayer::PinnedResource);
-    assert_eq!(inline.resource, None);
-    assert_eq!(inline.revision, None);
-    assert_eq!(inline.layer, ResolutionLayer::Inline);
+    assert_eq!(followed.layer, ConfigurationLayer::Workspace);
+    assert_eq!(pinned.layer, ConfigurationLayer::Workspace);
+    assert_eq!(inline.layer, ConfigurationLayer::Workspace);
+    assert_eq!(
+        followed.source,
+        ValueSource::Follow {
+            resource_id: id,
+            revision: second.revision,
+        }
+    );
+    assert_eq!(
+        pinned.source,
+        ValueSource::Pinned {
+            resource_id: id,
+            revision: Revision::INITIAL,
+        }
+    );
+    assert_eq!(inline.source, ValueSource::Inline);
 }
 
 #[test]

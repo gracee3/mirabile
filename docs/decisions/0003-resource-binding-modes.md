@@ -12,4 +12,4 @@ resource identity.
 
 Projection and inspectors must not fabricate resource IDs for inline values. Binding origin is
 distinct from configuration precedence: where a value came from does not explain why its layer
-won.
+won. `Resolved<T>` therefore carries a `ConfigurationLayer` and a separate `ValueSource`.

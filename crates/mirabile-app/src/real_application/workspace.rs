@@ -1,8 +1,9 @@
 use super::{
     AppError, AppErrorKind, AppIntent, AppResult, BTreeMap, CalculationRuntime, CanonicalResource,
-    Command, InstanceId, RealApplication, RealState, ResourceId, ResourceRepository, Timestamp,
-    ViewDocument, ViewInstanceId, WorkspaceDocument, apply_workspace_command, info, not_found,
-    repository_app_error, resolve_typed_binding, success,
+    Command, ConfigurationLayer, InstanceId, RealApplication, RealState, ResourceId,
+    ResourceRepository, Timestamp, ViewDocument, ViewInstanceId, WorkspaceDocument,
+    apply_workspace_command, info, not_found, repository_app_error, resolve_typed_binding, success,
+    validation::validate_session_references,
 };
 
 impl<R, C> RealApplication<R, C>
@@ -89,9 +90,16 @@ where
         let (command, refresh, clear_editor, notice) =
             state.command_for_intent(workspace_id, &document, intent)?;
         let view_documents = state.resolve_view_documents(&document)?;
-        let session = state.session.as_mut().expect("session was checked");
-        apply_workspace_command(workspace_id, session, &command, &view_documents)
+        let mut next_session = state.session.clone().expect("session was checked");
+        apply_workspace_command(workspace_id, &mut next_session, &command, &view_documents)
             .map_err(|error| AppError::new(AppErrorKind::InvalidIntent, error.to_string()))?;
+        validate_session_references(&next_session, &state.catalog).map_err(|error| {
+            AppError::new(
+                AppErrorKind::InvalidIntent,
+                format!("Workspace command failed referential validation: {error}"),
+            )
+        })?;
+        state.session = Some(next_session);
         if clear_editor {
             state.editor = None;
         }
@@ -235,7 +243,7 @@ impl RealState {
             .views
             .iter()
             .map(|view| {
-                resolve_typed_binding(&view.document, &self.catalog)
+                resolve_typed_binding(&view.document, &self.catalog, ConfigurationLayer::View)
                     .map(|resolved| (view.id, resolved.value))
                     .map_err(|error| {
                         AppError::new(
@@ -328,8 +336,11 @@ impl RealState {
                             format!("View {view_id} was not found"),
                         )
                     })?;
-                let document = resolve_typed_binding(&view.document, &self.catalog)
-                    .map_err(|error| AppError::new(AppErrorKind::NotFound, error.to_string()))?;
+                let document =
+                    resolve_typed_binding(&view.document, &self.catalog, ConfigurationLayer::View)
+                        .map_err(|error| {
+                            AppError::new(AppErrorKind::NotFound, error.to_string())
+                        })?;
                 let slot_definition = document
                     .value
                     .chart_slots

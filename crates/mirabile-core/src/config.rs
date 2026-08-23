@@ -8,24 +8,35 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ResolutionLayer {
-    BuiltInDefault,
+pub enum ConfigurationLayer {
+    BuiltIn,
     UserDefault,
     Workspace,
     ChartDefinition,
-    ViewOverride,
-    EditorPreview,
-    FollowedResource,
-    PinnedResource,
+    View,
+    Preview,
+}
+
+/// Material origin of an effective value, independent of why it won precedence.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ValueSource {
     Inline,
+    Follow {
+        resource_id: ResourceId,
+        revision: Revision,
+    },
+    Pinned {
+        resource_id: ResourceId,
+        revision: Revision,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Resolved<T> {
     pub value: T,
-    pub layer: ResolutionLayer,
-    pub resource: Option<ResourceId>,
-    pub revision: Option<Revision>,
+    pub layer: ConfigurationLayer,
+    pub source: ValueSource,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -41,31 +52,30 @@ pub struct ConfigurationStack<T> {
 impl<T> ConfigurationStack<T> {
     pub fn resolve(self) -> Resolved<T> {
         if let Some(value) = self.editor_preview {
-            return Resolved::inline(value, ResolutionLayer::EditorPreview);
+            return Resolved::inline(value, ConfigurationLayer::Preview);
         }
         if let Some(value) = self.view_override {
-            return Resolved::inline(value, ResolutionLayer::ViewOverride);
+            return Resolved::inline(value, ConfigurationLayer::View);
         }
         if let Some(value) = self.chart_definition {
-            return Resolved::inline(value, ResolutionLayer::ChartDefinition);
+            return Resolved::inline(value, ConfigurationLayer::ChartDefinition);
         }
         if let Some(value) = self.workspace {
-            return Resolved::inline(value, ResolutionLayer::Workspace);
+            return Resolved::inline(value, ConfigurationLayer::Workspace);
         }
         if let Some(value) = self.user_default {
-            return Resolved::inline(value, ResolutionLayer::UserDefault);
+            return Resolved::inline(value, ConfigurationLayer::UserDefault);
         }
-        Resolved::inline(self.built_in, ResolutionLayer::BuiltInDefault)
+        Resolved::inline(self.built_in, ConfigurationLayer::BuiltIn)
     }
 }
 
 impl<T> Resolved<T> {
-    fn inline(value: T, layer: ResolutionLayer) -> Self {
+    fn inline(value: T, layer: ConfigurationLayer) -> Self {
         Self {
             value,
             layer,
-            resource: None,
-            revision: None,
+            source: ValueSource::Inline,
         }
     }
 }
@@ -74,15 +84,18 @@ pub fn resolve_binding<T: Clone>(
     binding: &ResourceBinding<T>,
     current: impl FnOnce(ResourceId) -> Option<ResourceEnvelope<T>>,
     historical: impl FnOnce(ResourceId, Revision) -> Option<ResourceEnvelope<T>>,
+    layer: ConfigurationLayer,
 ) -> Result<Resolved<T>, BindingResolutionError> {
     match binding {
         ResourceBinding::Follow { id } => {
             let envelope = current(*id).ok_or(BindingResolutionError::MissingResource(*id))?;
             Ok(Resolved {
                 value: envelope.payload,
-                layer: ResolutionLayer::FollowedResource,
-                resource: Some(envelope.id),
-                revision: Some(envelope.revision),
+                layer,
+                source: ValueSource::Follow {
+                    resource_id: envelope.id,
+                    revision: envelope.revision,
+                },
             })
         }
         ResourceBinding::Pinned { id, revision } => {
@@ -93,16 +106,17 @@ pub fn resolve_binding<T: Clone>(
                 })?;
             Ok(Resolved {
                 value: envelope.payload,
-                layer: ResolutionLayer::PinnedResource,
-                resource: Some(envelope.id),
-                revision: Some(envelope.revision),
+                layer,
+                source: ValueSource::Pinned {
+                    resource_id: envelope.id,
+                    revision: envelope.revision,
+                },
             })
         }
         ResourceBinding::Inline { value } => Ok(Resolved {
             value: value.clone(),
-            layer: ResolutionLayer::Inline,
-            resource: None,
-            revision: None,
+            layer,
+            source: ValueSource::Inline,
         }),
     }
 }
@@ -147,7 +161,8 @@ mod tests {
         }
         .resolve();
 
-        assert_eq!(resolved.layer, ResolutionLayer::EditorPreview);
+        assert_eq!(resolved.layer, ConfigurationLayer::Preview);
+        assert_eq!(resolved.source, ValueSource::Inline);
         assert_eq!(resolved.value.houses, crate::HouseSystem::WholeSign);
         assert_eq!(chart.houses, crate::HouseSystem::Placidus);
     }
@@ -174,6 +189,7 @@ mod tests {
             &ResourceBinding::Follow { id },
             |_| Some(second.clone()),
             |_, _| None,
+            ConfigurationLayer::Workspace,
         )
         .expect("follow current");
         let pinned = resolve_binding(
@@ -183,11 +199,26 @@ mod tests {
             },
             |_| None,
             |_, _| Some(first),
+            ConfigurationLayer::Workspace,
         )
         .expect("pin first");
 
-        assert_eq!(followed.revision, Some(second.revision));
-        assert_eq!(pinned.revision, Some(Revision::INITIAL));
+        assert_eq!(followed.layer, ConfigurationLayer::Workspace);
+        assert_eq!(pinned.layer, ConfigurationLayer::Workspace);
+        assert_eq!(
+            followed.source,
+            ValueSource::Follow {
+                resource_id: id,
+                revision: second.revision,
+            }
+        );
+        assert_eq!(
+            pinned.source,
+            ValueSource::Pinned {
+                resource_id: id,
+                revision: Revision::INITIAL,
+            }
+        );
         assert_ne!(followed.value, pinned.value);
     }
 }

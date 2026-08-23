@@ -23,6 +23,13 @@ and a path such as `life_events[0].time.civil_datetime.date`. Envelopes addition
 v1, a nonempty title, nonempty unique tags, and `modified_at >= created_at`. Repository create/save,
 portable serialization/import, and IndexedDB decoding all invoke the same validation boundary.
 
+This is structural validation: one object can validate without repository or catalog access.
+Duplicate workspace instance IDs, duplicate view slot IDs, malformed inline values, and references
+between fields inside one `ViewDocument` belong here. Referential validation belongs to
+`mirabile-app`, where the hydrated catalog and `WorkspaceSession` are available. Missing Follow
+heads, missing Pinned revisions, absent chart definitions/records, session identities, and slot
+assignments against a resolved external `ViewDocument` are application graph errors.
+
 ## Reproducibility rules
 
 Chart definitions store the zodiac, house system, coordinate system, node choice, Black Moon choice, fortune formula, and correction choices that affect their meaning. Defaults only seed a new definition. A later default change cannot mutate an existing definition.
@@ -34,6 +41,11 @@ Reusable settings have explicit binding semantics:
 - `Inline(value)` carries a self-contained value.
 
 Displayed points and aspected points are separate bindings, so visible points do not have to participate in aspect analysis.
+
+Resolved settings retain independent provenance dimensions: `ConfigurationLayer` describes the
+precedence layer that won, and `ValueSource` describes whether the material value was Inline,
+Follow, or Pinned (including the actual resource revision). This lets an inspector answer both
+"why did this win?" and "where did it come from?"
 
 ## Time and location
 

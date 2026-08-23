@@ -1,9 +1,9 @@
 use super::{
     AppError, AppErrorKind, AppNotice, AppNoticeKind, AppResult, AspectAnalyzer, CalculationEngine,
     CalculationOutcome, CalculationRuntime, CalculationRuntimeError, CalculationWorkerRequest,
-    CalculationWorkerResult, ChartSource, ExpectedCalculation, PendingCachedView,
-    PendingViewCalculation, PendingWork, PreparedCalculation, ProjectionVersion, RealApplication,
-    RealState, ResourceRepository, Scene, SnapshotContext, ViewCalculationPlan,
+    CalculationWorkerResult, ChartSource, ConfigurationLayer, ExpectedCalculation,
+    PendingCachedView, PendingViewCalculation, PendingWork, PreparedCalculation, ProjectionVersion,
+    RealApplication, RealState, ResourceRepository, Scene, SnapshotContext, ViewCalculationPlan,
     ViewComputationState, ViewInstanceId, WorkerProtocolVersion, info, layout_wheel,
     not_found_for_view, render_key, resolve_typed_binding, success, view_computation_error,
     view_resolution_error, worker_failure_error,
@@ -326,7 +326,8 @@ where
                 )
             })?;
         let document =
-            resolve_typed_binding(&view.document, &state.catalog).map_err(view_resolution_error)?;
+            resolve_typed_binding(&view.document, &state.catalog, ConfigurationLayer::View)
+                .map_err(view_resolution_error)?;
         let chart_instance = document
             .value
             .chart_slots

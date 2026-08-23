@@ -10,10 +10,10 @@ use async_trait::async_trait;
 use futures::{channel::oneshot, lock::Mutex};
 use mirabile_core::{
     AnalysisProfile, AspectSet, CalculationSpec, CanonicalResource, ChartDefinition, ChartRecord,
-    ChartSource, Command, ConfigurationStack, DomainValidate, EffectiveConfiguration, InstanceId,
-    PointSet, ResolutionLayer, Resolved, ResourceBinding, ResourceEnvelope, ResourceId, Revision,
-    Theme, Timestamp, ViewDocument, ViewInstance, ViewInstanceId, WheelTemplate, WorkspaceDocument,
-    WorkspaceDocumentChart, resolve_binding,
+    ChartSource, Command, ConfigurationLayer, ConfigurationStack, DerivationSpec, DomainValidate,
+    EffectiveConfiguration, InstanceId, PointSet, Resolved, ResourceBinding, ResourceEnvelope,
+    ResourceId, Revision, Theme, Timestamp, ValueSource, ViewDocument, ViewInstance,
+    ViewInstanceId, WheelTemplate, WorkspaceDocument, WorkspaceDocumentChart, resolve_binding,
 };
 use mirabile_engine::{
     AspectAnalyzer, CalcKey, CalculationEngine, CalculationOutcome, CalculationRequestId,
@@ -49,6 +49,7 @@ mod projection;
 mod state;
 #[cfg(test)]
 mod tests;
+mod validation;
 mod workspace;
 
 use catalog::{BoundPayload, Catalog, resolve_typed_binding};
@@ -548,21 +549,25 @@ fn binding_summary<T: BoundPayload>(
     binding: &ResourceBinding<T>,
     catalog: &Catalog,
 ) -> AppResult<ResourceBindingSummary> {
-    let resolved = resolve_typed_binding(binding, catalog)
+    let resolved = resolve_typed_binding(binding, catalog, ConfigurationLayer::Workspace)
         .map_err(|error| AppError::new(AppErrorKind::NotFound, error.to_string()))?;
-    let source = match binding {
-        ResourceBinding::Inline { .. } => BindingSourceSummary::Inline,
-        ResourceBinding::Follow { id } => BindingSourceSummary::Follow {
-            resource_id: *id,
-            resource_title: resource_title(catalog, *id, resolved.revision)?,
-            revision: resolved
-                .revision
-                .expect("follow resolution includes a revision"),
+    let source = match resolved.source {
+        ValueSource::Inline => BindingSourceSummary::Inline,
+        ValueSource::Follow {
+            resource_id,
+            revision,
+        } => BindingSourceSummary::Follow {
+            resource_id,
+            resource_title: resource_title(catalog, resource_id, Some(revision))?,
+            revision,
         },
-        ResourceBinding::Pinned { id, revision } => BindingSourceSummary::Pinned {
-            resource_id: *id,
-            resource_title: resource_title(catalog, *id, Some(*revision))?,
-            revision: *revision,
+        ValueSource::Pinned {
+            resource_id,
+            revision,
+        } => BindingSourceSummary::Pinned {
+            resource_id,
+            resource_title: resource_title(catalog, resource_id, Some(revision))?,
+            revision,
         },
     };
     Ok(ResourceBindingSummary {

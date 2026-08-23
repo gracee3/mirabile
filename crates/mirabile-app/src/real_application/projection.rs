@@ -1,10 +1,11 @@
 use super::{
     ActiveChartInspector, AppAction, AppError, AppErrorKind, AppReadModel, AppResult,
     ApplicationStatus, Availability, CalculationRuntime, ChartPersistence, ChartSlotAssignment,
-    CommandCapability, DraftState, InspectorReadModel, LibraryReadModel, OpenChartSummary,
-    RealApplication, RealState, ResourceEditorReadModel, ResourceRepository, ViewInstanceId,
-    ViewReadModel, ViewSummary, WorkspaceReadModel, aspect_editor_read_model, binding_summary,
-    capability, chart_record_subtitle, disabled, resolve_typed_binding, view_title,
+    CommandCapability, ConfigurationLayer, DraftState, InspectorReadModel, LibraryReadModel,
+    OpenChartSummary, RealApplication, RealState, ResourceEditorReadModel, ResourceRepository,
+    ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel, aspect_editor_read_model,
+    binding_summary, capability, chart_record_subtitle, disabled, resolve_typed_binding,
+    view_title,
 };
 
 impl<R, C> RealApplication<R, C>
@@ -158,8 +159,9 @@ impl RealState {
                     format!("View {view_id} was not found"),
                 )
             })?;
-        let document = resolve_typed_binding(&view.document, &self.catalog)
-            .map_err(|error| AppError::new(AppErrorKind::NotFound, error.to_string()))?;
+        let document =
+            resolve_typed_binding(&view.document, &self.catalog, ConfigurationLayer::View)
+                .map_err(|error| AppError::new(AppErrorKind::NotFound, error.to_string()))?;
         let runtime = self.views.get(&view_id).cloned().unwrap_or_default();
         Ok(ViewReadModel {
             view_id,
