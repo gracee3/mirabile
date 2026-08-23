@@ -297,15 +297,32 @@ fn validate_backend_result(
             "backend result identity did not match the selected backend".into(),
         ));
     }
-    if result
-        .provenance
-        .time
-        .as_ref()
-        .is_some_and(|time| time.input_scale != request.context.time.scale)
-    {
-        return Err(CalculationError::BackendResultMismatch(
-            "time-conversion provenance input scale did not match the request".into(),
-        ));
+    match (&descriptor.fingerprint.time, &result.provenance.time) {
+        (Some(expected), Some(actual)) => {
+            let houses_requested = request.houses.is_some();
+            let expected_house_scale = houses_requested.then_some(expected.house_scale).flatten();
+            let expected_delta_t_model = houses_requested
+                .then_some(expected.delta_t_model.as_ref())
+                .flatten();
+            if expected.input_scale != request.context.time.scale
+                || expected.implementation != actual.implementation
+                || expected.input_scale != actual.input_scale
+                || expected.celestial_scale != actual.celestial_scale
+                || expected_house_scale != actual.house_scale
+                || expected.leap_second_model != actual.leap_second_model
+                || expected_delta_t_model != actual.delta_t_model.as_ref()
+            {
+                return Err(CalculationError::BackendResultMismatch(
+                    "time-conversion provenance did not match the request and descriptor".into(),
+                ));
+            }
+        }
+        (None, None) => {}
+        _ => {
+            return Err(CalculationError::BackendResultMismatch(
+                "time-conversion provenance presence did not match the selected backend".into(),
+            ));
+        }
     }
     let celestial = descriptor.fingerprint.celestial.as_ref().ok_or_else(|| {
         CalculationError::BackendResultMismatch("selected backend lacks celestial identity".into())

@@ -36,8 +36,10 @@ use crate::{
     ViewSummary, WorkspaceReadModel, bootstrap_ids, bootstrap_resources,
     workspace_commands::apply_workspace_command,
 };
-#[cfg(all(target_arch = "wasm32", feature = "xalen-backend"))]
+#[cfg(feature = "xalen-backend")]
 use crate::{apparent_place_bootstrap_resources, migrate_legacy_bootstrap_resource};
+#[cfg(feature = "xalen-backend")]
+use astra_engine::XalenBackend;
 
 pub const DEFAULT_INDEXED_DB_NAME: &str = "astra";
 
@@ -68,6 +70,9 @@ where
     R: ResourceRepository + Clone,
     B: astra_engine::CalculationBackend + Clone,
 {
+    /// Constructs an inline application with the baseline no-correction seed.
+    /// Backends that require an apparent-place profile must use their
+    /// profile-specific constructor instead.
     pub fn with_backend(repository: R, backend: B) -> Self {
         Self::with_runtime(repository, InlineCalculationRuntime::new(backend))
     }
@@ -96,7 +101,7 @@ where
                 ImplementationIdentity {
                     id: "astra-calculation-engine".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
-                    revision: Some("calculation-runtime-v2".into()),
+                    revision: Some("calculation-runtime-v3".into()),
                 },
                 "deterministic-tz-v1",
             ),
@@ -112,6 +117,23 @@ where
 impl RealApplication<MemoryRepository, InlineCalculationRuntime<DeterministicBackend>> {
     pub fn in_memory() -> Self {
         Self::with_repository(MemoryRepository::default())
+    }
+}
+
+#[cfg(feature = "xalen-backend")]
+impl<R> RealApplication<R, InlineCalculationRuntime<XalenBackend>>
+where
+    R: ResourceRepository + Clone,
+{
+    /// Constructs a native XALEN application with the apparent-place seed
+    /// profile required by that backend.
+    pub fn with_xalen_backend(repository: R) -> Self {
+        Self::with_runtime_and_bootstrap(
+            repository,
+            InlineCalculationRuntime::new(XalenBackend),
+            apparent_place_bootstrap_resources,
+            Some(migrate_legacy_bootstrap_resource),
+        )
     }
 }
 
@@ -2622,6 +2644,19 @@ mod tests {
         ready(&second);
         assert_eq!(repository.current_count(), 7);
         assert_eq!(repository.revision_count(), 7);
+    }
+
+    #[cfg(feature = "xalen-backend")]
+    #[test]
+    fn native_xalen_constructor_reaches_a_fresh_scene() {
+        let application = RealApplication::with_xalen_backend(MemoryRepository::default());
+        let projection = ready(&application);
+        let active_view = projection.active_view.expect("active view");
+        assert!(matches!(
+            active_view.computation,
+            ViewComputationState::Fresh
+        ));
+        assert!(active_view.scene.is_some());
     }
 
     #[test]

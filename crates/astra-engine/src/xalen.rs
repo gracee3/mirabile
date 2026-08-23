@@ -15,8 +15,8 @@ use crate::{
     CelestialCalculationProvenance, CelestialCapabilities, CelestialPositionsResult,
     DerivedPointsResult, EphemerisModelIdentity, EphemerisModelKind, HouseBackendFingerprint,
     HouseCalculationProvenance, HouseCalculationResult, HouseCapabilities, ImplementationIdentity,
-    ResolvedCalculationRequest, TimeModelIdentity, TimeScaleConversionProvenance,
-    ZodiacCalculationRequest,
+    ResolvedCalculationRequest, TimeBackendFingerprint, TimeModelIdentity,
+    TimeScaleConversionProvenance, ZodiacCalculationRequest,
 };
 
 const XALEN_VERSION: &str = "0.6.0";
@@ -87,22 +87,36 @@ impl XalenBackend {
         }
     }
 
-    fn time_provenance(houses: bool) -> TimeScaleConversionProvenance {
-        TimeScaleConversionProvenance {
+    fn time_fingerprint() -> TimeBackendFingerprint {
+        TimeBackendFingerprint {
             implementation: Self::implementation("xalen-time"),
             input_scale: TimeScale::Utc,
             celestial_scale: TimeScale::Tt,
-            house_scale: houses.then_some(TimeScale::Ut1),
+            house_scale: Some(TimeScale::Ut1),
             leap_second_model: Some(TimeModelIdentity {
                 id: "iers-leap-seconds-1972-2017".into(),
                 version: Some("2017-01-01".into()),
                 revision: None,
             }),
-            delta_t_model: houses.then(|| TimeModelIdentity {
+            delta_t_model: Some(TimeModelIdentity {
                 id: "stephenson-morrison-hohenkerk-2016".into(),
                 version: Some("table-s15".into()),
                 revision: None,
             }),
+        }
+    }
+
+    fn time_provenance(
+        fingerprint: TimeBackendFingerprint,
+        houses: bool,
+    ) -> TimeScaleConversionProvenance {
+        TimeScaleConversionProvenance {
+            implementation: fingerprint.implementation,
+            input_scale: fingerprint.input_scale,
+            celestial_scale: fingerprint.celestial_scale,
+            house_scale: houses.then_some(fingerprint.house_scale).flatten(),
+            leap_second_model: fingerprint.leap_second_model,
+            delta_t_model: houses.then_some(fingerprint.delta_t_model).flatten(),
         }
     }
 }
@@ -112,6 +126,7 @@ impl CalculationBackend for XalenBackend {
         BackendDescriptor {
             fingerprint: BackendFingerprint {
                 backend: Self::implementation(Self::ID),
+                time: Some(Self::time_fingerprint()),
                 celestial: Some(CelestialBackendFingerprint {
                     implementation: Self::implementation("xalen-ephem"),
                     model: Some(Self::model()),
@@ -192,6 +207,9 @@ impl CalculationBackend for XalenBackend {
 
         let descriptor = self.descriptor();
         let fingerprint = descriptor.fingerprint;
+        let time_fingerprint = fingerprint
+            .time
+            .ok_or_else(|| internal("XALEN time fingerprint is unavailable"))?;
         let celestial_fingerprint = fingerprint
             .celestial
             .ok_or_else(|| internal("XALEN celestial fingerprint is unavailable"))?;
@@ -211,7 +229,10 @@ impl CalculationBackend for XalenBackend {
             derived: DerivedPointsResult::default(),
             provenance: BackendCalculationProvenance {
                 backend: fingerprint.backend,
-                time: Some(Self::time_provenance(request.houses.is_some())),
+                time: Some(Self::time_provenance(
+                    time_fingerprint,
+                    request.houses.is_some(),
+                )),
                 celestial: CelestialCalculationProvenance {
                     implementation: celestial_fingerprint.implementation,
                     model: celestial_fingerprint.model,

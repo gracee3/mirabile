@@ -129,6 +129,31 @@ fn descriptor_is_narrow_stable_and_provider_neutral() {
         descriptor.fingerprint.backend.revision.as_deref(),
         Some(XALEN_REVISION)
     );
+    let time = descriptor
+        .fingerprint
+        .time
+        .as_ref()
+        .expect("time pipeline identity");
+    assert_eq!(time.implementation.id, "xalen-time");
+    assert_eq!(time.implementation.version, "0.6.0");
+    assert_eq!(
+        time.implementation.revision.as_deref(),
+        Some(XALEN_REVISION)
+    );
+    assert_eq!(time.input_scale, TimeScale::Utc);
+    assert_eq!(time.celestial_scale, TimeScale::Tt);
+    assert_eq!(time.house_scale, Some(TimeScale::Ut1));
+    assert_eq!(
+        time.leap_second_model
+            .as_ref()
+            .expect("leap-second model")
+            .id,
+        "iers-leap-seconds-1972-2017"
+    );
+    assert_eq!(
+        time.delta_t_model.as_ref().expect("Delta-T model").id,
+        "stephenson-morrison-hohenkerk-2016"
+    );
     let celestial = descriptor
         .fingerprint
         .celestial
@@ -466,7 +491,7 @@ fn unsupported_semantics_are_typed_failures() {
 }
 
 #[test]
-fn calc_keys_include_backend_and_revision_identity() {
+fn calc_keys_include_backend_revision_and_time_identity() {
     let (record, definition) = resources();
     let prepared = engine()
         .prepare(&definition, &record, &fixture_points(), &fixture_points())
@@ -484,6 +509,129 @@ fn calc_keys_include_backend_and_revision_identity() {
     let revised = CalcKey::derive(&prepared.request, &engine_identity(), &other_revision)
         .expect("revised XALEN key");
     assert_ne!(prepared.calc_key, revised);
+
+    let assert_time_fingerprint_changes_key = |fingerprint: &astra_engine::BackendFingerprint| {
+        assert_ne!(
+            prepared.calc_key,
+            CalcKey::derive(&prepared.request, &engine_identity(), fingerprint)
+                .expect("changed time fingerprint key")
+        );
+    };
+
+    let mut time_implementation = XalenBackend.descriptor().fingerprint;
+    time_implementation
+        .time
+        .as_mut()
+        .expect("time fingerprint")
+        .implementation
+        .revision = Some("constructed-xalen-time-r2".into());
+    assert_time_fingerprint_changes_key(&time_implementation);
+
+    let mut leap_seconds = XalenBackend.descriptor().fingerprint;
+    leap_seconds
+        .time
+        .as_mut()
+        .expect("time fingerprint")
+        .leap_second_model
+        .as_mut()
+        .expect("leap-second model")
+        .version = Some("constructed-leap-table-r2".into());
+    assert_time_fingerprint_changes_key(&leap_seconds);
+
+    let mut delta_t = XalenBackend.descriptor().fingerprint;
+    delta_t
+        .time
+        .as_mut()
+        .expect("time fingerprint")
+        .delta_t_model
+        .as_mut()
+        .expect("Delta-T model")
+        .version = Some("constructed-delta-t-r2".into());
+    assert_time_fingerprint_changes_key(&delta_t);
+}
+
+#[test]
+fn completion_rejects_time_provenance_that_differs_from_the_fingerprint() {
+    let (record, definition) = resources();
+    let calculation_engine = engine();
+    let prepared = calculation_engine
+        .prepare(&definition, &record, &fixture_points(), &fixture_points())
+        .expect("prepared calculation");
+    let baseline = XalenBackend
+        .calculate(&prepared.request)
+        .expect("XALEN calculation");
+    calculation_engine
+        .complete(&prepared, baseline.clone())
+        .expect("matching time provenance");
+
+    let assert_rejected = |result| {
+        assert!(matches!(
+            calculation_engine.complete(&prepared, result),
+            Err(astra_engine::CalculationError::BackendResultMismatch(_))
+        ));
+    };
+
+    let mut implementation = baseline.clone();
+    implementation
+        .provenance
+        .time
+        .as_mut()
+        .expect("time provenance")
+        .implementation
+        .revision = Some("constructed-xalen-time-r2".into());
+    assert_rejected(implementation);
+
+    let mut leap_seconds = baseline.clone();
+    leap_seconds
+        .provenance
+        .time
+        .as_mut()
+        .expect("time provenance")
+        .leap_second_model
+        .as_mut()
+        .expect("leap-second model")
+        .version = Some("constructed-leap-table-r2".into());
+    assert_rejected(leap_seconds);
+
+    let mut delta_t = baseline.clone();
+    delta_t
+        .provenance
+        .time
+        .as_mut()
+        .expect("time provenance")
+        .delta_t_model
+        .as_mut()
+        .expect("Delta-T model")
+        .version = Some("constructed-delta-t-r2".into());
+    assert_rejected(delta_t);
+
+    let mut absent = baseline;
+    absent.provenance.time = None;
+    assert_rejected(absent);
+
+    let (record, mut no_houses_definition) = resources();
+    no_houses_definition.payload.calculation.houses = HouseSystem::NoHouses;
+    let no_houses = calculation_engine
+        .prepare(
+            &no_houses_definition,
+            &record,
+            &fixture_points(),
+            &fixture_points(),
+        )
+        .expect("prepared calculation without houses");
+    let no_houses_result = XalenBackend
+        .calculate(&no_houses.request)
+        .expect("XALEN calculation without houses");
+    let time = no_houses_result
+        .provenance
+        .time
+        .as_ref()
+        .expect("celestial time provenance");
+    assert_eq!(time.house_scale, None);
+    assert_eq!(time.delta_t_model, None);
+    calculation_engine
+        .complete(&no_houses, no_houses_result)
+        .expect("configured but unused house time model validates");
 }
 
 #[test]

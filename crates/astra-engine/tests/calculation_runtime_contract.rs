@@ -609,6 +609,7 @@ fn worker_request_success_and_typed_failure_round_trip() {
 
 #[test]
 fn incompatible_worker_protocol_is_rejected_explicitly() {
+    assert_eq!(WorkerProtocolVersion::CURRENT.get(), 3);
     let mut request = worker_request();
     request.protocol_version = WorkerProtocolVersion::new(99);
     let result = execute_calculation_request(&DeterministicBackend, request);

@@ -121,6 +121,7 @@ impl CalculationBackend for DeterministicBackend {
         BackendDescriptor {
             fingerprint: BackendFingerprint {
                 backend,
+                time: None,
                 celestial: Some(CelestialBackendFingerprint {
                     implementation: celestial,
                     model: Some(Self::model()),

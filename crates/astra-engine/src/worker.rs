@@ -62,7 +62,7 @@ pub enum CalculationRequestIdError {
 pub struct WorkerProtocolVersion(u16);
 
 impl WorkerProtocolVersion {
-    pub const CURRENT: Self = Self(2);
+    pub const CURRENT: Self = Self(3);
 
     pub const fn new(value: u16) -> Self {
         Self(value)

@@ -144,10 +144,26 @@ pub struct DerivedBackendFingerprint {
     pub implementation: ImplementationIdentity,
 }
 
+/// Deterministic identity for a backend's selected time-scale pipeline.
+///
+/// Unlike execution provenance, this records the complete configured pipeline
+/// before calculation, including a house scale/model that is only exercised
+/// when houses are requested. It therefore participates in `CalcKey`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TimeBackendFingerprint {
+    pub implementation: ImplementationIdentity,
+    pub input_scale: TimeScale,
+    pub celestial_scale: TimeScale,
+    pub house_scale: Option<TimeScale>,
+    pub leap_second_model: Option<TimeModelIdentity>,
+    pub delta_t_model: Option<TimeModelIdentity>,
+}
+
 /// Deterministic pre-execution identity used in `CalcKey`.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BackendFingerprint {
     pub backend: ImplementationIdentity,
+    pub time: Option<TimeBackendFingerprint>,
     pub celestial: Option<CelestialBackendFingerprint>,
     pub houses: Option<HouseBackendFingerprint>,
     pub derived: Option<DerivedBackendFingerprint>,

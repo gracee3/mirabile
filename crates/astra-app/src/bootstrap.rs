@@ -140,7 +140,7 @@ pub(crate) fn bootstrap_resources() -> Vec<CanonicalResource> {
 ///
 /// The canonical schema is unchanged; only the two checked-in example chart
 /// definitions opt into all three corrections explicitly.
-#[cfg(any(all(target_arch = "wasm32", feature = "xalen-backend"), test))]
+#[cfg(any(feature = "xalen-backend", test))]
 pub(crate) fn apparent_place_bootstrap_resources() -> Vec<CanonicalResource> {
     let mut resources = bootstrap_resources();
     for resource in &mut resources {
@@ -160,7 +160,7 @@ pub(crate) fn apparent_place_bootstrap_resources() -> Vec<CanonicalResource> {
 /// A user-modified resource never equals the checked-in legacy value and is
 /// therefore left alone. Only chart definitions differ between the legacy and
 /// apparent-place seed sets.
-#[cfg(any(all(target_arch = "wasm32", feature = "xalen-backend"), test))]
+#[cfg(any(feature = "xalen-backend", test))]
 pub(crate) fn migrate_legacy_bootstrap_resource(
     existing: &CanonicalResource,
     desired: &CanonicalResource,
