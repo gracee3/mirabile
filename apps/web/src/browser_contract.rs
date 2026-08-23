@@ -1,6 +1,7 @@
 use astra_app::{
     AppIntent, AppReadModel, Application, AspectSetDraftMutation, ChartPersistence, DraftState,
-    RealApplication, ViewComputationState, bootstrap_ids,
+    IndexedDbRepositorySource, RealApplication, ViewComputationState, WorkerCalculationRuntime,
+    bootstrap_ids,
 };
 use astra_core::{
     Angle, AspectId, CanonicalResource, PointId, PointSelector, PointSet, ResourceEnvelope,
@@ -175,13 +176,27 @@ async fn run_contract() -> Result<(), String> {
 async fn run_real_application_reload() -> Result<(), String> {
     let database_name = format!("astra-real-application-contract-{}", ResourceId::new());
     let ids = bootstrap_ids();
-    let first = RealApplication::indexed_db(&database_name);
+    let first_runtime = WorkerCalculationRuntime::deterministic();
+    let first = RealApplication::with_runtime(
+        IndexedDbRepositorySource::new(&database_name),
+        first_runtime.clone(),
+    );
     let first_ready = settle_initialization(&first).await?;
     ensure(
         first_ready.active_view.as_ref().is_some_and(|view| {
             view.scene.is_some() && view.computation == ViewComputationState::Fresh
         }),
         "first RealApplication did not calculate its initial Scene",
+    )?;
+    ensure(
+        first_runtime.completed_results() > 0,
+        "first RealApplication did not receive a Web Worker calculation result",
+    )?;
+    ensure(
+        first_runtime
+            .last_backend_identity()
+            .is_some_and(|identity| identity.id == astra_engine::DeterministicBackend::ID),
+        "Web Worker result did not identify the deterministic backend",
     )?;
 
     let opened = first
@@ -248,7 +263,11 @@ async fn run_real_application_reload() -> Result<(), String> {
     )?;
     drop(first);
 
-    let second = RealApplication::indexed_db(&database_name);
+    let second_runtime = WorkerCalculationRuntime::deterministic();
+    let second = RealApplication::with_runtime(
+        IndexedDbRepositorySource::new(&database_name),
+        second_runtime.clone(),
+    );
     let restored = settle_initialization(&second).await?;
     ensure(
         restored.workspace.active_chart == Some(chart_b),
@@ -279,18 +298,22 @@ async fn run_real_application_reload() -> Result<(), String> {
         }),
         "the second RealApplication did not reconstruct the persisted workspace view",
     )?;
+    ensure(
+        second_runtime.completed_results() > 0,
+        "reloaded RealApplication did not calculate through a Web Worker",
+    )?;
     Ok(())
 }
 
 async fn settle_initialization(
-    application: &RealApplication<astra_app::IndexedDbRepositorySource>,
+    application: &RealApplication<IndexedDbRepositorySource, WorkerCalculationRuntime>,
 ) -> Result<AppReadModel, String> {
     let model = application.initialize().await.map_err(message)?;
     settle_pending(application, model).await
 }
 
 async fn settle_pending(
-    application: &RealApplication<astra_app::IndexedDbRepositorySource>,
+    application: &RealApplication<IndexedDbRepositorySource, WorkerCalculationRuntime>,
     mut model: AppReadModel,
 ) -> Result<AppReadModel, String> {
     loop {

@@ -13,7 +13,23 @@ astra-engine = { path = "../astra-engine" }
 astra-store = { path = "../astra-store" }
 async-trait.workspace = true
 futures.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = [
+    "Blob",
+    "BlobPropertyBag",
+    "Document",
+    "ErrorEvent",
+    "Location",
+    "MessageEvent",
+    "Url",
+    "Window",
+    "Worker",
+] }
 
 [lints]
 workspace = true

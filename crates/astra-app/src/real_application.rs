@@ -14,8 +14,10 @@ use astra_core::{
     WorkspaceChart, resolve_binding,
 };
 use astra_engine::{
-    AspectAnalyzer, CalculationEngine, ComputationCache, DeterministicEphemeris, EphemerisProvider,
-    Scene, layout_wheel, render_key,
+    AspectAnalyzer, CalcKey, CalculationEngine, CalculationOutcome, CalculationRequestId,
+    CalculationWorkerFailure, CalculationWorkerFailureCategory, CalculationWorkerRequest,
+    CalculationWorkerResult, ComputationCache, DeterministicBackend, ImplementationIdentity,
+    PreparedCalculation, Scene, WorkerProtocolVersion, layout_wheel, render_key,
 };
 #[cfg(target_arch = "wasm32")]
 use astra_store::ResourceTombstone;
@@ -27,7 +29,8 @@ use crate::{
     ActiveChartInspector, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind,
     AppReadModel, AppResult, Application, ApplicationStatus, AspectDraftValue,
     AspectSetDraftMutation, AspectSetDraftReadModel, AspectSetSummary, Availability,
-    BindingSourceSummary, ChartPersistence, ChartSlotAssignment, CommandCapability, DraftState,
+    BindingSourceSummary, CalculationRuntime, CalculationRuntimeError, ChartPersistence,
+    ChartSlotAssignment, CommandCapability, DraftState, InlineCalculationRuntime,
     InspectorReadModel, LibraryChartSummary, LibraryReadModel, OpenChartSummary, ProjectionVersion,
     ResourceBindingSummary, ResourceEditorReadModel, ViewComputationState, ViewReadModel,
     ViewSummary, WorkspaceReadModel, bootstrap_ids, bootstrap_resources,
@@ -36,36 +39,57 @@ use crate::{
 
 pub const DEFAULT_INDEXED_DB_NAME: &str = "astra";
 
-pub struct RealApplication<R, P = DeterministicEphemeris> {
+pub struct RealApplication<R, C = InlineCalculationRuntime<DeterministicBackend>> {
     repository: R,
-    engine: CalculationEngine<P>,
+    engine: CalculationEngine,
+    runtime: C,
     state: RefCell<RealState>,
 }
 
-impl<R> RealApplication<R, DeterministicEphemeris>
+impl<R> RealApplication<R, InlineCalculationRuntime<DeterministicBackend>>
 where
     R: ResourceRepository + Clone,
 {
     pub fn with_repository(repository: R) -> Self {
-        Self::with_provider(repository, DeterministicEphemeris)
+        Self::with_backend(repository, DeterministicBackend)
     }
 }
 
-impl<R, P> RealApplication<R, P>
+impl<R, B> RealApplication<R, InlineCalculationRuntime<B>>
 where
     R: ResourceRepository + Clone,
-    P: EphemerisProvider,
+    B: astra_engine::CalculationBackend + Clone,
 {
-    pub fn with_provider(repository: R, provider: P) -> Self {
+    pub fn with_backend(repository: R, backend: B) -> Self {
+        Self::with_runtime(repository, InlineCalculationRuntime::new(backend))
+    }
+}
+
+impl<R, C> RealApplication<R, C>
+where
+    R: ResourceRepository + Clone,
+    C: CalculationRuntime,
+{
+    pub fn with_runtime(repository: R, runtime: C) -> Self {
+        let descriptor = runtime.backend_descriptor();
         Self {
             repository,
-            engine: CalculationEngine::new(provider, "astra-engine-v1", "deterministic-tz-v1"),
+            engine: CalculationEngine::new(
+                descriptor,
+                ImplementationIdentity {
+                    id: "astra-calculation-engine".into(),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    revision: Some("calculation-runtime-v1".into()),
+                },
+                "deterministic-tz-v1",
+            ),
+            runtime,
             state: RefCell::new(RealState::default()),
         }
     }
 }
 
-impl RealApplication<MemoryRepository, DeterministicEphemeris> {
+impl RealApplication<MemoryRepository, InlineCalculationRuntime<DeterministicBackend>> {
     pub fn in_memory() -> Self {
         Self::with_repository(MemoryRepository::default())
     }
@@ -152,9 +176,12 @@ impl ResourceRepository for IndexedDbRepositorySource {
 }
 
 #[cfg(target_arch = "wasm32")]
-impl RealApplication<IndexedDbRepositorySource, DeterministicEphemeris> {
+impl RealApplication<IndexedDbRepositorySource, crate::WorkerCalculationRuntime> {
     pub fn indexed_db(database_name: impl Into<String>) -> Self {
-        Self::with_repository(IndexedDbRepositorySource::new(database_name))
+        Self::with_runtime(
+            IndexedDbRepositorySource::new(database_name),
+            crate::WorkerCalculationRuntime::deterministic(),
+        )
     }
 
     pub fn browser_default() -> Self {
@@ -163,10 +190,10 @@ impl RealApplication<IndexedDbRepositorySource, DeterministicEphemeris> {
 }
 
 #[async_trait(?Send)]
-impl<R, P> Application for RealApplication<R, P>
+impl<R, C> Application for RealApplication<R, C>
 where
     R: ResourceRepository + Clone,
-    P: EphemerisProvider,
+    C: CalculationRuntime,
 {
     async fn initialize(&self) -> AppResult<AppReadModel> {
         if matches!(self.state.borrow().status, ApplicationStatus::Ready) {
@@ -182,17 +209,19 @@ where
                 state.status = ApplicationStatus::Ready;
                 state.editor = None;
                 state.pending.clear();
+                state.inflight.clear();
                 state.notice = Some(info(
                     "Canonical library and workspace hydrated; calculating the active view",
                 ));
                 state.ensure_view_runtimes();
-                state.queue_active_view_refresh();
+                self.submit_active_view_refresh(&mut state)?;
                 state.advance()?;
             }
             Err(error) => {
                 let mut state = self.state.borrow_mut();
                 state.status = ApplicationStatus::Error(error);
                 state.pending.clear();
+                state.inflight.clear();
                 state.notice = None;
                 state.advance()?;
             }
@@ -263,7 +292,7 @@ where
                         ),
                     ));
                 }
-                if state.pending.is_empty() {
+                if state.pending.is_empty() && state.inflight.is_empty() {
                     let (sender, receiver) = oneshot::channel();
                     state.waiters.push(sender);
                     Some(receiver)
@@ -286,10 +315,10 @@ where
     }
 }
 
-impl<R, P> RealApplication<R, P>
+impl<R, C> RealApplication<R, C>
 where
     R: ResourceRepository + Clone,
-    P: EphemerisProvider,
+    C: CalculationRuntime,
 {
     async fn hydrate(&self) -> AppResult<HydratedState> {
         self.ensure_bootstrap().await?;
@@ -426,7 +455,7 @@ where
         }
         state.ensure_view_runtimes();
         if refresh {
-            state.queue_active_view_refresh();
+            self.submit_active_view_refresh(&mut state)?;
         }
         state.notice = Some(info(notice));
         state.advance()
@@ -509,7 +538,7 @@ where
         if !matches!(editor.state, DraftState::Conflict { .. }) {
             editor.state = DraftState::Dirty { base_revision };
         }
-        state.queue_active_view_refresh();
+        self.submit_active_view_refresh(&mut state)?;
         state.notice = Some(info(
             "Draft preview accepted; analysis is refreshing with the last good Scene retained",
         ));
@@ -585,7 +614,7 @@ where
         state.pending.retain(|pending| {
             !matches!(pending, PendingWork::SaveAspectSet { next, .. } if next.id == resource_id)
         });
-        state.queue_active_view_refresh();
+        self.submit_active_view_refresh(&mut state)?;
         state.notice = Some(info(
             "Draft canceled; canonical Aspect Set semantics restored without a repository write",
         ));
@@ -603,44 +632,166 @@ where
                 "There is no active view to refresh",
             ));
         };
-        let runtime = state.views.get(&view_id).ok_or_else(|| {
+        state.views.get(&view_id).ok_or_else(|| {
             AppError::new(
                 AppErrorKind::NotFound,
                 format!("Active view {view_id} was not found"),
             )
         })?;
-        if matches!(
-            runtime.computation,
-            ViewComputationState::Loading | ViewComputationState::Refreshing
-        ) {
-            return Err(AppError::new(
-                AppErrorKind::Unavailable,
-                "The active view is already computing",
-            ));
-        }
-        state.queue_active_view_refresh();
+        self.submit_active_view_refresh(&mut state)?;
         state.notice = Some(info("Active view refresh requested"));
         state.advance()
     }
 
     async fn complete_next_pending(&self) -> AppResult<()> {
         let pending = self.state.borrow_mut().pending.pop_front();
-        let Some(pending) = pending else {
-            return Ok(());
-        };
         match pending {
-            PendingWork::ComputeView { view_id } => self.complete_view(view_id),
-            PendingWork::SaveAspectSet {
+            Some(PendingWork::CompleteCachedView(pending)) => self.complete_cached_view(*pending),
+            Some(PendingWork::SaveAspectSet {
                 expected_revision,
                 next,
-            } => self.complete_aspect_set_save(expected_revision, next).await,
+            }) => self.complete_aspect_set_save(expected_revision, next).await,
+            None if !self.state.borrow().inflight.is_empty() => {
+                match self.runtime.receive().await {
+                    Ok(result) => self.accept_worker_result(result),
+                    Err(error) => self.accept_runtime_failure(&error),
+                }
+            }
+            None => Ok(()),
         }
     }
 
-    fn complete_view(&self, view_id: ViewInstanceId) -> AppResult<()> {
+    fn complete_cached_view(&self, pending: PendingCachedView) -> AppResult<()> {
+        let PendingCachedView {
+            view_id,
+            expected,
+            prepared,
+            plan,
+            calculation,
+        } = pending;
         let mut state = self.state.borrow_mut();
-        let result = self.compute_scene(&mut state, view_id);
+        if state
+            .views
+            .get(&view_id)
+            .and_then(|runtime| runtime.expected.as_ref())
+            != Some(&expected)
+        {
+            return Ok(());
+        }
+        let result = Self::finish_scene(&mut state, &prepared, &plan, calculation);
+        Self::publish_view_result(&mut state, view_id, result)
+    }
+
+    fn accept_worker_result(&self, result: CalculationWorkerResult) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let Some(pending) = state.inflight.remove(&result.request_id) else {
+            return Ok(());
+        };
+        let Some(expected) = state
+            .views
+            .get(&pending.view_id)
+            .and_then(|runtime| runtime.expected.clone())
+        else {
+            return Ok(());
+        };
+        if expected.request_id != result.request_id {
+            return Ok(());
+        }
+        if result.calc_key != expected.calc_key || pending.prepared.calc_key != expected.calc_key {
+            return Self::publish_view_result(
+                &mut state,
+                pending.view_id,
+                Err(AppError::new(
+                    AppErrorKind::ViewComputation,
+                    "Calculation runtime integrity failure: result CalcKey did not match the current request",
+                )),
+            );
+        }
+        if result.protocol_version != WorkerProtocolVersion::CURRENT {
+            return Self::publish_view_result(
+                &mut state,
+                pending.view_id,
+                Err(AppError::new(
+                    AppErrorKind::ViewComputation,
+                    format!(
+                        "Calculation runtime protocol mismatch: received version {}",
+                        result.protocol_version.get()
+                    ),
+                )),
+            );
+        }
+        match result.outcome {
+            CalculationOutcome::Success(backend_result) => {
+                let calculation = match self.engine.complete(&pending.prepared, *backend_result) {
+                    Ok(calculation) => calculation,
+                    Err(error) => {
+                        return Self::publish_view_result(
+                            &mut state,
+                            pending.view_id,
+                            Err(view_computation_error(error)),
+                        );
+                    }
+                };
+                // Only authoritative successes enter the content-addressed cache. Stale
+                // successes are deliberately discarded before this point.
+                state
+                    .cache
+                    .insert_calculation(expected.calc_key.clone(), calculation.clone());
+                let scene =
+                    Self::finish_scene(&mut state, &pending.prepared, &pending.plan, calculation);
+                Self::publish_view_result(&mut state, pending.view_id, scene)
+            }
+            CalculationOutcome::Failure(failure) => Self::publish_view_result(
+                &mut state,
+                pending.view_id,
+                Err(worker_failure_error(&failure)),
+            ),
+        }
+    }
+
+    fn accept_runtime_failure(&self, error: &CalculationRuntimeError) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let affected = state
+            .views
+            .iter()
+            .filter_map(|(view_id, runtime)| runtime.expected.as_ref().map(|_| *view_id))
+            .collect::<Vec<_>>();
+        if affected.is_empty() {
+            return Ok(());
+        }
+        for view_id in &affected {
+            if let Some(request_id) = state
+                .views
+                .get(view_id)
+                .and_then(|runtime| runtime.expected.as_ref())
+                .map(|expected| expected.request_id)
+            {
+                state.inflight.remove(&request_id);
+            }
+            let runtime = state.views.entry(*view_id).or_default();
+            runtime.expected = None;
+            runtime.computation = ViewComputationState::Failed(AppError::new(
+                AppErrorKind::ViewComputation,
+                format!("Calculation runtime failed: {}", error.message),
+            ));
+        }
+        state.notice = Some(AppNotice {
+            kind: AppNoticeKind::Warning,
+            message: format!(
+                "Calculation runtime failed; last good Scenes remain visible: {}",
+                error.message
+            ),
+        });
+        state.advance()
+    }
+
+    fn publish_view_result(
+        state: &mut RealState,
+        view_id: ViewInstanceId,
+        result: AppResult<Scene>,
+    ) -> AppResult<()> {
         let runtime = state.views.entry(view_id).or_default();
+        runtime.expected = None;
         match result {
             Ok(scene) => {
                 runtime.scene = Some(scene);
@@ -763,8 +914,87 @@ where
         }
     }
 
+    fn submit_active_view_refresh(&self, state: &mut RealState) -> AppResult<()> {
+        let Some(view_id) = state
+            .workspace()
+            .and_then(|workspace| workspace.active_view)
+        else {
+            return Ok(());
+        };
+        let (prepared, plan) = self.prepare_view_calculation(state, view_id)?;
+        let request_id = state.next_request_id;
+        state.next_request_id = request_id.next().map_err(|error| {
+            AppError::new(
+                AppErrorKind::Unavailable,
+                format!("Could not allocate calculation request ID: {error}"),
+            )
+        })?;
+        let expected = ExpectedCalculation {
+            request_id,
+            calc_key: prepared.calc_key.clone(),
+        };
+        let cached = state.cache.calculation(&prepared.calc_key).cloned();
+        if let Some(calculation) = cached {
+            state
+                .pending
+                .push_front(PendingWork::CompleteCachedView(Box::new(
+                    PendingCachedView {
+                        view_id,
+                        expected: expected.clone(),
+                        prepared,
+                        plan,
+                        calculation,
+                    },
+                )));
+        } else {
+            let worker_request = CalculationWorkerRequest {
+                protocol_version: WorkerProtocolVersion::CURRENT,
+                request_id,
+                calc_key: prepared.calc_key.clone(),
+                backend: self.engine.backend_descriptor().fingerprint.clone(),
+                request: prepared.request.clone(),
+            };
+            if let Err(error) = self.runtime.submit(worker_request) {
+                let runtime = state.views.entry(view_id).or_default();
+                runtime.expected = None;
+                runtime.computation = ViewComputationState::Failed(AppError::new(
+                    AppErrorKind::ViewComputation,
+                    format!("Could not submit calculation: {}", error.message),
+                ));
+                state.notice = Some(AppNotice {
+                    kind: AppNoticeKind::Warning,
+                    message: format!(
+                        "Calculation submission failed; the last good Scene remains visible: {}",
+                        error.message
+                    ),
+                });
+                return Ok(());
+            }
+            state.inflight.insert(
+                request_id,
+                PendingViewCalculation {
+                    view_id,
+                    prepared,
+                    plan,
+                },
+            );
+        }
+        let runtime = state.views.entry(view_id).or_default();
+        runtime.expected = Some(expected);
+        runtime.computation = if runtime.scene.is_some() {
+            ViewComputationState::Refreshing
+        } else {
+            ViewComputationState::Loading
+        };
+        Ok(())
+    }
+
     #[allow(clippy::too_many_lines)]
-    fn compute_scene(&self, state: &mut RealState, view_id: ViewInstanceId) -> AppResult<Scene> {
+    fn prepare_view_calculation(
+        &self,
+        state: &RealState,
+        view_id: ViewInstanceId,
+    ) -> AppResult<(PreparedCalculation, ViewCalculationPlan)> {
         let workspace = state
             .workspace
             .as_ref()
@@ -839,40 +1069,47 @@ where
             .ok_or_else(|| not_found_for_view("ChartRecord", record_id))?;
         let effective = state.effective_configuration(&definition, &view)?;
         let mut effective_definition = definition;
-        effective_definition.payload.calculation = effective.calculation.value;
-
-        let calc_key = self
+        effective_definition.payload.calculation = effective.calculation.value.clone();
+        let prepared = self
             .engine
-            .calc_key(&effective_definition, &record)
+            .prepare(
+                &effective_definition,
+                &record,
+                &effective.displayed_points.value,
+                &effective.aspected_points.value,
+            )
             .map_err(view_computation_error)?;
-        let snapshot = if let Some(calculation) = state.cache.calculation(&calc_key).cloned() {
-            self.engine
-                .snapshot_from_cached(&effective_definition, &record, calculation)
-                .map_err(view_computation_error)?
-        } else {
-            let snapshot = self
-                .engine
-                .calculate(&effective_definition, &record)
-                .map_err(view_computation_error)?;
-            state.cache.insert_snapshot(snapshot.clone());
-            snapshot
-        };
+        Ok((
+            prepared,
+            ViewCalculationPlan {
+                displayed_points: effective.displayed_points.value,
+                aspected_points: effective.aspected_points.value,
+                aspect_set: effective.aspect_set.value,
+                analysis: effective.analysis.value,
+                wheel: effective.wheel.value,
+                theme: effective.theme.value,
+            },
+        ))
+    }
+
+    fn finish_scene(
+        state: &mut RealState,
+        prepared: &PreparedCalculation,
+        plan: &ViewCalculationPlan,
+        calculation: astra_engine::CalculationValue,
+    ) -> AppResult<Scene> {
+        let snapshot = CalculationEngine::snapshot(prepared, calculation);
         let analysis = AspectAnalyzer::analyze(
             &snapshot,
-            &effective.aspected_points.value,
-            &effective.aspect_set.value,
-            &effective.analysis.value,
+            &plan.aspected_points,
+            &plan.aspect_set,
+            &plan.analysis,
         )
         .map_err(view_computation_error)?;
         state.cache.insert_analysis(analysis.clone());
-        let layout = layout_wheel(
-            &snapshot,
-            &analysis,
-            &effective.displayed_points.value,
-            &effective.wheel.value,
-        )
-        .map_err(view_computation_error)?;
-        render_key(&layout, &effective.theme.value).map_err(view_computation_error)?;
+        let layout = layout_wheel(&snapshot, &analysis, &plan.displayed_points, &plan.wheel)
+            .map_err(view_computation_error)?;
+        render_key(&layout, &plan.theme).map_err(view_computation_error)?;
         Ok(Scene::from_wheel(&layout))
     }
 
@@ -890,6 +1127,8 @@ struct RealState {
     editor: Option<AspectSetEditor>,
     cache: ComputationCache,
     pending: VecDeque<PendingWork>,
+    inflight: BTreeMap<CalculationRequestId, PendingViewCalculation>,
+    next_request_id: CalculationRequestId,
     waiters: Vec<oneshot::Sender<()>>,
     notice: Option<AppNotice>,
     next_timestamp: i64,
@@ -906,6 +1145,8 @@ impl Default for RealState {
             editor: None,
             cache: ComputationCache::default(),
             pending: VecDeque::new(),
+            inflight: BTreeMap::new(),
+            next_request_id: CalculationRequestId::FIRST,
             waiters: Vec::new(),
             notice: None,
             next_timestamp: 1,
@@ -946,23 +1187,6 @@ impl RealState {
         for id in view_ids {
             self.views.entry(id).or_default();
         }
-    }
-
-    fn queue_active_view_refresh(&mut self) {
-        let Some(view_id) = self.workspace().and_then(|workspace| workspace.active_view) else {
-            return;
-        };
-        let runtime = self.views.entry(view_id).or_default();
-        runtime.computation = if runtime.scene.is_some() {
-            ViewComputationState::Refreshing
-        } else {
-            ViewComputationState::Loading
-        };
-        self.pending.retain(|pending| {
-            !matches!(pending, PendingWork::ComputeView { view_id: pending_id } if *pending_id == view_id)
-        });
-        self.pending
-            .push_front(PendingWork::ComputeView { view_id });
     }
 
     fn effective_configuration(
@@ -1376,17 +1600,7 @@ impl RealState {
             .workspace()
             .and_then(|workspace| workspace.active_view)
             .and_then(|id| self.views.get(&id))
-            .map_or_else(
-                || disabled("No active view"),
-                |runtime| match runtime.computation {
-                    ViewComputationState::Loading | ViewComputationState::Refreshing => {
-                        disabled("The active view is already computing")
-                    }
-                    ViewComputationState::Fresh | ViewComputationState::Failed(_) => {
-                        Availability::Enabled
-                    }
-                },
-            );
+            .map_or_else(|| disabled("No active view"), |_| Availability::Enabled);
         vec![
             capability(AppAction::BeginAspectSetEdit, begin),
             capability(AppAction::SaveDraft, save),
@@ -1550,6 +1764,7 @@ impl Catalog {
 struct ViewRuntime {
     scene: Option<Scene>,
     computation: ViewComputationState,
+    expected: Option<ExpectedCalculation>,
 }
 
 impl Default for ViewRuntime {
@@ -1557,8 +1772,30 @@ impl Default for ViewRuntime {
         Self {
             scene: None,
             computation: ViewComputationState::Loading,
+            expected: None,
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExpectedCalculation {
+    request_id: CalculationRequestId,
+    calc_key: CalcKey,
+}
+
+struct PendingViewCalculation {
+    view_id: ViewInstanceId,
+    prepared: PreparedCalculation,
+    plan: ViewCalculationPlan,
+}
+
+struct ViewCalculationPlan {
+    displayed_points: PointSet,
+    aspected_points: PointSet,
+    aspect_set: AspectSet,
+    analysis: AnalysisProfile,
+    wheel: WheelTemplate,
+    theme: Theme,
 }
 
 struct AspectSetEditor {
@@ -1568,13 +1805,19 @@ struct AspectSetEditor {
 }
 
 enum PendingWork {
-    ComputeView {
-        view_id: ViewInstanceId,
-    },
+    CompleteCachedView(Box<PendingCachedView>),
     SaveAspectSet {
         expected_revision: Revision,
         next: ResourceEnvelope<AspectSet>,
     },
+}
+
+struct PendingCachedView {
+    view_id: ViewInstanceId,
+    expected: ExpectedCalculation,
+    prepared: PreparedCalculation,
+    plan: ViewCalculationPlan,
+    calculation: astra_engine::CalculationValue,
 }
 
 trait BoundPayload: Clone + Sized {
@@ -1836,24 +2079,48 @@ fn view_computation_error(error: impl std::fmt::Display) -> AppError {
     AppError::new(AppErrorKind::ViewComputation, error.to_string())
 }
 
+fn worker_failure_error(failure: &CalculationWorkerFailure) -> AppError {
+    let category = match failure.category {
+        CalculationWorkerFailureCategory::InvalidInput => "invalid calculation input",
+        CalculationWorkerFailureCategory::UnsupportedCapability => "unsupported capability",
+        CalculationWorkerFailureCategory::BackendFailure => "backend failure",
+        CalculationWorkerFailureCategory::ProtocolMismatch => "worker protocol mismatch",
+        CalculationWorkerFailureCategory::InternalExecutionFailure => {
+            "internal worker execution failure"
+        }
+    };
+    AppError::new(
+        AppErrorKind::ViewComputation,
+        format!("Calculation {category}: {}", failure.message),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
-    use astra_core::{Angle, CanonicalResource, PointSelector, ResourceEnvelope, ResourceKind};
-    use astra_engine::{EphemerisError, EphemerisOutput, EphemerisRequest, ProviderIdentity};
+    use astra_core::{
+        Angle, CanonicalResource, PointId, PointSelector, ResourceEnvelope, ResourceKind,
+    };
+    use astra_engine::{
+        BackendDescriptor, CalculationBackend, CalculationBackendError,
+        CalculationBackendErrorCategory, CalculationBackendResult, ResolvedCalculationRequest,
+    };
     use astra_store::ResourceTombstone;
     use futures::executor::block_on;
 
     use super::*;
 
     #[derive(Clone)]
-    struct ControlledProvider {
+    struct ControlledBackend {
         calls: Rc<Cell<u32>>,
         fail_next: Rc<Cell<bool>>,
     }
 
-    impl ControlledProvider {
+    impl ControlledBackend {
         fn new() -> Self {
             Self {
                 calls: Rc::new(Cell::new(0)),
@@ -1862,22 +2129,100 @@ mod tests {
         }
     }
 
-    impl EphemerisProvider for ControlledProvider {
-        fn identity(&self) -> ProviderIdentity {
-            ProviderIdentity {
-                name: "controlled-deterministic-provider".into(),
-                version: "1".into(),
-                data_version: Some("fixture-v1".into()),
+    impl CalculationBackend for ControlledBackend {
+        fn descriptor(&self) -> BackendDescriptor {
+            DeterministicBackend.descriptor()
+        }
+
+        fn calculate(
+            &self,
+            request: &ResolvedCalculationRequest,
+        ) -> Result<CalculationBackendResult, CalculationBackendError> {
+            self.calls.set(self.calls.get() + 1);
+            if self.fail_next.replace(false) {
+                Err(CalculationBackendError {
+                    category: CalculationBackendErrorCategory::ExecutionFailure,
+                    capability: None,
+                    message: "injected deterministic backend failure".into(),
+                })
+            } else {
+                DeterministicBackend.calculate(request)
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct ControlledCalculationRuntime {
+        descriptor: BackendDescriptor,
+        submitted: Rc<RefCell<Vec<CalculationWorkerRequest>>>,
+        inbox: crate::RuntimeInbox,
+    }
+
+    impl ControlledCalculationRuntime {
+        fn new() -> Self {
+            Self {
+                descriptor: DeterministicBackend.descriptor(),
+                submitted: Rc::new(RefCell::new(Vec::new())),
+                inbox: crate::RuntimeInbox::default(),
             }
         }
 
-        fn calculate(&self, request: &EphemerisRequest) -> Result<EphemerisOutput, EphemerisError> {
-            self.calls.set(self.calls.get() + 1);
-            if self.fail_next.replace(false) {
-                Err(EphemerisError::NonFiniteInput)
-            } else {
-                DeterministicEphemeris.calculate(request)
+        fn submitted(&self) -> Vec<CalculationWorkerRequest> {
+            self.submitted.borrow().clone()
+        }
+
+        fn complete_success(&self, request: &CalculationWorkerRequest, sun_shift: f64) {
+            let mut result =
+                astra_engine::execute_calculation_request(&DeterministicBackend, request.clone());
+            if let CalculationOutcome::Success(calculation) = &mut result.outcome {
+                let sun = PointId::new("sun").expect("point ID");
+                if let Some(position) = calculation.celestial.positions.get_mut(&sun) {
+                    position.longitude =
+                        Angle::normalized(position.longitude.degrees() + sun_shift)
+                            .expect("shifted longitude");
+                    position.right_ascension = position.longitude;
+                }
             }
+            self.inbox.push(Ok(result));
+        }
+
+        fn complete_failure(&self, request: &CalculationWorkerRequest, message: &str) {
+            self.inbox.push(Ok(CalculationWorkerResult {
+                protocol_version: WorkerProtocolVersion::CURRENT,
+                request_id: request.request_id,
+                calc_key: request.calc_key.clone(),
+                outcome: CalculationOutcome::Failure(CalculationWorkerFailure {
+                    category: CalculationWorkerFailureCategory::BackendFailure,
+                    message: message.into(),
+                }),
+            }));
+        }
+
+        fn complete_calc_key_mismatch(
+            &self,
+            request: &CalculationWorkerRequest,
+            wrong_calc_key: CalcKey,
+        ) {
+            let mut result =
+                astra_engine::execute_calculation_request(&DeterministicBackend, request.clone());
+            result.calc_key = wrong_calc_key;
+            self.inbox.push(Ok(result));
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl CalculationRuntime for ControlledCalculationRuntime {
+        fn backend_descriptor(&self) -> BackendDescriptor {
+            self.descriptor.clone()
+        }
+
+        fn submit(&self, request: CalculationWorkerRequest) -> Result<(), CalculationRuntimeError> {
+            self.submitted.borrow_mut().push(request);
+            Ok(())
+        }
+
+        async fn receive(&self) -> Result<CalculationWorkerResult, CalculationRuntimeError> {
+            self.inbox.receive().await
         }
     }
 
@@ -1974,10 +2319,10 @@ mod tests {
         }
     }
 
-    fn ready<R, P>(application: &RealApplication<R, P>) -> AppReadModel
+    fn ready<R, C>(application: &RealApplication<R, C>) -> AppReadModel
     where
         R: ResourceRepository + Clone,
-        P: EphemerisProvider,
+        C: CalculationRuntime,
     {
         let loading = block_on(application.initialize()).expect("initialization succeeds");
         assert_eq!(loading.status, ApplicationStatus::Ready);
@@ -1985,6 +2330,24 @@ mod tests {
             loading.active_view.as_ref().map(|view| &view.computation),
             Some(ViewComputationState::Loading)
         ));
+        block_on(application.wait_for_update(loading.version)).expect("initial view settles")
+    }
+
+    fn controlled_ready(
+        application: &RealApplication<MemoryRepository, ControlledCalculationRuntime>,
+        runtime: &ControlledCalculationRuntime,
+    ) -> AppReadModel {
+        let loading = block_on(application.initialize()).expect("initialization succeeds");
+        assert!(matches!(
+            loading.active_view.as_ref().map(|view| &view.computation),
+            Some(ViewComputationState::Loading)
+        ));
+        let request = runtime
+            .submitted()
+            .last()
+            .cloned()
+            .expect("initial calculation submitted");
+        runtime.complete_success(&request, 0.0);
         block_on(application.wait_for_update(loading.version)).expect("initial view settles")
     }
 
@@ -2334,9 +2697,9 @@ mod tests {
     #[test]
     fn aspect_preview_cancel_and_save_reuse_calculation_value() {
         let repository = MemoryRepository::default();
-        let provider = ControlledProvider::new();
-        let calls = Rc::clone(&provider.calls);
-        let application = RealApplication::with_provider(repository, provider);
+        let backend = ControlledBackend::new();
+        let calls = Rc::clone(&backend.calls);
+        let application = RealApplication::with_backend(repository, backend);
         let initial = ready(&application);
         assert_eq!(calls.get(), 1);
         let original_scene = initial.active_view.unwrap().scene.expect("initial Scene");
@@ -2684,9 +3047,9 @@ mod tests {
     #[test]
     fn failed_real_refresh_keeps_last_good_scene() {
         let repository = MemoryRepository::default();
-        let provider = ControlledProvider::new();
-        let fail_next = Rc::clone(&provider.fail_next);
-        let application = RealApplication::with_provider(repository, provider);
+        let backend = ControlledBackend::new();
+        let fail_next = Rc::clone(&backend.fail_next);
+        let application = RealApplication::with_backend(repository, backend);
         let initial = ready(&application);
         let original = initial.active_view.unwrap().scene.expect("initial Scene");
         let opened = block_on(application.dispatch(AppIntent::OpenChart {
@@ -2734,6 +3097,177 @@ mod tests {
         assert!(matches!(
             fresh.active_view.map(|view| view.computation),
             Some(ViewComputationState::Fresh)
+        ));
+    }
+
+    #[test]
+    #[allow(clippy::similar_names)]
+    fn latest_request_wins_when_controlled_runtime_completes_successes_out_of_order() {
+        let runtime = ControlledCalculationRuntime::new();
+        let application =
+            RealApplication::with_runtime(MemoryRepository::default(), runtime.clone());
+        let initial = controlled_ready(&application, &runtime);
+        let scene_zero = initial
+            .active_view
+            .as_ref()
+            .and_then(|view| view.scene.clone())
+            .expect("initial Scene");
+
+        application.state.borrow_mut().cache.clear();
+        let request_a_state = block_on(application.dispatch(AppIntent::RefreshActiveView))
+            .expect("request A accepted");
+        assert_eq!(
+            request_a_state
+                .active_view
+                .as_ref()
+                .and_then(|view| view.scene.clone()),
+            Some(scene_zero.clone())
+        );
+        assert!(matches!(
+            request_a_state
+                .active_view
+                .as_ref()
+                .map(|view| &view.computation),
+            Some(ViewComputationState::Refreshing)
+        ));
+
+        application.state.borrow_mut().cache.clear();
+        let request_b_state = block_on(application.dispatch(AppIntent::RefreshActiveView))
+            .expect("request B accepted while A is running");
+        assert_eq!(
+            request_b_state
+                .active_view
+                .as_ref()
+                .and_then(|view| view.scene.clone()),
+            Some(scene_zero.clone())
+        );
+        let requests = runtime.submitted();
+        let request_a = requests[requests.len() - 2].clone();
+        let request_b = requests[requests.len() - 1].clone();
+        assert!(request_b.request_id > request_a.request_id);
+
+        runtime.complete_success(&request_b, 20.0);
+        let fresh_b = block_on(application.wait_for_update(request_b_state.version))
+            .expect("request B completes");
+        let scene_b = fresh_b
+            .active_view
+            .as_ref()
+            .and_then(|view| view.scene.clone())
+            .expect("Scene B");
+        assert_ne!(scene_b, scene_zero);
+        assert!(matches!(
+            fresh_b.active_view.as_ref().map(|view| &view.computation),
+            Some(ViewComputationState::Fresh)
+        ));
+
+        runtime.complete_success(&request_a, 10.0);
+        block_on(application.complete_next_pending()).expect("stale A is processed");
+        let after_stale = block_on(application.snapshot()).expect("snapshot after stale A");
+        assert_eq!(after_stale.version, fresh_b.version);
+        assert_eq!(
+            after_stale
+                .active_view
+                .as_ref()
+                .and_then(|view| view.scene.clone()),
+            Some(scene_b)
+        );
+        assert!(matches!(
+            after_stale.active_view.map(|view| view.computation),
+            Some(ViewComputationState::Fresh)
+        ));
+    }
+
+    #[test]
+    #[allow(clippy::similar_names)]
+    fn stale_failure_cannot_overwrite_newer_success() {
+        let runtime = ControlledCalculationRuntime::new();
+        let application =
+            RealApplication::with_runtime(MemoryRepository::default(), runtime.clone());
+        let initial = controlled_ready(&application, &runtime);
+        let scene_zero = initial
+            .active_view
+            .and_then(|view| view.scene)
+            .expect("Scene S0");
+
+        application.state.borrow_mut().cache.clear();
+        let request_c_state = block_on(application.dispatch(AppIntent::RefreshActiveView))
+            .expect("request C accepted");
+        application.state.borrow_mut().cache.clear();
+        let request_d_state = block_on(application.dispatch(AppIntent::RefreshActiveView))
+            .expect("request D accepted");
+        let requests = runtime.submitted();
+        let request_c = requests[requests.len() - 2].clone();
+        let request_d = requests[requests.len() - 1].clone();
+
+        runtime.complete_success(&request_d, 25.0);
+        let fresh_d = block_on(application.wait_for_update(request_d_state.version))
+            .expect("request D completes");
+        let scene_d = fresh_d
+            .active_view
+            .as_ref()
+            .and_then(|view| view.scene.clone())
+            .expect("Scene D");
+        assert_ne!(scene_d, scene_zero);
+
+        runtime.complete_failure(&request_c, "stale C failure");
+        block_on(application.complete_next_pending()).expect("stale C is processed");
+        let after_stale = block_on(application.snapshot()).expect("snapshot after stale failure");
+        assert_eq!(after_stale.version, fresh_d.version);
+        assert_eq!(
+            after_stale
+                .active_view
+                .as_ref()
+                .and_then(|view| view.scene.clone()),
+            Some(scene_d)
+        );
+        assert!(matches!(
+            after_stale.active_view.map(|view| view.computation),
+            Some(ViewComputationState::Fresh)
+        ));
+        assert!(request_c_state.version < request_d_state.version);
+    }
+
+    #[test]
+    fn current_request_with_calc_key_mismatch_is_rejected_as_integrity_failure() {
+        let runtime = ControlledCalculationRuntime::new();
+        let application =
+            RealApplication::with_runtime(MemoryRepository::default(), runtime.clone());
+        let initial = controlled_ready(&application, &runtime);
+        let last_good = initial
+            .active_view
+            .and_then(|view| view.scene)
+            .expect("last good Scene");
+
+        application.state.borrow_mut().cache.clear();
+        let refreshing =
+            block_on(application.dispatch(AppIntent::RefreshActiveView)).expect("refresh accepted");
+        let request = runtime
+            .submitted()
+            .last()
+            .cloned()
+            .expect("request submitted");
+        let mut wrong_request = request.request.clone();
+        wrong_request.celestial.corrections.aberration =
+            !wrong_request.celestial.corrections.aberration;
+        let wrong_key = CalcKey::derive(
+            &wrong_request,
+            application.engine.calculation_engine_identity(),
+            &application.engine.backend_descriptor().fingerprint,
+        )
+        .expect("wrong key");
+        assert_ne!(wrong_key, request.calc_key);
+        runtime.complete_calc_key_mismatch(&request, wrong_key);
+
+        let failed = block_on(application.wait_for_update(refreshing.version))
+            .expect("integrity failure is projected");
+        let view = failed.active_view.expect("active view");
+        assert_eq!(view.scene, Some(last_good));
+        assert!(matches!(
+            view.computation,
+            ViewComputationState::Failed(AppError {
+                kind: AppErrorKind::ViewComputation,
+                ref message,
+            }) if message.contains("CalcKey")
         ));
     }
 

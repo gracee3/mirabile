@@ -20,6 +20,7 @@ astra-app = { path = "crates/astra-app" }
 async-trait = "0.1.89"
 blake3 = "1.8.2"
 futures = "0.3.31"
+js-sys = "0.3.83"
 leptos = { version = "0.8.20", features = ["csr"] }
 rexie = "0.6.2"
 serde = { version = "1.0.228", features = ["derive"] }

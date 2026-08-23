@@ -43,7 +43,11 @@ dependencies = [
  "astra-store",
  "async-trait",
  "futures",
+ "js-sys",
+ "serde_json",
  "thiserror 2.0.20",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -87,10 +91,13 @@ version = "0.1.0"
 dependencies = [
  "astra-app",
  "astra-core",
+ "astra-engine",
  "astra-store",
  "async-trait",
  "futures",
+ "js-sys",
  "leptos",
+ "serde_json",
  "wasm-bindgen",
  "web-sys",
 ]

@@ -9,6 +9,9 @@ mod bootstrap;
 mod intent;
 mod read_model;
 mod real_application;
+mod runtime;
+#[cfg(target_arch = "wasm32")]
+mod web_worker_runtime;
 mod workspace_commands;
 
 pub use application::*;
@@ -16,6 +19,9 @@ pub use bootstrap::*;
 pub use intent::*;
 pub use read_model::*;
 pub use real_application::*;
+pub use runtime::*;
+#[cfg(target_arch = "wasm32")]
+pub use web_worker_runtime::*;
 
 // Stable identity/value types cross the application boundary without frontend-specific aliases.
 pub use astra_core::{

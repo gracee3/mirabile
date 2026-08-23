@@ -13,11 +13,23 @@ browser-contract = ["dep:astra-core", "dep:astra-store", "astra-store/browser-co
 [dependencies]
 astra-app.workspace = true
 astra-core = { path = "../../crates/astra-core", optional = true }
+astra-engine = { path = "../../crates/astra-engine" }
 astra-store = { path = "../../crates/astra-store", optional = true }
 async-trait.workspace = true
+js-sys.workspace = true
 leptos.workspace = true
+serde_json.workspace = true
 wasm-bindgen.workspace = true
-web-sys = { workspace = true, features = ["Document", "Element", "HtmlElement", "HtmlInputElement", "Window"] }
+web-sys = { workspace = true, features = [
+    "DedicatedWorkerGlobalScope",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlInputElement",
+    "MessageEvent",
+    "Window",
+    "console",
+] }
 
 [dev-dependencies]
 futures.workspace = true

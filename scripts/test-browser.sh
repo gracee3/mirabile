@@ -64,16 +64,16 @@ debug_port="$(python3 -c 'import socket; value = socket.socket(); value.bind(("1
 chromium_pid=$!
 
 if ! python3 "${workspace_dir}/scripts/wait-browser-contract.py" "${debug_port}" >"${dom_file}"; then
-  echo "IndexedDB browser contract did not pass; DOM follows" >&2
+  echo "Astra browser runtime contract did not pass; DOM follows" >&2
   sed -n '1,160p' "${dom_file}" >&2
   exit 1
 fi
 
 if ! grep -q 'id="browser-contract-result" data-status="passed"' "${dom_file}" || \
    ! grep -q 'ASTRA_BROWSER_CONTRACT:PASS' "${dom_file}"; then
-  echo "IndexedDB browser contract failed; DOM follows" >&2
+  echo "Astra browser runtime contract failed; DOM follows" >&2
   sed -n '1,160p' "${dom_file}" >&2
   exit 1
 fi
 
-echo "IndexedDB browser contract passed"
+echo "IndexedDB reload and Web Worker calculation browser contract passed"
