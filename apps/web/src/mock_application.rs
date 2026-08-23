@@ -1047,6 +1047,21 @@ mod tests {
         let selected = initial.workspace.selected_charts.clone();
         assert!(!selected.contains(&active));
 
+        let added = block_on(application.dispatch(AppIntent::SetChartSelection {
+            instance_id: active,
+            selected: true,
+        }))
+        .expect("selection succeeds");
+        assert_eq!(added.workspace.active_chart, Some(active));
+        assert!(added.workspace.selected_charts.contains(&active));
+        let removed = block_on(application.dispatch(AppIntent::SetChartSelection {
+            instance_id: active,
+            selected: false,
+        }))
+        .expect("deselection succeeds");
+        assert_eq!(removed.workspace.active_chart, Some(active));
+        assert_eq!(removed.workspace.selected_charts, selected);
+
         let activated =
             block_on(application.dispatch(AppIntent::ActivateChart { instance_id: first }))
                 .expect("activation succeeds");
@@ -1080,6 +1095,34 @@ mod tests {
             .expect("opened chart is active");
         assert_eq!(opened.workspace.charts.len(), 4);
         assert!(!opened.workspace.selected_charts.contains(&opened_id));
+    }
+
+    #[test]
+    fn closing_active_chart_repairs_required_and_optional_slots() {
+        let application = MockApplication::new();
+        let initial = ready(&application);
+        let active = initial.workspace.active_chart.expect("active chart");
+        let closed = block_on(application.dispatch(AppIntent::CloseChart {
+            instance_id: active,
+        }))
+        .expect("close succeeds");
+        let replacement = closed
+            .workspace
+            .active_chart
+            .expect("neighbor becomes active");
+        let view = closed.active_view.expect("active view");
+        let radix = view
+            .slots
+            .iter()
+            .find(|assignment| assignment.required)
+            .expect("required slot");
+        assert_eq!(radix.chart, Some(replacement));
+        assert!(
+            view.slots
+                .iter()
+                .filter(|assignment| !assignment.required)
+                .all(|assignment| assignment.chart != Some(active))
+        );
     }
 
     #[test]
