@@ -8,15 +8,19 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-browser-contract = ["astra-store/browser-contract"]
+browser-contract = ["dep:astra-core", "dep:astra-store", "astra-store/browser-contract"]
 
 [dependencies]
-astra-core = { path = "../../crates/astra-core" }
-astra-engine = { path = "../../crates/astra-engine" }
-astra-store = { path = "../../crates/astra-store" }
+astra-app.workspace = true
+astra-core = { path = "../../crates/astra-core", optional = true }
+astra-store = { path = "../../crates/astra-store", optional = true }
+async-trait.workspace = true
 leptos.workspace = true
 wasm-bindgen.workspace = true
-web-sys = { workspace = true, features = ["HtmlInputElement"] }
+web-sys = { workspace = true, features = ["Document", "Element", "HtmlElement", "HtmlInputElement", "Window"] }
+
+[dev-dependencies]
+futures.workspace = true
 
 [lints]
 workspace = true

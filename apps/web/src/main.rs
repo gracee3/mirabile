@@ -3,9 +3,9 @@ mod app;
 #[cfg(all(target_arch = "wasm32", feature = "browser-contract"))]
 mod browser_contract;
 #[cfg(not(feature = "browser-contract"))]
-mod demo;
+mod commands;
 #[cfg(not(feature = "browser-contract"))]
-mod persistence;
+mod mock_application;
 #[cfg(not(feature = "browser-contract"))]
 mod render;
 
