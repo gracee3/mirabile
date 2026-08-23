@@ -23,7 +23,7 @@ use astra_engine::{
 use astra_store::ResourceTombstone;
 use astra_store::{MemoryRepository, RepositoryError, ResourceRepository, ResourceState};
 use async_trait::async_trait;
-use futures::channel::oneshot;
+use futures::{channel::oneshot, lock::Mutex};
 
 use crate::{
     ActiveChartInspector, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind,
@@ -43,6 +43,7 @@ pub struct RealApplication<R, C = InlineCalculationRuntime<DeterministicBackend>
     repository: R,
     engine: CalculationEngine,
     runtime: C,
+    runtime_receive_gate: Mutex<()>,
     state: RefCell<RealState>,
 }
 
@@ -84,6 +85,7 @@ where
                 "deterministic-tz-v1",
             ),
             runtime,
+            runtime_receive_gate: Mutex::new(()),
             state: RefCell::new(RealState::default()),
         }
     }
@@ -309,7 +311,7 @@ where
                     )
                 })?;
             } else {
-                self.complete_next_pending().await?;
+                self.complete_next_pending(after).await?;
             }
         }
     }
@@ -643,7 +645,7 @@ where
         state.advance()
     }
 
-    async fn complete_next_pending(&self) -> AppResult<()> {
+    async fn complete_next_pending(&self, after: ProjectionVersion) -> AppResult<()> {
         let pending = self.state.borrow_mut().pending.pop_front();
         match pending {
             Some(PendingWork::CompleteCachedView(pending)) => self.complete_cached_view(*pending),
@@ -652,6 +654,21 @@ where
                 next,
             }) => self.complete_aspect_set_save(expected_revision, next).await,
             None if !self.state.borrow().inflight.is_empty() => {
+                // RuntimeInbox and the browser Worker runtime are intentionally
+                // single-consumer queues. Serialize receive calls so concurrent
+                // application observers cannot each consume a different runtime
+                // message. A waiter that queued behind the active driver must
+                // recheck the application projection before receiving again.
+                let _receive_guard = self.runtime_receive_gate.lock().await;
+                {
+                    let state = self.state.borrow();
+                    if state.version != after
+                        || !state.pending.is_empty()
+                        || state.inflight.is_empty()
+                    {
+                        return Ok(());
+                    }
+                }
                 match self.runtime.receive().await {
                     Ok(result) => self.accept_worker_result(result),
                     Err(error) => self.accept_runtime_failure(&error),
@@ -2110,7 +2127,10 @@ mod tests {
         CalculationBackendErrorCategory, CalculationBackendResult, ResolvedCalculationRequest,
     };
     use astra_store::ResourceTombstone;
-    use futures::executor::block_on;
+    use futures::{
+        executor::{LocalPool, block_on},
+        task::LocalSpawnExt,
+    };
 
     use super::*;
 
@@ -2155,6 +2175,7 @@ mod tests {
     struct ControlledCalculationRuntime {
         descriptor: BackendDescriptor,
         submitted: Rc<RefCell<Vec<CalculationWorkerRequest>>>,
+        receive_calls: Rc<Cell<usize>>,
         inbox: crate::RuntimeInbox,
     }
 
@@ -2163,12 +2184,17 @@ mod tests {
             Self {
                 descriptor: DeterministicBackend.descriptor(),
                 submitted: Rc::new(RefCell::new(Vec::new())),
+                receive_calls: Rc::new(Cell::new(0)),
                 inbox: crate::RuntimeInbox::default(),
             }
         }
 
         fn submitted(&self) -> Vec<CalculationWorkerRequest> {
             self.submitted.borrow().clone()
+        }
+
+        fn receive_calls(&self) -> usize {
+            self.receive_calls.get()
         }
 
         fn complete_success(&self, request: &CalculationWorkerRequest, sun_shift: f64) {
@@ -2222,6 +2248,7 @@ mod tests {
         }
 
         async fn receive(&self) -> Result<CalculationWorkerResult, CalculationRuntimeError> {
+            self.receive_calls.set(self.receive_calls.get() + 1);
             self.inbox.receive().await
         }
     }
@@ -3021,6 +3048,57 @@ mod tests {
     }
 
     #[test]
+    fn asynchronous_worker_result_advances_all_projection_waiters_without_double_receive() {
+        let runtime = ControlledCalculationRuntime::new();
+        let application = Rc::new(RealApplication::with_runtime(
+            MemoryRepository::default(),
+            runtime.clone(),
+        ));
+        let loading = block_on(application.initialize()).expect("initialization succeeds");
+        let after = loading.version;
+        let request = runtime
+            .submitted()
+            .last()
+            .cloned()
+            .expect("initial calculation submitted");
+
+        let result_a = Rc::new(RefCell::new(None));
+        let result_b = Rc::new(RefCell::new(None));
+        let mut pool = LocalPool::new();
+        for result in [&result_a, &result_b] {
+            let application = Rc::clone(&application);
+            let result = Rc::clone(result);
+            pool.spawner()
+                .spawn_local(async move {
+                    result.replace(Some(application.wait_for_update(after).await));
+                })
+                .expect("waiter task spawns");
+        }
+
+        pool.run_until_stalled();
+        assert_eq!(runtime.receive_calls(), 1);
+        assert!(result_a.borrow().is_none());
+        assert!(result_b.borrow().is_none());
+
+        runtime.complete_success(&request, 0.0);
+        pool.run_until_stalled();
+
+        let waiter_a = result_a
+            .borrow_mut()
+            .take()
+            .expect("waiter A completed")
+            .expect("waiter A observes the update");
+        let waiter_b = result_b
+            .borrow_mut()
+            .take()
+            .expect("waiter B completed")
+            .expect("waiter B observes the update");
+        assert!(waiter_a.version > after);
+        assert_eq!(waiter_a.version, waiter_b.version);
+        assert_eq!(runtime.receive_calls(), 1);
+    }
+
+    #[test]
     fn registered_waiters_are_broadcast_a_later_dispatch_transition() {
         let application = RealApplication::in_memory();
         let ready = ready(&application);
@@ -3161,7 +3239,7 @@ mod tests {
         ));
 
         runtime.complete_success(&request_a, 10.0);
-        block_on(application.complete_next_pending()).expect("stale A is processed");
+        block_on(application.complete_next_pending(fresh_b.version)).expect("stale A is processed");
         let after_stale = block_on(application.snapshot()).expect("snapshot after stale A");
         assert_eq!(after_stale.version, fresh_b.version);
         assert_eq!(
@@ -3210,7 +3288,7 @@ mod tests {
         assert_ne!(scene_d, scene_zero);
 
         runtime.complete_failure(&request_c, "stale C failure");
-        block_on(application.complete_next_pending()).expect("stale C is processed");
+        block_on(application.complete_next_pending(fresh_d.version)).expect("stale C is processed");
         let after_stale = block_on(application.snapshot()).expect("snapshot after stale failure");
         assert_eq!(after_stale.version, fresh_d.version);
         assert_eq!(

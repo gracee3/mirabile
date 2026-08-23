@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use astra_core::{Angle, AngleState, AngularVelocity, HouseSystem, PointId, PointState};
+use astra_core::{
+    Angle, AngleState, AngularVelocity, CoordinateSystem, CorrectionSpec, HouseSystem, PointId,
+    PointState,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -132,11 +135,7 @@ impl CalculationBackend for DeterministicBackend {
                     supported_points: Self::supported_points(),
                 }),
                 houses: Some(HouseCapabilities {
-                    supported_systems: vec![
-                        HouseSystem::Placidus,
-                        HouseSystem::WholeSign,
-                        HouseSystem::Equal,
-                    ],
+                    supported_systems: vec![HouseSystem::Equal],
                 }),
                 derived: None,
             },
@@ -164,6 +163,24 @@ impl CalculationBackend for DeterministicBackend {
                 ));
             }
         }
+        if request.zodiac != crate::ZodiacCalculationRequest::Tropical {
+            return Err(CalculationBackendError::unsupported(
+                BackendCapability::CelestialPositions,
+                "deterministic backend supports only tropical celestial calculations",
+            ));
+        }
+        if request.celestial.coordinates != CoordinateSystem::Geocentric {
+            return Err(CalculationBackendError::unsupported(
+                BackendCapability::CelestialPositions,
+                "deterministic backend supports only geocentric coordinates",
+            ));
+        }
+        if request.celestial.corrections != CorrectionSpec::default() {
+            return Err(CalculationBackendError::unsupported(
+                BackendCapability::CelestialPositions,
+                "deterministic backend does not implement correction flags",
+            ));
+        }
         if !request.derived.points.is_empty() {
             return Err(CalculationBackendError::unsupported(
                 BackendCapability::DerivedPoints,
@@ -181,6 +198,12 @@ impl CalculationBackend for DeterministicBackend {
                 return Err(CalculationBackendError::unsupported(
                     BackendCapability::HousesAndAngles,
                     format!("house system {:?} is not supported", houses.system),
+                ));
+            }
+            if houses.zodiac != crate::ZodiacCalculationRequest::Tropical {
+                return Err(CalculationBackendError::unsupported(
+                    BackendCapability::HousesAndAngles,
+                    "deterministic backend supports only tropical house calculations",
                 ));
             }
         }
@@ -275,6 +298,8 @@ impl CalculationBackend for DeterministicBackend {
                     coordinates: request.celestial.coordinates,
                     corrections: request.celestial.corrections.clone(),
                     zodiac: request.zodiac.clone(),
+                    lunar_node: request.celestial.lunar_node,
+                    black_moon: request.celestial.black_moon,
                 },
                 houses: house_provenance,
                 derived: None,

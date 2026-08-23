@@ -98,15 +98,19 @@ validation reference is not reported as the underlying model.
 
 `CalculationProvenance` records the Astra calculation-engine identity and timezone-data version,
 the selected backend actually used, celestial implementation/model/coordinates/corrections/zodiac,
-house implementation/system/zodiac when requested, and derived implementation/formula identities
-when requested. Tropical versus sidereal is typed. Sidereal provenance uses Astra-owned
+lunar-node and Black Moon model choices, house implementation/system/zodiac when requested, and
+derived implementation/formula identities when requested. Tropical versus sidereal is typed.
+Sidereal provenance uses Astra-owned
 `AyanamsaConfiguration { id, parameters }`, resolved from the canonical identifier; no provider
 enum leaks into Astra.
 
 `DeterministicBackend` satisfies both celestial and house capabilities in one implementation. It
-is test/demo-only and not astronomical authority. It calculates only explicitly requested catalog
-points and fails unknown points. Derived output remains empty unless requested, in which case the
-backend reports the unsupported capability.
+is test/demo-only and not astronomical authority. Its honest capability surface is tropical,
+geocentric celestial output with no corrections, its checked-in point catalog, and Equal houses.
+It rejects sidereal, topocentric, heliocentric, enabled-correction, Placidus, Whole Sign, derived,
+and unknown-point requests rather than echoing unimplemented semantics into provenance. The
+bootstrap chart definitions explicitly select Equal houses for this fixture; Astra's canonical
+`CalculationSpec` default remains unchanged.
 
 ## Content-addressed invalidation
 

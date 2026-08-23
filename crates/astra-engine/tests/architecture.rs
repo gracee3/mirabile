@@ -142,7 +142,10 @@ fn sample_resources() -> (
         "Natal definition",
         ChartDefinition {
             source: ChartSource::Radix { record: record_id },
-            calculation: CalculationSpec::default(),
+            calculation: CalculationSpec {
+                houses: HouseSystem::Equal,
+                ..CalculationSpec::default()
+            },
         },
         Timestamp::from_unix_millis(0),
     );
@@ -463,7 +466,7 @@ fn defaults_do_not_rewrite_existing_chart_definition() {
         ..CalculationSpec::default()
     };
 
-    assert_eq!(existing.calculation.houses, HouseSystem::Placidus);
+    assert_eq!(existing.calculation.houses, HouseSystem::Equal);
     assert_eq!(changed_defaults.houses, HouseSystem::WholeSign);
 }
 

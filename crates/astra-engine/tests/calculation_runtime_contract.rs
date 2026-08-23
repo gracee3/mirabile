@@ -52,7 +52,10 @@ fn resources() -> (
         "Fixture definition",
         ChartDefinition {
             source: ChartSource::Radix { record: record_id },
-            calculation: CalculationSpec::default(),
+            calculation: CalculationSpec {
+                houses: HouseSystem::Equal,
+                ..CalculationSpec::default()
+            },
         },
         Timestamp::from_unix_millis(0),
     );
@@ -120,7 +123,7 @@ fn resolved_request_separates_celestial_houses_and_derived_responsibilities() {
     );
     assert_eq!(
         request.houses.as_ref().map(|houses| houses.system),
-        Some(HouseSystem::Placidus)
+        Some(HouseSystem::Equal)
     );
     assert!(request.derived.points.is_empty());
 
@@ -158,7 +161,15 @@ fn resolved_request_separates_celestial_houses_and_derived_responsibilities() {
 fn deterministic_backend_advertises_multiple_capabilities_and_rejects_unknown_points() {
     let descriptor = DeterministicBackend.descriptor();
     assert!(descriptor.capabilities.celestial.is_some());
-    assert!(descriptor.capabilities.houses.is_some());
+    assert_eq!(
+        descriptor
+            .capabilities
+            .houses
+            .as_ref()
+            .expect("house capability")
+            .supported_systems,
+        vec![HouseSystem::Equal]
+    );
     assert!(descriptor.capabilities.derived.is_none());
 
     let mut request = prepared().request;
@@ -173,6 +184,98 @@ fn deterministic_backend_advertises_multiple_capabilities_and_rejects_unknown_po
         error.capability,
         Some(BackendCapability::CelestialPositions)
     );
+}
+
+#[test]
+fn deterministic_backend_rejects_unimplemented_celestial_semantics() {
+    let baseline = prepared().request;
+    for coordinates in [
+        CoordinateSystem::Topocentric,
+        CoordinateSystem::Heliocentric,
+    ] {
+        let mut request = baseline.clone();
+        request.celestial.coordinates = coordinates;
+        let error = DeterministicBackend
+            .calculate(&request)
+            .expect_err("non-geocentric coordinates must fail");
+        assert_eq!(
+            error.capability,
+            Some(BackendCapability::CelestialPositions)
+        );
+    }
+
+    for corrections in [
+        CorrectionSpec {
+            aberration: true,
+            light_time: false,
+            nutation: false,
+        },
+        CorrectionSpec {
+            aberration: false,
+            light_time: true,
+            nutation: false,
+        },
+        CorrectionSpec {
+            aberration: false,
+            light_time: false,
+            nutation: true,
+        },
+    ] {
+        let mut request = baseline.clone();
+        request.celestial.corrections = corrections;
+        let error = DeterministicBackend
+            .calculate(&request)
+            .expect_err("enabled corrections must fail");
+        assert_eq!(
+            error.capability,
+            Some(BackendCapability::CelestialPositions)
+        );
+    }
+
+    let mut sidereal = baseline.clone();
+    sidereal.zodiac = astra_engine::ZodiacCalculationRequest::Sidereal {
+        ayanamsa: astra_engine::AyanamsaConfiguration {
+            id: "lahiri".into(),
+            parameters: std::collections::BTreeMap::new(),
+        },
+    };
+    sidereal.houses.as_mut().expect("houses").zodiac = sidereal.zodiac.clone();
+    let error = DeterministicBackend
+        .calculate(&sidereal)
+        .expect_err("sidereal calculations must fail");
+    assert_eq!(
+        error.capability,
+        Some(BackendCapability::CelestialPositions)
+    );
+}
+
+#[test]
+fn deterministic_backend_rejects_unimplemented_house_and_derived_semantics() {
+    let baseline = prepared().request;
+    for system in [HouseSystem::Placidus, HouseSystem::WholeSign] {
+        let mut request = baseline.clone();
+        request.houses.as_mut().expect("houses").system = system;
+        let error = DeterministicBackend
+            .calculate(&request)
+            .expect_err("non-Equal houses must fail");
+        assert_eq!(error.capability, Some(BackendCapability::HousesAndAngles));
+    }
+
+    let mut derived = baseline;
+    derived
+        .derived
+        .points
+        .push(astra_engine::DerivedPointRequest {
+            point: PointId::new("custom_lot").expect("point ID"),
+            formula: astra_engine::DerivedFormula::Named {
+                id: "fixture-formula".into(),
+                parameters: std::collections::BTreeMap::new(),
+            },
+        });
+    let error = DeterministicBackend
+        .calculate(&derived)
+        .expect_err("derived formulas must fail");
+    assert_eq!(error.capability, Some(BackendCapability::DerivedPoints));
 }
 
 #[test]
@@ -238,6 +341,14 @@ fn provenance_is_structured_and_distinguishes_every_material_component() {
     }
     assert_ne!(sidereal, ayanamsa);
 
+    let mut lunar_node = baseline.clone();
+    lunar_node.celestial.lunar_node = astra_core::LunarNodeType::Mean;
+    assert_ne!(baseline, lunar_node);
+
+    let mut black_moon = baseline.clone();
+    black_moon.celestial.black_moon = astra_core::BlackMoonType::Osculating;
+    assert_ne!(baseline, black_moon);
+
     let derived_day_night = astra_engine::DerivedCalculationProvenance {
         implementation: ImplementationIdentity {
             id: "astra-derived-fixture".into(),
@@ -279,12 +390,48 @@ fn calculation_value_retains_full_astra_and_backend_provenance() {
     );
     assert_eq!(
         value.provenance.houses.as_ref().map(|houses| houses.system),
-        Some(HouseSystem::Placidus)
+        Some(HouseSystem::Equal)
     );
     assert_eq!(
         value.provenance.celestial.coordinates,
         CoordinateSystem::Geocentric
     );
+    assert_eq!(
+        value.provenance.celestial.lunar_node,
+        prepared.request.celestial.lunar_node
+    );
+    assert_eq!(
+        value.provenance.celestial.black_moon,
+        prepared.request.celestial.black_moon
+    );
+}
+
+#[test]
+fn celestial_node_and_black_moon_provenance_is_validated() {
+    let prepared = prepared();
+    let baseline = DeterministicBackend
+        .calculate(&prepared.request)
+        .expect("backend result");
+
+    let mut wrong_node = baseline.clone();
+    wrong_node.provenance.celestial.lunar_node = match prepared.request.celestial.lunar_node {
+        astra_core::LunarNodeType::Mean => astra_core::LunarNodeType::True,
+        astra_core::LunarNodeType::True => astra_core::LunarNodeType::Mean,
+    };
+    assert!(matches!(
+        engine().complete(&prepared, wrong_node),
+        Err(astra_engine::CalculationError::BackendResultMismatch(_))
+    ));
+
+    let mut wrong_black_moon = baseline;
+    wrong_black_moon.provenance.celestial.black_moon = match prepared.request.celestial.black_moon {
+        astra_core::BlackMoonType::Mean => astra_core::BlackMoonType::Osculating,
+        astra_core::BlackMoonType::Osculating => astra_core::BlackMoonType::Mean,
+    };
+    assert!(matches!(
+        engine().complete(&prepared, wrong_black_moon),
+        Err(astra_engine::CalculationError::BackendResultMismatch(_))
+    ));
 }
 
 #[test]

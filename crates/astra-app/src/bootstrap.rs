@@ -4,9 +4,9 @@ use astra_core::{
     AnalysisProfile, Angle, AspectClass, AspectDefinition, AspectFieldSpec, AspectId, AspectSet,
     CalculationSpec, CalendarSpec, CanonicalResource, ChartDefinition, ChartRecord, ChartSlot,
     ChartSlotId, ChartSource, CivilDate, CivilDateTime, CivilTime, EventKind, HouseDisplaySpec,
-    LabelSpec, Latitude, LocationAssertion, Longitude, ObjectFrame, Offset, OrbPolicy, PageLayout,
-    PointId, PointRole, PointSelector, PointSet, ResourceBinding, ResourceEnvelope, ResourceId,
-    RingGeometry, RingSpec, SourceProvenance, SourceType, TemporalAssertion, Theme,
+    HouseSystem, LabelSpec, Latitude, LocationAssertion, Longitude, ObjectFrame, Offset, OrbPolicy,
+    PageLayout, PointId, PointRole, PointSelector, PointSet, ResourceBinding, ResourceEnvelope,
+    ResourceId, RingGeometry, RingSpec, SourceProvenance, SourceType, TemporalAssertion, Theme,
     TimeZoneAssertion, Timestamp, ViewDocument, ViewInstance, ViewInstanceId, ViewObject,
     ViewOverrides, WheelObject, WheelTemplate, Workspace, WorkspaceChart, WorkspaceProfile,
     ZodiacDisplaySpec,
@@ -94,7 +94,10 @@ pub(crate) fn bootstrap_resources() -> Vec<CanonicalResource> {
             source: ChartSource::Radix {
                 record: ids.chart_record_a,
             },
-            calculation: CalculationSpec::default(),
+            calculation: CalculationSpec {
+                houses: HouseSystem::Equal,
+                ..CalculationSpec::default()
+            },
         },
         now,
     );
@@ -105,7 +108,10 @@ pub(crate) fn bootstrap_resources() -> Vec<CanonicalResource> {
             source: ChartSource::Radix {
                 record: ids.chart_record_b,
             },
-            calculation: CalculationSpec::default(),
+            calculation: CalculationSpec {
+                houses: HouseSystem::Equal,
+                ..CalculationSpec::default()
+            },
         },
         now,
     );

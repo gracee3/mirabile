@@ -195,6 +195,8 @@ pub struct CelestialCalculationProvenance {
     pub coordinates: CoordinateSystem,
     pub corrections: CorrectionSpec,
     pub zodiac: ZodiacCalculationRequest,
+    pub lunar_node: LunarNodeType,
+    pub black_moon: BlackMoonType,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

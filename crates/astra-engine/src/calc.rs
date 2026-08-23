@@ -304,6 +304,8 @@ fn validate_backend_result(
         || request.celestial.coordinates != result.provenance.celestial.coordinates
         || request.celestial.corrections != result.provenance.celestial.corrections
         || request.zodiac != result.provenance.celestial.zodiac
+        || request.celestial.lunar_node != result.provenance.celestial.lunar_node
+        || request.celestial.black_moon != result.provenance.celestial.black_moon
     {
         return Err(CalculationError::BackendResultMismatch(
             "celestial provenance did not match the request and descriptor".into(),
