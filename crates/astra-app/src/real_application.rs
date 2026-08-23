@@ -393,7 +393,8 @@ where
             let mut workspace = envelope.payload.clone();
             let (command, refresh, clear_editor, notice) =
                 state.command_for_intent(workspace_id, &workspace, &intent)?;
-            apply_workspace_command(workspace_id, &mut workspace, &command)
+            let view_documents = state.resolve_view_documents(&workspace)?;
+            apply_workspace_command(workspace_id, &mut workspace, &command, &view_documents)
                 .map_err(|error| AppError::new(AppErrorKind::InvalidIntent, error.to_string()))?;
             let next = envelope
                 .next_with_payload(workspace, Timestamp::from_unix_millis(state.next_timestamp))
@@ -680,73 +681,79 @@ where
                 state
                     .catalog
                     .insert_current(CanonicalResource::AspectSet(next.clone()));
-                let editor = state
-                    .editor
-                    .as_mut()
-                    .filter(|editor| editor.base.id == resource_id)
-                    .ok_or_else(|| {
-                        AppError::new(
-                            AppErrorKind::NotFound,
-                            "The saving Aspect Set draft was no longer open",
-                        )
-                    })?;
-                editor.base = next.clone();
-                editor.draft = next.payload;
-                editor.state = DraftState::Clean {
-                    revision: next.revision,
-                };
-                state.notice = Some(success(format!(
-                    "Aspect Set saved as canonical revision {}",
-                    next.revision
-                )));
-                state.advance()
-            }
-            Err(RepositoryError::Conflict { actual, .. }) => {
-                let remote = self.repository.get(resource_id).await.map_err(|error| {
-                    repository_app_error(
-                        "Could not load the remote Aspect Set after a conflict",
-                        &error,
-                    )
-                })?;
-                let mut state = self.state.borrow_mut();
-                if let Some(CanonicalResource::AspectSet(remote)) = remote {
-                    state
-                        .catalog
-                        .insert_current(CanonicalResource::AspectSet(remote));
-                }
-                let editor = state
-                    .editor
-                    .as_mut()
-                    .filter(|editor| editor.base.id == resource_id)
-                    .ok_or_else(|| {
-                        AppError::new(
-                            AppErrorKind::NotFound,
-                            "The conflicting Aspect Set draft was no longer open",
-                        )
-                    })?;
-                editor.state = DraftState::Conflict {
-                    base_revision: expected_revision,
-                    remote_revision: actual,
-                };
-                state.notice = Some(AppNotice {
-                    kind: AppNoticeKind::Conflict,
-                    message: format!(
-                        "Aspect Set save conflict: draft revision {expected_revision}, remote revision {actual}; the local draft was retained"
-                    ),
-                });
-                state.advance()
-            }
-            Err(error) => {
-                let mut state = self.state.borrow_mut();
                 if let Some(editor) = state
                     .editor
                     .as_mut()
                     .filter(|editor| editor.base.id == resource_id)
                 {
-                    editor.state = DraftState::Dirty {
-                        base_revision: expected_revision,
+                    editor.base = next.clone();
+                    editor.draft = next.payload;
+                    editor.state = DraftState::Clean {
+                        revision: next.revision,
                     };
+                    state.notice = Some(success(format!(
+                        "Aspect Set saved as canonical revision {}",
+                        next.revision
+                    )));
+                } else {
+                    state.notice = Some(AppNotice {
+                        kind: AppNoticeKind::Warning,
+                        message: format!(
+                            "Aspect Set revision {} was saved, but its editor was no longer open",
+                            next.revision
+                        ),
+                    });
                 }
+                state.advance()
+            }
+            Err(RepositoryError::Conflict { actual, .. }) => {
+                let remote = self.repository.get(resource_id).await;
+                let mut state = self.state.borrow_mut();
+                match remote {
+                    Ok(Some(CanonicalResource::AspectSet(remote))) => {
+                        state
+                            .catalog
+                            .insert_current(CanonicalResource::AspectSet(remote));
+                        if let Some(editor) = state
+                            .editor
+                            .as_mut()
+                            .filter(|editor| editor.base.id == resource_id)
+                        {
+                            editor.state = DraftState::Conflict {
+                                base_revision: expected_revision,
+                                remote_revision: actual,
+                            };
+                        }
+                        state.notice = Some(AppNotice {
+                            kind: AppNoticeKind::Conflict,
+                            message: format!(
+                                "Aspect Set save conflict: draft revision {expected_revision}, remote revision {actual}; the local draft was retained"
+                            ),
+                        });
+                    }
+                    Ok(Some(remote)) => {
+                        restore_dirty_editor(&mut state, resource_id, expected_revision);
+                        state.notice = Some(conflict_refresh_warning(format!(
+                            "resource {resource_id} was {:?}, not an AspectSet",
+                            remote.kind()
+                        )));
+                    }
+                    Ok(None) => {
+                        restore_dirty_editor(&mut state, resource_id, expected_revision);
+                        state.notice = Some(conflict_refresh_warning(format!(
+                            "resource {resource_id} was not found"
+                        )));
+                    }
+                    Err(error) => {
+                        restore_dirty_editor(&mut state, resource_id, expected_revision);
+                        state.notice = Some(conflict_refresh_warning(error));
+                    }
+                }
+                state.advance()
+            }
+            Err(error) => {
+                let mut state = self.state.borrow_mut();
+                restore_dirty_editor(&mut state, resource_id, expected_revision);
                 state.notice = Some(AppNotice {
                     kind: AppNoticeKind::Warning,
                     message: format!("Aspect Set save failed; the draft was retained: {error}"),
@@ -1022,6 +1029,29 @@ impl RealState {
             wheel,
             theme,
         })
+    }
+
+    fn resolve_view_documents(
+        &self,
+        workspace: &Workspace,
+    ) -> AppResult<BTreeMap<ViewInstanceId, ViewDocument>> {
+        workspace
+            .views
+            .iter()
+            .map(|view| {
+                resolve_typed_binding(&view.document, &self.catalog)
+                    .map(|resolved| (view.id, resolved.value))
+                    .map_err(|error| {
+                        AppError::new(
+                            AppErrorKind::NotFound,
+                            format!(
+                                "ViewDocument for view {} could not be resolved: {error}",
+                                view.id
+                            ),
+                        )
+                    })
+            })
+            .collect()
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1739,6 +1769,25 @@ fn success(message: impl Into<String>) -> AppNotice {
     }
 }
 
+fn restore_dirty_editor(state: &mut RealState, resource_id: ResourceId, base_revision: Revision) {
+    if let Some(editor) = state
+        .editor
+        .as_mut()
+        .filter(|editor| editor.base.id == resource_id)
+    {
+        editor.state = DraftState::Dirty { base_revision };
+    }
+}
+
+fn conflict_refresh_warning(error: impl std::fmt::Display) -> AppNotice {
+    AppNotice {
+        kind: AppNoticeKind::Warning,
+        message: format!(
+            "Aspect Set save conflict was detected, but the remote revision could not be loaded; the local draft was retained: {error}"
+        ),
+    }
+}
+
 fn not_found(noun: &str, id: ResourceId) -> AppError {
     AppError::new(AppErrorKind::NotFound, format!("{noun} {id} was not found"))
 }
@@ -1791,8 +1840,9 @@ fn view_computation_error(error: impl std::fmt::Display) -> AppError {
 mod tests {
     use std::{cell::Cell, rc::Rc};
 
-    use astra_core::{Angle, CanonicalResource, PointSelector, ResourceEnvelope};
+    use astra_core::{Angle, CanonicalResource, PointSelector, ResourceEnvelope, ResourceKind};
     use astra_engine::{EphemerisError, EphemerisOutput, EphemerisRequest, ProviderIdentity};
+    use astra_store::ResourceTombstone;
     use futures::executor::block_on;
 
     use super::*;
@@ -1831,6 +1881,99 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    enum InjectedSaveFailure {
+        ConflictThenReadFailure,
+        Adapter,
+        None,
+    }
+
+    #[derive(Clone)]
+    struct SaveFailureRepository {
+        inner: MemoryRepository,
+        save_failure: Rc<Cell<InjectedSaveFailure>>,
+        fail_next_get: Rc<Cell<bool>>,
+    }
+
+    impl SaveFailureRepository {
+        fn new(save_failure: InjectedSaveFailure) -> Self {
+            Self {
+                inner: MemoryRepository::default(),
+                save_failure: Rc::new(Cell::new(save_failure)),
+                fail_next_get: Rc::new(Cell::new(false)),
+            }
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl ResourceRepository for SaveFailureRepository {
+        async fn create(&self, resource: CanonicalResource) -> Result<(), RepositoryError> {
+            self.inner.create(resource).await
+        }
+
+        async fn save(
+            &self,
+            expected_revision: Revision,
+            resource: CanonicalResource,
+        ) -> Result<(), RepositoryError> {
+            if matches!(&resource, CanonicalResource::AspectSet(_)) {
+                match self.save_failure.replace(InjectedSaveFailure::None) {
+                    InjectedSaveFailure::ConflictThenReadFailure => {
+                        self.fail_next_get.set(true);
+                        return Err(RepositoryError::Conflict {
+                            expected: expected_revision,
+                            actual: expected_revision.next().expect("test revision can advance"),
+                        });
+                    }
+                    InjectedSaveFailure::Adapter => {
+                        return Err(RepositoryError::Adapter(
+                            "injected AspectSet save failure".into(),
+                        ));
+                    }
+                    InjectedSaveFailure::None => {}
+                }
+            }
+            self.inner.save(expected_revision, resource).await
+        }
+
+        async fn get(&self, id: ResourceId) -> Result<Option<CanonicalResource>, RepositoryError> {
+            if self.fail_next_get.replace(false) {
+                return Err(RepositoryError::Adapter(
+                    "injected remote-head read failure".into(),
+                ));
+            }
+            self.inner.get(id).await
+        }
+
+        async fn get_head(&self, id: ResourceId) -> Result<Option<ResourceState>, RepositoryError> {
+            self.inner.get_head(id).await
+        }
+
+        async fn get_revision(
+            &self,
+            id: ResourceId,
+            revision: Revision,
+        ) -> Result<Option<ResourceState>, RepositoryError> {
+            self.inner.get_revision(id, revision).await
+        }
+
+        async fn list(
+            &self,
+            kind: Option<ResourceKind>,
+        ) -> Result<Vec<CanonicalResource>, RepositoryError> {
+            self.inner.list(kind).await
+        }
+
+        async fn delete(
+            &self,
+            id: ResourceId,
+            expected_revision: Revision,
+            deleted_at: Timestamp,
+        ) -> Result<ResourceTombstone, RepositoryError> {
+            self.inner.delete(id, expected_revision, deleted_at).await
+        }
+    }
+
     fn ready<R, P>(application: &RealApplication<R, P>) -> AppReadModel
     where
         R: ResourceRepository + Clone,
@@ -1856,6 +1999,156 @@ mod tests {
             .as_ref()
             .expect("draft is projected")
             .state
+    }
+
+    #[derive(Clone, Copy)]
+    enum TestViewDocumentBinding {
+        Inline,
+        Follow,
+        Pinned,
+    }
+
+    fn repository_with_view_document_binding(binding: TestViewDocumentBinding) -> MemoryRepository {
+        let repository = MemoryRepository::default();
+        let bootstrap = RealApplication::with_repository(repository.clone());
+        ready(&bootstrap);
+        drop(bootstrap);
+
+        if matches!(binding, TestViewDocumentBinding::Inline) {
+            return repository;
+        }
+
+        let workspace_id = bootstrap_ids().workspace;
+        let CanonicalResource::Workspace(workspace) = block_on(repository.get(workspace_id))
+            .expect("workspace read succeeds")
+            .expect("workspace exists")
+        else {
+            panic!("bootstrap resource is a Workspace");
+        };
+        let ResourceBinding::Inline { value: document } = &workspace.payload.views[0].document
+        else {
+            panic!("bootstrap ViewDocument is inline");
+        };
+        let document_id = ResourceId::new();
+        let first = ResourceEnvelope::with_id(
+            document_id,
+            "Close repair ViewDocument",
+            document.clone(),
+            Timestamp::from_unix_millis(30),
+        );
+        block_on(repository.create(CanonicalResource::ViewDocument(first.clone())))
+            .expect("ViewDocument creation succeeds");
+
+        let document_binding = match binding {
+            TestViewDocumentBinding::Follow => ResourceBinding::Follow { id: document_id },
+            TestViewDocumentBinding::Pinned => {
+                let mut current_payload = first.payload.clone();
+                for slot in &mut current_payload.chart_slots {
+                    slot.required = !slot.required;
+                }
+                let current = first
+                    .next_with_payload(current_payload, Timestamp::from_unix_millis(31))
+                    .expect("current ViewDocument revision is valid");
+                block_on(repository.save(first.revision, CanonicalResource::ViewDocument(current)))
+                    .expect("ViewDocument head advances");
+                ResourceBinding::Pinned {
+                    id: document_id,
+                    revision: first.revision,
+                }
+            }
+            TestViewDocumentBinding::Inline => unreachable!(),
+        };
+        let mut payload = workspace.payload.clone();
+        payload.views[0].document = document_binding;
+        let next = workspace
+            .next_with_payload(payload, Timestamp::from_unix_millis(32))
+            .expect("Workspace binding revision is valid");
+        block_on(repository.save(workspace.revision, CanonicalResource::Workspace(next)))
+            .expect("Workspace binding persists");
+        repository
+    }
+
+    fn assert_close_repair_uses_resolved_view_document(repository: MemoryRepository) {
+        let application = RealApplication::with_repository(repository);
+        let initial = ready(&application);
+        let ids = bootstrap_ids();
+        let view_id = initial.workspace.active_view.expect("active view");
+        let view = initial.active_view.expect("active view projection");
+        let required = view
+            .slots
+            .iter()
+            .find(|slot| slot.required)
+            .expect("required slot")
+            .slot
+            .clone();
+        let optional = view
+            .slots
+            .iter()
+            .find(|slot| !slot.required)
+            .expect("optional slot")
+            .slot
+            .clone();
+        assert_eq!(required.as_str(), "radix");
+        assert_eq!(optional.as_str(), "comparison");
+
+        let opened = block_on(application.dispatch(AppIntent::OpenChart {
+            definition_id: ids.chart_definition_b,
+        }))
+        .expect("chart B opens");
+        let neighbor = opened.workspace.active_chart.expect("chart B is active");
+        block_on(application.dispatch(AppIntent::SetChartSelection {
+            instance_id: ids.chart_instance_a,
+            selected: true,
+        }))
+        .expect("chart A is selected");
+        block_on(application.dispatch(AppIntent::ActivateChart {
+            instance_id: ids.chart_instance_a,
+        }))
+        .expect("chart A is active before close");
+        block_on(application.dispatch(AppIntent::AssignChartSlot {
+            view_id,
+            slot: optional.clone(),
+            chart: Some(ids.chart_instance_a),
+        }))
+        .expect("optional slot receives chart A");
+
+        let refreshing = block_on(application.dispatch(AppIntent::CloseChart {
+            instance_id: ids.chart_instance_a,
+        }))
+        .expect("chart A closes");
+        let closed = block_on(application.wait_for_update(refreshing.version))
+            .expect("close refresh settles");
+        assert!(
+            closed
+                .workspace
+                .charts
+                .iter()
+                .all(|chart| chart.instance_id != ids.chart_instance_a)
+        );
+        assert!(
+            !closed
+                .workspace
+                .selected_charts
+                .contains(&ids.chart_instance_a)
+        );
+        assert_eq!(closed.workspace.active_chart, Some(neighbor));
+        let view = closed.active_view.expect("active view remains");
+        assert_eq!(
+            view.slots
+                .iter()
+                .find(|slot| slot.slot == required)
+                .expect("required slot remains")
+                .chart,
+            Some(neighbor)
+        );
+        assert_eq!(
+            view.slots
+                .iter()
+                .find(|slot| slot.slot == optional)
+                .expect("optional slot remains")
+                .chart,
+            None
+        );
     }
 
     #[test]
@@ -1886,6 +2179,27 @@ mod tests {
         ready(&second);
         assert_eq!(repository.current_count(), 7);
         assert_eq!(repository.revision_count(), 7);
+    }
+
+    #[test]
+    fn close_chart_repairs_required_and_optional_slots_for_inline_view_document() {
+        assert_close_repair_uses_resolved_view_document(repository_with_view_document_binding(
+            TestViewDocumentBinding::Inline,
+        ));
+    }
+
+    #[test]
+    fn close_chart_repairs_required_and_optional_slots_for_follow_view_document() {
+        assert_close_repair_uses_resolved_view_document(repository_with_view_document_binding(
+            TestViewDocumentBinding::Follow,
+        ));
+    }
+
+    #[test]
+    fn close_chart_uses_exact_pinned_view_document_revision_for_slot_repair() {
+        assert_close_repair_uses_resolved_view_document(repository_with_view_document_binding(
+            TestViewDocumentBinding::Pinned,
+        ));
     }
 
     #[test]
@@ -2167,6 +2481,150 @@ mod tests {
             DraftState::Clean { revision } if revision.get() == 2
         ));
         assert_eq!(canceled_draft.conjunction.maximum_orb, angle(5.0));
+    }
+
+    #[test]
+    fn conflict_remote_read_failure_settles_dirty_and_allows_cancel_and_retry() {
+        let repository = SaveFailureRepository::new(InjectedSaveFailure::ConflictThenReadFailure);
+        let application = RealApplication::with_repository(repository);
+        ready(&application);
+        let standard = bootstrap_ids().aspect_set_standard;
+        block_on(application.dispatch(AppIntent::BeginAspectSetEdit {
+            resource_id: standard,
+        }))
+        .expect("begin succeeds");
+        let dirty = block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+            AspectSetDraftMutation::SetOrb {
+                aspect_id: astra_core::AspectId::new("conjunction").expect("aspect ID"),
+                maximum: angle(9.0),
+            },
+        )))
+        .expect("draft update succeeds");
+        block_on(application.wait_for_update(dirty.version)).expect("preview settles");
+
+        let saving = block_on(application.dispatch(AppIntent::SaveDraft)).expect("save starts");
+        assert!(matches!(editor_state(&saving), DraftState::Saving { .. }));
+        assert!(
+            application
+                .state
+                .borrow()
+                .pending
+                .iter()
+                .any(|pending| matches!(pending, PendingWork::SaveAspectSet { .. }))
+        );
+
+        let settled = block_on(application.wait_for_update(saving.version))
+            .expect("failed remote refresh settles");
+        assert!(settled.version > saving.version);
+        assert_eq!(settled.status, ApplicationStatus::Ready);
+        assert!(matches!(
+            editor_state(&settled),
+            DraftState::Dirty { base_revision } if *base_revision == Revision::INITIAL
+        ));
+        assert_eq!(
+            settled
+                .resource_editor
+                .aspect_set
+                .as_ref()
+                .expect("draft remains")
+                .conjunction
+                .maximum_orb,
+            angle(9.0)
+        );
+        let notice = settled.notice.as_ref().expect("warning is projected");
+        assert_eq!(notice.kind, AppNoticeKind::Warning);
+        assert!(
+            notice
+                .message
+                .contains("remote revision could not be loaded")
+        );
+        assert!(
+            !application
+                .state
+                .borrow()
+                .pending
+                .iter()
+                .any(|pending| matches!(pending, PendingWork::SaveAspectSet { .. }))
+        );
+
+        let canceled = block_on(application.dispatch(AppIntent::CancelDraft))
+            .expect("cancel remains available");
+        assert!(matches!(editor_state(&canceled), DraftState::Clean { .. }));
+        block_on(application.wait_for_update(canceled.version)).expect("cancel refresh settles");
+
+        let retry_dirty = block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+            AspectSetDraftMutation::SetOrb {
+                aspect_id: astra_core::AspectId::new("conjunction").expect("aspect ID"),
+                maximum: angle(7.0),
+            },
+        )))
+        .expect("a new draft update is accepted");
+        block_on(application.wait_for_update(retry_dirty.version)).expect("retry preview settles");
+        let retry_saving =
+            block_on(application.dispatch(AppIntent::SaveDraft)).expect("retry save starts");
+        let retried = block_on(application.wait_for_update(retry_saving.version))
+            .expect("retry save settles");
+        assert!(matches!(
+            editor_state(&retried),
+            DraftState::Clean { revision } if revision.get() == 2
+        ));
+        assert!(
+            !application
+                .state
+                .borrow()
+                .pending
+                .iter()
+                .any(|pending| matches!(pending, PendingWork::SaveAspectSet { .. }))
+        );
+    }
+
+    #[test]
+    fn generic_repository_save_failure_settles_dirty_and_can_retry() {
+        let repository = SaveFailureRepository::new(InjectedSaveFailure::Adapter);
+        let application = RealApplication::with_repository(repository);
+        ready(&application);
+        block_on(application.dispatch(AppIntent::BeginAspectSetEdit {
+            resource_id: bootstrap_ids().aspect_set_standard,
+        }))
+        .expect("begin succeeds");
+        let dirty = block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+            AspectSetDraftMutation::SetOrb {
+                aspect_id: astra_core::AspectId::new("conjunction").expect("aspect ID"),
+                maximum: angle(8.0),
+            },
+        )))
+        .expect("draft update succeeds");
+        block_on(application.wait_for_update(dirty.version)).expect("preview settles");
+
+        let saving = block_on(application.dispatch(AppIntent::SaveDraft)).expect("save starts");
+        let failed =
+            block_on(application.wait_for_update(saving.version)).expect("generic failure settles");
+        assert!(failed.version > saving.version);
+        assert_eq!(failed.status, ApplicationStatus::Ready);
+        assert!(matches!(editor_state(&failed), DraftState::Dirty { .. }));
+        assert_eq!(
+            failed
+                .resource_editor
+                .aspect_set
+                .as_ref()
+                .expect("draft remains")
+                .conjunction
+                .maximum_orb,
+            angle(8.0)
+        );
+        assert!(
+            !application
+                .state
+                .borrow()
+                .pending
+                .iter()
+                .any(|pending| matches!(pending, PendingWork::SaveAspectSet { .. }))
+        );
+
+        let retry = block_on(application.dispatch(AppIntent::SaveDraft)).expect("retry starts");
+        let saved =
+            block_on(application.wait_for_update(retry.version)).expect("retry save succeeds");
+        assert!(matches!(editor_state(&saved), DraftState::Clean { .. }));
     }
 
     #[test]

@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
+
 use astra_core::{
-    Command, DomainValidate, InstanceId, ResourceBinding, ResourceId, ViewInstanceId, Workspace,
-    WorkspaceChart,
+    Command, DomainValidate, InstanceId, ResourceBinding, ResourceId, ViewDocument, ViewInstanceId,
+    Workspace, WorkspaceChart,
 };
 use thiserror::Error;
 
@@ -9,6 +11,7 @@ pub(crate) fn apply_workspace_command(
     workspace_id: ResourceId,
     workspace: &mut Workspace,
     command: &Command,
+    view_documents: &BTreeMap<ViewInstanceId, ViewDocument>,
 ) -> Result<(), WorkspaceCommandError> {
     match command {
         Command::OpenSavedChart {
@@ -76,22 +79,20 @@ pub(crate) fn apply_workspace_command(
             }
             let replacement = workspace.active_chart;
             for view in &mut workspace.views {
-                let required_slots = match &view.document {
-                    ResourceBinding::Inline { value } => value
-                        .chart_slots
-                        .iter()
-                        .filter(|slot| slot.required)
-                        .map(|slot| slot.id.clone())
-                        .collect::<Vec<_>>(),
-                    ResourceBinding::Follow { .. } | ResourceBinding::Pinned { .. } => Vec::new(),
-                };
+                let document = view_documents
+                    .get(&view.id)
+                    .ok_or(WorkspaceCommandError::ViewDocumentNotResolved(view.id))?;
                 let affected = view
                     .charts
                     .iter()
                     .filter_map(|(slot, chart)| (*chart == *instance_id).then_some(slot.clone()))
                     .collect::<Vec<_>>();
                 for slot in affected {
-                    if required_slots.contains(&slot) {
+                    if document
+                        .chart_slots
+                        .iter()
+                        .any(|definition| definition.id == slot && definition.required)
+                    {
                         if let Some(replacement) = replacement {
                             view.charts.insert(slot, replacement);
                         } else {
@@ -151,11 +152,13 @@ pub(crate) fn apply_workspace_command(
                 .iter_mut()
                 .find(|candidate| candidate.id == *view)
                 .ok_or(WorkspaceCommandError::ViewNotFound(*view))?;
-            if let ResourceBinding::Inline { value } = &view.document
-                && !value
-                    .chart_slots
-                    .iter()
-                    .any(|candidate| candidate.id == *slot)
+            let document = view_documents
+                .get(&view.id)
+                .ok_or(WorkspaceCommandError::ViewDocumentNotResolved(view.id))?;
+            if !document
+                .chart_slots
+                .iter()
+                .any(|candidate| candidate.id == *slot)
             {
                 return Err(WorkspaceCommandError::SlotNotFound(slot.to_string()));
             }
@@ -247,6 +250,8 @@ pub(crate) enum WorkspaceCommandError {
     DuplicateInstance(InstanceId),
     #[error("view {0} was not found")]
     ViewNotFound(ViewInstanceId),
+    #[error("the ViewDocument for view {0} was not resolved")]
+    ViewDocumentNotResolved(ViewInstanceId),
     #[error("chart slot {0} was not found")]
     SlotNotFound(String),
     #[error("workspace command produced invalid state: {0}")]
@@ -257,7 +262,7 @@ pub(crate) enum WorkspaceCommandError {
 
 #[cfg(test)]
 mod tests {
-    use astra_core::{ChartSlotId, Command};
+    use astra_core::{ChartSlotId, Command, ResourceBinding};
 
     use crate::{bootstrap_ids, bootstrap_resources};
 
@@ -274,10 +279,24 @@ mod tests {
         (envelope.id, envelope.payload)
     }
 
+    fn inline_view_documents(workspace: &Workspace) -> BTreeMap<ViewInstanceId, ViewDocument> {
+        workspace
+            .views
+            .iter()
+            .map(|view| {
+                let ResourceBinding::Inline { value } = &view.document else {
+                    panic!("workspace fixture uses an inline ViewDocument")
+                };
+                (view.id, value.clone())
+            })
+            .collect()
+    }
+
     #[test]
     fn activation_and_selection_remain_independent() {
         let (workspace_id, mut workspace) = workspace_fixture();
         let initial = workspace.active_chart.expect("active chart");
+        let view_documents = inline_view_documents(&workspace);
         apply_workspace_command(
             workspace_id,
             &mut workspace,
@@ -286,6 +305,7 @@ mod tests {
                 instance_id: initial,
                 selected: true,
             },
+            &view_documents,
         )
         .expect("selection command succeeds");
 
@@ -297,6 +317,7 @@ mod tests {
     fn close_repairs_required_inline_slot_to_neighbor() {
         let ids = bootstrap_ids();
         let (workspace_id, mut workspace) = workspace_fixture();
+        let view_documents = inline_view_documents(&workspace);
         let second = InstanceId::new();
         apply_workspace_command(
             workspace_id,
@@ -306,6 +327,7 @@ mod tests {
                 definition: ids.chart_definition_b,
                 instance_id: second,
             },
+            &view_documents,
         )
         .expect("open command succeeds");
         apply_workspace_command(
@@ -315,6 +337,7 @@ mod tests {
                 workspace: workspace_id,
                 instance_id: ids.chart_instance_a,
             },
+            &view_documents,
         )
         .expect("close command succeeds");
 
