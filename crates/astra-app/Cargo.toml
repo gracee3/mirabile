@@ -1,0 +1,17 @@
+[package]
+name = "astra-app"
+description = "Application interface contract and UI projections for Astra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+astra-core = { path = "../astra-core" }
+astra-engine = { path = "../astra-engine" }
+async-trait.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

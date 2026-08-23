@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/web",
+    "crates/astra-app",
     "crates/astra-core",
     "crates/astra-engine",
     "crates/astra-store",
@@ -15,6 +16,7 @@ license = "MIT"
 repository = "https://github.com/gracee3/astra"
 
 [workspace.dependencies]
+astra-app = { path = "crates/astra-app" }
 async-trait = "0.1.89"
 blake3 = "1.8.2"
 futures = "0.3.31"
