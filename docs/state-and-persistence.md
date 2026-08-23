@@ -39,13 +39,17 @@ stores in one transaction. Ordinary `get` and `list` hide tombstones; `get_head`
 `get_revision` expose `ResourceState::Deleted`. Saves and recreation of a deleted stable ID are
 rejected, while every earlier live revision remains readable. Existing live v1 resources retain
 their raw JSON encoding. Only tombstones use an additive tagged storage envelope, so no IndexedDB
-migration or store rename is required.
+object-store migration or rename is required inside the `mirabile` development database. The
+separate product-identity database change intentionally resets the earlier development database.
 
 `RealApplication::initialize()` opens IndexedDB through a lazy repository source, retains the
-cloneable repository handle, idempotently ensures the current explicit demo bundle, hydrates the
-full library and `WorkspaceDocument`, creates a `WorkspaceSession`, and queues the first view calculation. Editor controls cannot accept edits
-until startup reaches `Ready`. An open/hydration failure enters `Error` with initialization context
-and never falls back to implicit session/in-memory persistence.
+cloneable repository handle, hydrates whatever canonical resources exist, applies `StartupPolicy`,
+creates a `WorkspaceSession`, and queues calculation only when the session has active content.
+An empty repository is valid: the default fallback creates an ephemeral, locationless Current
+Transits session without writing canonical demo resources. The demo bundle is loaded only by
+explicit tests or a future user command. Editor controls cannot accept edits until startup reaches
+`Ready`. An open/hydration failure enters `Error` with initialization context and never falls back
+to implicit session/in-memory persistence.
 
 Opening/closing saved charts, slot assignment, workspace bindings, and promoted display overrides
 change the session's durable document projection and mark it dirty. They do not write immediately.
@@ -81,7 +85,8 @@ delete conflicts, tombstone reads, permanent stable IDs, and transaction rollbac
 history-key collision. Passing requires the machine-readable `MIRABILE_BROWSER_CONTRACT:PASS` DOM
 marker; this is local validation, not hosted CI.
 
-The same harness also runs an isolated real-application database. One `RealApplication` hydrates,
+The same harness also runs an isolated real-application database. After explicitly loading the
+demo bundle, one `RealApplication` hydrates,
 opens and activates Chart B, previews and commits Standard AspectSet revision 2, then is dropped. A
 second instance opens the same database and must restore Chart B, the committed AspectSet revision,
 the persisted `WorkspaceDocument`, and a newly reconstructed fresh Scene. The unique database name and

@@ -5,8 +5,8 @@
 - Base: `63f081b3c9b0becf5238bdbe2cf3b6964bf09f85` (`origin/main`)
 - Branch: `goal/mirabile-consolidation`
 - Worktree: `/home/emmy/worktrees/mirabile-consolidation`
-- Current phase: 10 - complete verification, residual audits, and final review
-- Delivery: unmerged goal branch; push only after the complete validation phase
+- Current phase: Complete - validated and ready for branch review
+- Delivery: unmerged goal branch; external repository rename remains post-merge
 
 ## Frozen architecture
 
@@ -24,7 +24,7 @@
 
 - Until an explicit Mirabile MVP schema freeze, persisted formats are development schemas and may change incompatibly. Old development data may fail clearly or be reset; `SchemaVersion::V1` is not a public compatibility promise.
 - The IndexedDB identity will change from historical `astra` to `mirabile`. This classified historical reference documents the reset boundary. No permanent legacy migration will be added.
-- Mirabile-owned calculation/cache and Worker/browser marker identities will be renamed without changing the Worker protocol version solely for branding.
+- Mirabile-owned calculation/cache and Worker/browser marker identities are renamed. Serialized `WorkerProtocolVersion::CURRENT` remains version 3 and the readiness-marker contract remains version 1; branding alone changed neither.
 - Third-party XALEN identities, exact Git pin, license text, notice assets, and opaque UUIDs remain unchanged.
 - Source metadata will target `gracee3/mirabile`; the external GitHub repository rename is explicitly deferred until after review and merge.
 
@@ -33,8 +33,8 @@
 - The base checkout was clean, `HEAD` and `origin/main` matched the required SHA, and implementation is isolated from the historical repository path `/home/emmy/astra`. This path is retained because it is the actual primary checkout, not product identity.
 - The initial audit covers package/crate names, imports, docs, HTML, accessibility strings, browser/Worker markers, scripts, storage identity, calculation fingerprints, fixtures, notices, comments, and metadata.
 - Phase 1 renamed all five packages and four crate directories, all Rust imports and Mirabile-owned provenance types/fields, repository metadata, the default IndexedDB identity, calculation/cache identities, Worker/browser markers, scripts, UI text, notices wrapper prose, and checked-in metadata.
-- The Worker protocol remains V1 because the serialized contract did not change. Mirabile-owned cache keys intentionally change through the renamed engine/backend identities.
-- Residual name audit after phase 1: only the two classified historical references in this document remain (`astra` as the old IndexedDB name and `/home/emmy/astra` as the actual primary checkout path). Third-party XALEN names and opaque UUIDs were unchanged.
+- The serialized Worker protocol remains version 3 because its contract did not change; the project-owned readiness marker remains its existing version 1. Mirabile-owned cache keys intentionally change through the renamed engine/backend identities.
+- Final tracked-source residual audit: the only case-insensitive matches are four classified lines in this document. Three describe the old IndexedDB reset boundary or actual primary checkout path `/home/emmy/astra`; the fourth is the old repository selector required by the post-merge rename command. The worktree `.git` administrative file also points to the primary checkout. None is an active product/codename identity; no incomplete rename remains. Third-party XALEN names and opaque UUIDs were unchanged.
 - Phase 2 replaced the foundation-era README narrative with the real local-first Application, IndexedDB, Worker, provider-neutral contract, pinned XALEN default, current limitations, and local-only validation story. The original implementation plan is explicitly historical.
 - Eight accepted ADRs now cover record/definition separation, revisioned resources, binding modes, application/read-model authority, document/session lifetimes, calculation isolation, XALEN/Swiss distribution boundaries, and pre-MVP compatibility.
 - Phase 3 replaced the mixed canonical `Workspace` payload with `WorkspaceDocument`: saved chart-definition membership/order, durable views/slot assignments, workspace bindings, and promoted display overrides only.
@@ -68,13 +68,31 @@
 - Phase 7: core/app focused tests (52 tests), workspace tests (110 tests), strict workspace Clippy, web WASM check, Chromium IndexedDB/Worker contract, formatting, and `git diff --check` passed.
 - Phase 8: shared Mock/Real conformance scenarios, workspace tests (112 tests), strict workspace Clippy, web WASM check, Chromium IndexedDB/Worker contract, formatting, and `git diff --check` passed.
 - Phase 9: shell syntax checks, `./scripts/check.sh` (112 tests plus formatting, strict Clippy, and both diff checks), script coverage review, and executable-bit inspection passed.
-- Phase-focused checks: phase 10 pending.
-- Full local verification: pending.
+- Phase 10: current `origin/main` reverified at the required base; package/dependency topology, full branch diff, third-party notice changes, hosted-CI absence, repository metadata, package names, and residual identity were audited. Authenticated `gh repo rename` syntax was verified without executing the rename.
+- Full local verification: `./scripts/verify.sh` passed all package tests, the 112-test workspace suite, XALEN-enabled tests and known answers, strict Clippy, provider-neutral and XALEN native/WASM checks, web WASM, Trunk main plus Worker build, XALEN dependency/license guard, notice-asset comparisons, Chromium IndexedDB/reload/atomicity/Worker contract, and staged/unstaged diff checks.
 
 ## Deferred work
 
 - GitHub repository rename and local remote update occur only after goal-branch review and merge.
 - Full preferences UI, session crash recovery, chart-editor UX, shared-record editing UX, and multi-session UI remain post-goal work.
+- Before the MVP schema freeze, revisit the public schema/version promise, supported development-data migration window, startup/session-recovery preference contract, default-location policy, and shared-`ChartRecord` edit/copy UX.
+
+## Post-merge repository transition
+
+After review and a fast-forward merge to `main`, verify `main`, then run:
+
+```bash
+gh repo rename mirabile --repo gracee3/astra --yes
+git remote set-url origin git@github.com:gracee3/mirabile.git
+git fetch origin
+git remote -v
+gh repo view gracee3/mirabile --json nameWithOwner,url
+git ls-remote --exit-code origin refs/heads/main
+git rev-parse HEAD origin/main
+```
+
+Do not run the external rename before the reviewed branch is merged. GitHub redirects the old URL,
+but local remotes should still be updated explicitly and the final main SHA compared.
 
 ## Blockers
 
@@ -82,4 +100,10 @@
 
 ## Final architectural state
 
-Pending implementation. This section will summarize the delivered workspace/session, startup, draft/save, application decomposition, configuration provenance, validation, conformance, and web-module state.
+- Identity: Mirabile owns five packages (`mirabile-core`, `mirabile-engine`, `mirabile-store`, `mirabile-app`, `mirabile-web`), database `mirabile`, and Mirabile calculation/Worker/browser identities. Source metadata targets `gracee3/mirabile`.
+- State: canonical `WorkspaceDocument` contains saved chart-definition membership/order, durable views/slots, workspace bindings, and promoted display configuration. Application-owned `WorkspaceSession` contains its working document, backing revision, active/selected chart, active view, drafts, temporary overrides, and dirty state.
+- Startup: one Application remains above repositories, catalog, runtime, available documents, and sessions. Empty storage is valid; default restore falls back to an ephemeral locationless Current Transits session and demo resources require explicit loading.
+- Charts: `ChartDraft` is non-canonical and calculates through payload semantics before identity/context is attached. Atomic `create_batch` saves distinct revision-one record and definition resources or neither, then turns the same session instance into a saved chart and dirties workspace membership.
+- Configuration and validation: effective values carry independent `ConfigurationLayer` and `ValueSource`. Core performs structural one-object validation; app hydration and candidate workspace commands perform catalog/session referential validation.
+- Application and presentation: public `RealApplication<R, C>` and frozen observation/latest-wins/last-good semantics remain intact behind responsibility modules. Shared scenarios constrain Mock and Real. Web source is separated into shell, dispatcher, library, rail, view host, and inspector modules.
+- Development: `scripts/check.sh` is the fast local loop and `scripts/verify.sh` is the complete handoff gate. No hosted CI was added.
