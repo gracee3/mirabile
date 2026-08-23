@@ -152,6 +152,7 @@ struct MockState {
     active_chart: Option<InstanceId>,
     selected_charts: Vec<InstanceId>,
     views: Vec<MockView>,
+    draft_chart_assignments: BTreeMap<(ViewInstanceId, ChartSlotId), InstanceId>,
     active_view: ViewInstanceId,
     active_aspect_set: ResourceId,
     workspace: MockWorkspaceState,
@@ -300,6 +301,7 @@ impl MockState {
             active_chart: Some(instances[1]),
             selected_charts: vec![instances[0], instances[2]],
             views: mock_views,
+            draft_chart_assignments: BTreeMap::new(),
             active_view: views[1],
             active_aspect_set: aspect_sets[0],
             workspace: MockWorkspaceState {
@@ -382,7 +384,7 @@ impl MockState {
                 title: active_view.title.clone(),
                 scene: active_view.scene.clone(),
                 computation: active_view.computation.clone(),
-                slots: active_view.slots.clone(),
+                slots: self.effective_slots(active_view),
             }),
             inspector: InspectorReadModel {
                 active_chart,
@@ -412,6 +414,22 @@ impl MockState {
             capabilities: self.capabilities(),
             notice: self.notice.clone(),
         }
+    }
+
+    fn effective_slots(&self, view: &MockView) -> Vec<ChartSlotAssignment> {
+        view.slots
+            .iter()
+            .cloned()
+            .map(|mut assignment| {
+                if let Some(chart) = self
+                    .draft_chart_assignments
+                    .get(&(view.view_id, assignment.slot.clone()))
+                {
+                    assignment.chart = Some(*chart);
+                }
+                assignment
+            })
+            .collect()
     }
 
     fn next_version(&self) -> AppResult<ProjectionVersion> {
@@ -544,6 +562,29 @@ impl MockState {
                     title: chart.title.clone(),
                     subtitle: chart.subtitle.clone(),
                 });
+                let promoted = self
+                    .draft_chart_assignments
+                    .iter()
+                    .filter_map(|((view_id, slot), chart)| {
+                        (*chart == instance_id).then_some((*view_id, slot.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                for (view_id, slot) in &promoted {
+                    if let Some(assignment) = self
+                        .views
+                        .iter_mut()
+                        .find(|view| view.view_id == *view_id)
+                        .and_then(|view| {
+                            view.slots
+                                .iter_mut()
+                                .find(|assignment| assignment.slot == *slot)
+                        })
+                    {
+                        assignment.chart = Some(instance_id);
+                    }
+                }
+                self.draft_chart_assignments
+                    .retain(|_, chart| *chart != instance_id);
                 self.workspace.dirty = true;
                 self.notice = Some(success(
                     "ChartRecord and ChartDefinition were created atomically",
@@ -558,6 +599,8 @@ impl MockState {
                 if !draft_exists {
                     return Err(not_found("chart draft"));
                 }
+                self.draft_chart_assignments
+                    .retain(|_, chart| *chart != instance_id);
                 self.close_chart(instance_id)?;
                 self.notice = Some(info(
                     "Chart draft canceled; no canonical resources were created",
@@ -606,9 +649,15 @@ impl MockState {
                 slot,
                 chart,
             } => {
-                if let Some(chart) = chart {
+                let chart_is_draft = if let Some(chart) = chart {
                     self.ensure_open(chart)?;
-                }
+                    self.charts.iter().any(|candidate| {
+                        candidate.instance_id == chart
+                            && candidate.persistence == ChartPersistence::Ephemeral
+                    })
+                } else {
+                    false
+                };
                 let view = self
                     .views
                     .iter_mut()
@@ -625,9 +674,20 @@ impl MockState {
                         "A required chart slot cannot be cleared",
                     ));
                 }
-                assignment.chart = chart;
-                self.workspace.dirty = true;
-                self.notice = Some(info("Chart slot assignment updated"));
+                if chart_is_draft {
+                    self.draft_chart_assignments.insert(
+                        (view_id, slot),
+                        chart.expect("draft assignment has a chart"),
+                    );
+                    self.notice =
+                        Some(info("Draft chart assigned as a session-only view override"));
+                } else {
+                    self.draft_chart_assignments
+                        .remove(&(view_id, slot.clone()));
+                    assignment.chart = chart;
+                    self.workspace.dirty = true;
+                    self.notice = Some(info("Durable chart slot assignment updated"));
+                }
                 Ok(())
             }
             AppIntent::SetWorkspaceAspectSet { resource_id } => {
@@ -1384,6 +1444,50 @@ mod tests {
             .find(|assignment| assignment.slot == outer)
             .expect("outer slot");
         assert_eq!(assigned.chart, Some(replacement));
+    }
+
+    #[test]
+    fn draft_slot_assignment_is_session_only_until_draft_save_promotes_it() {
+        let application = MockApplication::new();
+        let initial = ready(&application);
+        let view = initial.active_view.expect("active view");
+        let outer = view
+            .slots
+            .iter()
+            .find(|assignment| !assignment.required)
+            .expect("optional slot")
+            .slot
+            .clone();
+        let draft = initial
+            .workspace
+            .charts
+            .iter()
+            .find(|chart| chart.persistence == ChartPersistence::Ephemeral)
+            .expect("fixture draft")
+            .instance_id;
+
+        let preview = block_on(application.dispatch(AppIntent::AssignChartSlot {
+            view_id: view.view_id,
+            slot: outer.clone(),
+            chart: Some(draft),
+        }))
+        .expect("draft assignment succeeds");
+        assert!(!preview.workspace.document_dirty);
+        assert!(preview.active_view.is_some_and(|view| {
+            view.slots
+                .iter()
+                .any(|assignment| assignment.slot == outer && assignment.chart == Some(draft))
+        }));
+
+        let promoted =
+            block_on(application.dispatch(AppIntent::SaveChartDraft { instance_id: draft }))
+                .expect("draft save promotes assignment");
+        assert!(promoted.workspace.document_dirty);
+        assert!(promoted.active_view.is_some_and(|view| {
+            view.slots
+                .iter()
+                .any(|assignment| assignment.slot == outer && assignment.chart == Some(draft))
+        }));
     }
 
     #[test]

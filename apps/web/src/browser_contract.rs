@@ -223,6 +223,37 @@ async fn run_real_application_reload() -> Result<(), String> {
         .workspace
         .active_chart
         .ok_or_else(|| "Current Transits draft was not active".to_owned())?;
+    let first_workspace_save = fresh
+        .dispatch(AppIntent::SaveWorkspace)
+        .await
+        .map_err(message)?;
+    let current_transits_workspace = first_workspace_save
+        .workspace
+        .document_id
+        .ok_or_else(|| "first workspace save did not assign an identity".to_owned())?;
+    ensure(
+        first_workspace_save.workspace.document_revision == Some(Revision::INITIAL)
+            && !first_workspace_save.workspace.document_dirty,
+        "fresh IndexedDB session did not create WorkspaceDocument revision one",
+    )?;
+    let CanonicalResource::WorkspaceDocument(first_document) = empty_repository
+        .get(current_transits_workspace)
+        .await
+        .map_err(message)?
+        .ok_or_else(|| "first WorkspaceDocument was not persisted".to_owned())?
+    else {
+        return Err("first workspace save persisted the wrong resource kind".into());
+    };
+    ensure(
+        first_document.payload.chart_instances.is_empty()
+            && first_document.payload.views.iter().all(|view| {
+                !view
+                    .charts
+                    .values()
+                    .any(|chart| *chart == current_transits_instance)
+            }),
+        "first WorkspaceDocument leaked its Current Transits draft assignment",
+    )?;
     let saved_current_transits = fresh
         .dispatch(AppIntent::SaveChartDraft {
             instance_id: current_transits_instance,
@@ -236,6 +267,10 @@ async fn run_real_application_reload() -> Result<(), String> {
                     && matches!(chart.persistence, ChartPersistence::Saved { .. })
             }),
         "IndexedDB ChartDraft save did not publish a saved library chart",
+    )?;
+    ensure(
+        saved_current_transits.workspace.document_dirty,
+        "saving the draft did not promote membership and slot assignment into the working document",
     )?;
     ensure(
         empty_repository
@@ -252,7 +287,58 @@ async fn run_real_application_reload() -> Result<(), String> {
                 == 1,
         "IndexedDB ChartDraft save did not atomically create one record and one definition",
     )?;
+    let promoted_workspace = fresh
+        .dispatch(AppIntent::SaveWorkspace)
+        .await
+        .map_err(message)?;
+    ensure(
+        promoted_workspace
+            .workspace
+            .document_revision
+            .map(Revision::get)
+            == Some(2)
+            && !promoted_workspace.workspace.document_dirty,
+        "promoted Current Transits workspace was not saved as revision two",
+    )?;
+    let CanonicalResource::WorkspaceDocument(promoted_document) = empty_repository
+        .get(current_transits_workspace)
+        .await
+        .map_err(message)?
+        .ok_or_else(|| "promoted WorkspaceDocument was not persisted".to_owned())?
+    else {
+        return Err("promoted workspace save persisted the wrong resource kind".into());
+    };
+    ensure(
+        promoted_document.payload.chart_instances.len() == 1
+            && promoted_document
+                .payload
+                .views
+                .iter()
+                .flat_map(|view| view.charts.values())
+                .any(|chart| *chart == current_transits_instance),
+        "saved ChartDraft assignment was not promoted into the durable WorkspaceDocument",
+    )?;
     drop(fresh);
+
+    let promoted_runtime = WorkerCalculationRuntime::xalen();
+    let promoted_reload = RealApplication::indexed_db_with_runtime_and_policy(
+        &database_name,
+        promoted_runtime,
+        StartupPolicy::OpenWorkspace(current_transits_workspace),
+    );
+    let promoted_restored = settle_initialization(&promoted_reload).await?;
+    ensure(
+        promoted_restored.workspace.charts.iter().any(|chart| {
+            chart.instance_id == current_transits_instance
+                && matches!(chart.persistence, ChartPersistence::Saved { .. })
+        }) && promoted_restored.active_view.as_ref().is_some_and(|view| {
+            view.slots
+                .iter()
+                .any(|slot| slot.chart == Some(current_transits_instance))
+        }),
+        "IndexedDB reload did not restore the promoted chart and slot assignment",
+    )?;
+    drop(promoted_reload);
 
     for resource in apparent_place_demo_resources() {
         empty_repository.create(resource).await.map_err(message)?;

@@ -51,14 +51,19 @@ explicit tests or a future user command. Editor controls cannot accept edits unt
 `Ready`. An open/hydration failure enters `Error` with initialization context and never falls back
 to implicit session/in-memory persistence.
 
-Opening/closing saved charts, slot assignment, workspace bindings, and promoted display overrides
-change the session's durable document projection and mark it dirty. They do not write immediately.
-`SaveWorkspace` explicitly saves the next `WorkspaceDocument` revision. Activating/selecting charts,
-changing the active view, and temporary display overrides are session-only and never dirty the
-document. Promotion copies a temporary override into the durable view configuration and marks the
-document dirty. Reload restores only the last explicitly saved document; current navigation and
-unpromoted overrides are intentionally lost. `ProjectionVersion` and calculation cache remain
-application-instance-local and are never written to IndexedDB.
+Opening/closing saved charts, saved-chart slot assignment, workspace bindings, and promoted display
+overrides change the session's durable document projection and mark it dirty. They do not write
+immediately. Draft chart slot assignments live in `WorkspaceSession::draft_chart_assignments` and
+override the effective view without touching or dirtying `WorkspaceDocument`. Atomic chart save
+promotes those assignments only after the same instance becomes a saved chart; cancel removes them.
+
+For `Unsaved` backing, `SaveWorkspace` creates a new `WorkspaceDocument` at revision one. Later
+saves require a dirty document and write the next revision. A durable-only referential check runs
+immediately before persistence and rejects any slot assignment not backed by the document's saved
+chart membership. Activating/selecting charts, changing the active view, draft overlays, and
+temporary display overrides are session-only. Reload restores only the last explicitly saved
+document; navigation and unpromoted overlays are intentionally lost. `ProjectionVersion` and the
+calculation cache remain application-instance-local and are never written to IndexedDB.
 
 Repository writes accept a fully versioned resource and reject missing, duplicate, skipped, or stale revisions. Sync will later append operations after a successful local transaction; ordinary local writes must not wait on a server.
 
@@ -85,8 +90,10 @@ delete conflicts, tombstone reads, permanent stable IDs, and transaction rollbac
 history-key collision. Passing requires the machine-readable `MIRABILE_BROWSER_CONTRACT:PASS` DOM
 marker; this is local validation, not hosted CI.
 
-The same harness also runs an isolated real-application database. After explicitly loading the
-demo bundle, one `RealApplication` hydrates,
+The same harness also runs an isolated real-application database. It first saves a fresh Current
+Transits session as workspace revision one without leaking its draft assignment, atomically saves
+the chart, promotes and saves the assignment as revision two, and reloads it. After explicitly
+loading the demo bundle, one `RealApplication` hydrates,
 opens and activates Chart B, previews and commits Standard AspectSet revision 2, then is dropped. A
 second instance opens the same database and must restore Chart B, the committed AspectSet revision,
 the persisted `WorkspaceDocument`, and a newly reconstructed fresh Scene. The unique database name and

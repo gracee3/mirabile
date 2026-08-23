@@ -12,36 +12,31 @@ pub enum Command {
         expected_revision: Revision,
         resource: CanonicalResource,
     },
+    /// Mutates the application-selected workspace session; no canonical workspace identity is
+    /// required until an explicit persistence intent.
     OpenSavedChart {
-        workspace: ResourceId,
         definition: ResourceId,
         instance_id: InstanceId,
     },
     CloseChart {
-        workspace: ResourceId,
         instance_id: InstanceId,
     },
     SetActiveChart {
-        workspace: ResourceId,
         instance_id: Option<InstanceId>,
     },
     SetChartSelection {
-        workspace: ResourceId,
         instance_id: InstanceId,
         selected: bool,
     },
     SetActiveView {
-        workspace: ResourceId,
         view: Option<ViewInstanceId>,
     },
     AssignChartSlot {
-        workspace: ResourceId,
         view: ViewInstanceId,
         slot: ChartSlotId,
         chart: Option<InstanceId>,
     },
     SetWorkspaceAspectSet {
-        workspace: ResourceId,
         aspect_set: ResourceId,
     },
 }
@@ -51,21 +46,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_workspace_mutations_have_typed_portable_commands() {
-        let workspace = ResourceId::new();
+    fn session_mutations_have_typed_portable_commands_without_canonical_workspace_identity() {
         let instance_id = InstanceId::new();
         let commands = vec![
-            Command::CloseChart {
-                workspace,
-                instance_id,
-            },
+            Command::CloseChart { instance_id },
             Command::SetChartSelection {
-                workspace,
                 instance_id,
                 selected: true,
             },
             Command::AssignChartSlot {
-                workspace,
                 view: ViewInstanceId::new(),
                 slot: ChartSlotId::new("radix").expect("slot ID is valid"),
                 chart: Some(instance_id),
@@ -73,6 +62,7 @@ mod tests {
         ];
 
         let json = serde_json::to_string(&commands).expect("commands serialize");
+        assert!(!json.contains("workspace"));
         let decoded: Vec<Command> = serde_json::from_str(&json).expect("commands deserialize");
         assert_eq!(decoded, commands);
     }

@@ -20,7 +20,6 @@ pub enum StartupPolicy {
     CurrentTransits,
     BlankWorkspace,
     OpenWorkspace(ResourceId),
-    OpenWorkspaces(Vec<ResourceId>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,16 +130,21 @@ pub(crate) fn current_transits_session(
             document: ResourceBinding::Inline {
                 value: view_document,
             },
-            charts: BTreeMap::from([(slot.clone(), chart_instance)]),
+            charts: BTreeMap::new(),
             overrides: ViewOverrides::default(),
         }],
-        profile: session_profile(slot),
+        profile: session_profile(slot.clone()),
     };
     let mut session = WorkspaceSession::unsaved(document);
     session.draft_charts.push(WorkspaceSessionDraftChart {
         instance_id: chart_instance,
         draft,
     });
+    session
+        .draft_chart_assignments
+        .entry(view_id)
+        .or_default()
+        .insert(slot, chart_instance);
     session.active_chart = Some(chart_instance);
     session.active_view = Some(view_id);
     session
@@ -280,8 +284,16 @@ mod tests {
         let session =
             current_transits_session(946_728_000_000, StartupCalculationProfile::Baseline);
         assert!(session.document.chart_instances.is_empty());
+        assert!(session.document.views[0].charts.is_empty());
         assert!(!session.document_dirty);
         assert_eq!(session.draft_charts.len(), 1);
+        assert_eq!(
+            session.effective_chart_assignment(
+                session.active_view.expect("current view"),
+                &ChartSlotId::new("primary").expect("built-in slot ID"),
+            ),
+            session.active_chart,
+        );
         let draft = &session.draft_charts[0].draft;
         assert_eq!(draft.record.source.source_type, SourceType::SystemClock);
         assert_eq!(draft.record.location, None);

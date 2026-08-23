@@ -33,8 +33,8 @@ use crate::{
     ChartSlotAssignment, CommandCapability, DraftState, InlineCalculationRuntime,
     InspectorReadModel, LibraryChartSummary, LibraryReadModel, OpenChartSummary, ProjectionVersion,
     ResourceBindingSummary, ResourceEditorReadModel, StartupCalculationProfile, StartupPolicy,
-    ViewComputationState, ViewReadModel, ViewSummary, WorkspaceReadModel, WorkspaceSession,
-    blank_workspace_session, current_transits_session, current_unix_millis,
+    ViewComputationState, ViewReadModel, ViewSummary, WorkspaceDocumentBacking, WorkspaceReadModel,
+    WorkspaceSession, blank_workspace_session, current_transits_session, current_unix_millis,
     workspace_commands::apply_workspace_command,
 };
 #[cfg(feature = "xalen-backend")]

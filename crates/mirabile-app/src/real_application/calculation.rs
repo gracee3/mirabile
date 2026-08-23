@@ -229,6 +229,24 @@ where
         else {
             return Ok(());
         };
+        let has_chart_assignment = state
+            .session
+            .as_ref()
+            .is_some_and(|session| !session.effective_chart_assignments(view_id).is_empty());
+        if !has_chart_assignment {
+            let error = AppError::new(
+                AppErrorKind::ViewComputation,
+                "The active view has no assigned chart",
+            );
+            let runtime = state.views.entry(view_id).or_default();
+            runtime.expected = None;
+            runtime.computation = ViewComputationState::Failed(error.clone());
+            state.notice = Some(AppNotice {
+                kind: AppNoticeKind::Info,
+                message: error.message,
+            });
+            return Ok(());
+        }
         let (prepared, plan) = self.prepare_view_calculation(state, view_id)?;
         let request_id = state.next_request_id;
         state.next_request_id = request_id.next().map_err(|error| {
@@ -303,17 +321,14 @@ where
         state: &RealState,
         view_id: ViewInstanceId,
     ) -> AppResult<(PreparedCalculation, ViewCalculationPlan)> {
-        let workspace = state
-            .session
-            .as_ref()
-            .ok_or_else(|| {
-                AppError::new(
-                    AppErrorKind::ViewComputation,
-                    "No workspace session is active",
-                )
-            })?
-            .document
-            .clone();
+        let session = state.session.as_ref().ok_or_else(|| {
+            AppError::new(
+                AppErrorKind::ViewComputation,
+                "No workspace session is active",
+            )
+        })?;
+        let workspace = session.document.clone();
+        let chart_assignments = session.effective_chart_assignments(view_id);
         let view = workspace
             .views
             .iter()
@@ -333,8 +348,8 @@ where
             .chart_slots
             .iter()
             .filter(|slot| slot.required)
-            .find_map(|slot| view.charts.get(&slot.id).copied())
-            .or_else(|| view.charts.values().next().copied())
+            .find_map(|slot| chart_assignments.get(&slot.id).copied())
+            .or_else(|| chart_assignments.values().next().copied())
             .ok_or_else(|| {
                 AppError::new(
                     AppErrorKind::ViewComputation,

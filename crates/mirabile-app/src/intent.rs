@@ -39,7 +39,7 @@ pub enum AppIntent {
     SetWorkspaceAspectSet {
         resource_id: ResourceId,
     },
-    /// Persists the session's dirty durable projection as the next `WorkspaceDocument` revision.
+    /// Creates revision one for an unsaved session or persists the next dirty saved revision.
     SaveWorkspace,
     /// Applies a session-only point visibility override to the active view.
     SetTemporaryPointHidden {

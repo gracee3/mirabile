@@ -149,6 +149,7 @@ impl RealState {
 
     pub(super) fn view_read_model(&self, view_id: ViewInstanceId) -> AppResult<ViewReadModel> {
         let workspace = self.workspace().expect("read model checked workspace");
+        let session = self.session()?;
         let view = workspace
             .views
             .iter()
@@ -173,7 +174,7 @@ impl RealState {
                 .chart_slots
                 .into_iter()
                 .map(|slot| ChartSlotAssignment {
-                    chart: view.charts.get(&slot.id).copied(),
+                    chart: session.effective_chart_assignment(view_id, &slot.id),
                     slot: slot.id,
                     label: slot.label,
                     required: slot.required,
@@ -239,12 +240,12 @@ impl RealState {
         let cancel_chart_draft = save_chart_draft.clone();
         let save_workspace = self.session.as_ref().map_or_else(
             || disabled("No workspace session"),
-            |session| {
-                if session.document_dirty && self.workspace.is_some() {
+            |session| match session.backing {
+                super::WorkspaceDocumentBacking::Unsaved => Availability::Enabled,
+                super::WorkspaceDocumentBacking::Saved { .. } if session.document_dirty => {
                     Availability::Enabled
-                } else if self.workspace.is_none() {
-                    disabled("This session has no saved WorkspaceDocument backing")
-                } else {
+                }
+                super::WorkspaceDocumentBacking::Saved { .. } => {
                     disabled("The workspace has no durable changes")
                 }
             },

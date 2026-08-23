@@ -5,7 +5,7 @@
 - Base: `63f081b3c9b0becf5238bdbe2cf3b6964bf09f85` (`origin/main`)
 - Branch: `goal/mirabile-consolidation`
 - Worktree: `/home/emmy/worktrees/mirabile-consolidation`
-- Current phase: Complete - validated and ready for branch review
+- Current phase: Complete - final workspace/session correction validated for review
 - Delivery: unmerged goal branch; external repository rename remains post-merge
 
 ## Frozen architecture
@@ -38,8 +38,9 @@
 - Phase 2 replaced the foundation-era README narrative with the real local-first Application, IndexedDB, Worker, provider-neutral contract, pinned XALEN default, current limitations, and local-only validation story. The original implementation plan is explicitly historical.
 - Eight accepted ADRs now cover record/definition separation, revisioned resources, binding modes, application/read-model authority, document/session lifetimes, calculation isolation, XALEN/Swiss distribution boundaries, and pre-MVP compatibility.
 - Phase 3 replaced the mixed canonical `Workspace` payload with `WorkspaceDocument`: saved chart-definition membership/order, durable views/slot assignments, workspace bindings, and promoted display overrides only.
-- Application-owned `WorkspaceSession` now holds the document working copy plus active/selected chart, active view, temporary view overrides, backing revision, and dirty state. Navigation never dirties or persists the document.
-- Opening/closing saved charts, slot assignment, workspace binding changes, and promotion mark the working document dirty. `SaveWorkspace` alone writes the next canonical revision. A temporary hidden-point override proves session-only behavior and promotion into durable configuration.
+- Application-owned `WorkspaceSession` now holds the document working copy plus active/selected chart, active view, draft chart-slot overlays, temporary view overrides, backing revision, and dirty state. Navigation and draft preview never dirty or persist the document.
+- Workspace commands target the application-selected session and no longer require a canonical workspace ID. Opening/closing saved charts, saved-chart slot assignment, workspace binding changes, and promotion mark the working document dirty. `SaveWorkspace` creates revision one for `Unsaved` backing and alone writes later canonical revisions.
+- Draft chart/view assignments remain strictly session-side and drive effective projection/calculation. Atomic chart save promotes matching assignments only after the instance has a canonical `ChartDefinition`; cancel discards them. A durable-only pre-save validator rejects every unknown or draft chart instance.
 - The authority/lifetime model is documented independently: Canonical/Derived authority is separate from Library/Saved workspace/Session/Draft/Cache/Sync metadata lifetime.
 - Phase 4 removed automatic canonical demo installation. `StartupPolicy` now models restore, Current Transits, blank, and explicit workspace opening; restore currently falls back to Current Transits because recovery is intentionally deferred.
 - Empty memory and IndexedDB repositories initialize successfully and remain canonically empty. The explicit `demo_resources()` bundles are loaded only by tests or an eventual user-facing demo command.
@@ -48,13 +49,14 @@
 - `CalculationEngine::resolve` prepares payload-only semantics independently of resource identity. Canonical calculations attach resource revisions afterward; draft calculations attach an explicitly non-canonical `SnapshotContext`.
 - Phase 5 completed the `ChartDraft` lifecycle: start without persistence, assign to a view for payload-only preview, cancel without writes, or save to distinct revision-one `ChartRecord` and `ChartDefinition` resources.
 - `ResourceRepository::create_batch` is the narrow local atomicity primitive. Memory prevalidates and preflights before mutation; IndexedDB uses one current-plus-history read-write transaction. Failure retains the application draft and publishes neither half.
-- Successful chart save replaces the session draft with the same instance as a saved definition reference, updates the library, preserves the record/definition boundary, and dirties workspace membership for an explicit workspace save. Multiple future definitions may still share one record.
+- Successful chart save replaces the session draft with the same instance as a saved definition reference, promotes its session slot assignments, updates the library, preserves the record/definition boundary, and dirties workspace membership for an explicit workspace save. Multiple future definitions may still share one record.
 - Phase 6 retained the public `RealApplication<R, C>` facade while splitting private responsibilities into catalog, hydration, workspace, editing, calculation, configuration, projection, and state modules. Existing async observation, latest-wins, last-good Scene, startup, draft, and persistence behavior is unchanged.
 - Phase 7 replaced the conflated `ResolutionLayer` with independent `ConfigurationLayer` precedence and `ValueSource` material provenance. Follow/Pinned/Inline semantics and exact resolved revisions remain explicit.
-- Core `DomainValidate` remains one-object structural validation. Application referential validation now resolves bindings and checks canonical chart sources, session identities, and resolved view-slot assignments during hydration and before workspace command state becomes authoritative.
+- Core `DomainValidate` remains one-object structural validation. Application referential validation resolves bindings and checks canonical chart sources, session identities, and effective view-slot assignments during hydration and before workspace command state becomes authoritative. Persistence repeats a durable-only referential check with no access to draft overlays.
 - Phase 8 added one reusable scenario suite that runs against both `MockApplication` and `RealApplication`: initialize/settle, projection monotonicity, activation/selection, open/close repair, workspace dirty/save, temporary override promotion, and last-good refresh behavior.
 - The Leptos source now has explicit shell, async dispatcher, library, workspace rail, view host, and inspector modules. Normal presentation remains dependent on `mirabile-app`; the Real conformance fixture uses `mirabile-store` only as a native dev-dependency.
 - Phase 9 added executable `scripts/check.sh` and `scripts/verify.sh`. The fast command runs formatting, workspace tests, strict Clippy, and staged/unstaged diff checks; the full command enumerates every required package, XALEN, native/WASM, Trunk main/Worker, dependency/license, notice, Chromium, and diff check with prerequisite diagnostics.
+- Final review correction made fresh unsaved sessions first-saveable, removed canonical workspace identity from session commands, isolated draft slot assignments in session overlays, promoted those overlays only after atomic chart save, and added a durable-only pre-save referential gate. The unimplemented plural startup policy was removed rather than silently truncating requested workspace IDs.
 
 ## Validation status
 
@@ -69,7 +71,8 @@
 - Phase 8: shared Mock/Real conformance scenarios, workspace tests (112 tests), strict workspace Clippy, web WASM check, Chromium IndexedDB/Worker contract, formatting, and `git diff --check` passed.
 - Phase 9: shell syntax checks, `./scripts/check.sh` (112 tests plus formatting, strict Clippy, and both diff checks), script coverage review, and executable-bit inspection passed.
 - Phase 10: current `origin/main` reverified at the required base; package/dependency topology, full branch diff, third-party notice changes, hosted-CI absence, repository metadata, package names, and residual identity were audited. Authenticated `gh repo rename` syntax was verified without executing the rename.
-- Full local verification: `./scripts/verify.sh` passed all package tests, the 112-test workspace suite, XALEN-enabled tests and known answers, strict Clippy, provider-neutral and XALEN native/WASM checks, web WASM, Trunk main plus Worker build, XALEN dependency/license guard, notice-asset comparisons, Chromium IndexedDB/reload/atomicity/Worker contract, and staged/unstaged diff checks.
+- Final correction focused validation: `mirabile-app` (40 default tests), `mirabile-web` (16 tests), the 118-test XALEN-enabled workspace suite, strict workspace Clippy, formatting, expanded Chromium first-save/promotion/reload contract, and diff checks passed.
+- Full local verification after the correction: `./scripts/verify.sh` passed all package tests, the 118-test workspace suite, XALEN-enabled tests and known answers, strict Clippy, provider-neutral and XALEN native/WASM checks, web WASM, Trunk main plus Worker build, XALEN dependency/license guard, notice-asset comparisons, Chromium IndexedDB/reload/atomicity/Worker contract, and staged/unstaged diff checks.
 
 ## Deferred work
 
@@ -101,9 +104,9 @@ but local remotes should still be updated explicitly and the final main SHA comp
 ## Final architectural state
 
 - Identity: Mirabile owns five packages (`mirabile-core`, `mirabile-engine`, `mirabile-store`, `mirabile-app`, `mirabile-web`), database `mirabile`, and Mirabile calculation/Worker/browser identities. Source metadata targets `gracee3/mirabile`.
-- State: canonical `WorkspaceDocument` contains saved chart-definition membership/order, durable views/slots, workspace bindings, and promoted display configuration. Application-owned `WorkspaceSession` contains its working document, backing revision, active/selected chart, active view, drafts, temporary overrides, and dirty state.
-- Startup: one Application remains above repositories, catalog, runtime, available documents, and sessions. Empty storage is valid; default restore falls back to an ephemeral locationless Current Transits session and demo resources require explicit loading.
-- Charts: `ChartDraft` is non-canonical and calculates through payload semantics before identity/context is attached. Atomic `create_batch` saves distinct revision-one record and definition resources or neither, then turns the same session instance into a saved chart and dirties workspace membership.
+- State: canonical `WorkspaceDocument` contains saved chart-definition membership/order, durable views/saved-chart slots, workspace bindings, and promoted display configuration. Application-owned `WorkspaceSession` contains its working document, backing revision, active/selected chart, active view, drafts, draft slot overlays, temporary overrides, and dirty state. Durable pre-save validation cannot see or serialize draft overlays.
+- Startup: one Application remains above repositories, catalog, runtime, available documents, and sessions. Empty storage is valid; default restore falls back to an ephemeral locationless Current Transits session and demo resources require explicit loading. An unsaved session can use library charts and creates a new `WorkspaceDocument` revision one through explicit Save Workspace.
+- Charts: `ChartDraft` is non-canonical and calculates through payload semantics before identity/context is attached. Atomic `create_batch` saves distinct revision-one record and definition resources or neither, then turns the same session instance into a saved chart, promotes its session slot overlays, and dirties workspace membership.
 - Configuration and validation: effective values carry independent `ConfigurationLayer` and `ValueSource`. Core performs structural one-object validation; app hydration and candidate workspace commands perform catalog/session referential validation.
 - Application and presentation: public `RealApplication<R, C>` and frozen observation/latest-wins/last-good semantics remain intact behind responsibility modules. Shared scenarios constrain Mock and Real. Web source is separated into shell, dispatcher, library, rail, view host, and inspector modules.
 - Development: `scripts/check.sh` is the fast local loop and `scripts/verify.sh` is the complete handoff gate. No hosted CI was added.

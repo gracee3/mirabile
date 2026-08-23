@@ -552,6 +552,322 @@ fn genuinely_empty_repository_starts_ephemeral_current_transits_without_writes()
 }
 
 #[test]
+fn fresh_unsaved_session_creates_workspace_revision_one_without_persisting_draft_assignments() {
+    let repository = MemoryRepository::default();
+    let application = RealApplication::with_repository(repository.clone());
+    let projection = ready(&application);
+    let draft_id = projection
+        .workspace
+        .active_chart
+        .expect("Current Transits draft");
+
+    assert!(
+        projection
+            .availability(AppAction::SaveWorkspace)
+            .is_enabled(),
+        "an unsaved session is first-saveable even before a durable mutation"
+    );
+    let saved = block_on(application.dispatch(AppIntent::SaveWorkspace))
+        .expect("first workspace save succeeds");
+    let workspace_id = saved
+        .workspace
+        .document_id
+        .expect("first save assigns canonical identity");
+    assert_eq!(
+        saved.workspace.document_revision.map(Revision::get),
+        Some(1)
+    );
+    assert!(!saved.workspace.document_dirty);
+    assert_eq!(repository.current_count(), 1);
+
+    let CanonicalResource::WorkspaceDocument(document) = block_on(repository.get(workspace_id))
+        .expect("workspace read")
+        .expect("workspace exists")
+    else {
+        panic!("first save creates a WorkspaceDocument")
+    };
+    assert!(document.payload.chart_instances.is_empty());
+    assert!(
+        document
+            .payload
+            .views
+            .iter()
+            .all(|view| !view.charts.values().any(|chart| *chart == draft_id))
+    );
+    drop(application);
+
+    let reloaded = RealApplication::with_repository_and_policy(
+        repository,
+        StartupPolicy::OpenWorkspace(workspace_id),
+    );
+    let restored = block_on(reloaded.initialize()).expect("saved empty workspace initializes");
+    assert_eq!(restored.status, ApplicationStatus::Ready);
+    assert_eq!(restored.workspace.document_id, Some(workspace_id));
+    assert!(restored.workspace.charts.is_empty());
+    assert!(restored.active_view.is_some_and(|view| {
+        view.slots.iter().all(|slot| slot.chart.is_none())
+            && matches!(view.computation, ViewComputationState::Failed(_))
+    }));
+}
+
+#[test]
+fn fresh_unsaved_session_can_open_and_assign_saved_library_chart_before_first_save() {
+    let repository = MemoryRepository::default();
+    ensure_demo(&repository);
+    let application = RealApplication::with_repository_and_policy(
+        repository.clone(),
+        StartupPolicy::CurrentTransits,
+    );
+    let initial = ready(&application);
+    let view_id = initial
+        .workspace
+        .active_view
+        .expect("Current Transits view");
+    let required_slot = initial
+        .active_view
+        .as_ref()
+        .expect("active view")
+        .slots
+        .iter()
+        .find(|slot| slot.required)
+        .expect("required slot")
+        .slot
+        .clone();
+    let opened = block_on(application.dispatch(AppIntent::OpenChart {
+        definition_id: demo_ids().chart_definition_b,
+    }))
+    .expect("saved library chart opens in an unsaved session");
+    let saved_instance = opened
+        .workspace
+        .active_chart
+        .expect("saved chart is active");
+    assert_eq!(opened.workspace.document_id, None);
+    assert!(opened.workspace.document_dirty);
+
+    let assigning = block_on(application.dispatch(AppIntent::AssignChartSlot {
+        view_id,
+        slot: required_slot,
+        chart: Some(saved_instance),
+    }))
+    .expect("saved chart can replace a draft slot overlay");
+    let assigned = block_on(application.wait_for_update(assigning.version))
+        .expect("saved chart preview settles");
+    assert!(assigned.active_view.is_some_and(|view| {
+        view.slots
+            .iter()
+            .any(|slot| slot.required && slot.chart == Some(saved_instance))
+    }));
+
+    let saved = block_on(application.dispatch(AppIntent::SaveWorkspace))
+        .expect("unsaved session creates its first WorkspaceDocument");
+    let workspace_id = saved.workspace.document_id.expect("new workspace identity");
+    let CanonicalResource::WorkspaceDocument(document) = block_on(repository.get(workspace_id))
+        .expect("workspace read")
+        .expect("workspace exists")
+    else {
+        panic!("saved resource is a WorkspaceDocument")
+    };
+    assert_eq!(document.revision, Revision::INITIAL);
+    assert_eq!(document.payload.chart_instances.len(), 1);
+    assert!(
+        document.payload.views[0]
+            .charts
+            .values()
+            .all(|chart| *chart == saved_instance)
+    );
+    assert_eq!(
+        block_on(repository.list(Some(ResourceKind::WorkspaceDocument)))
+            .expect("workspace list")
+            .len(),
+        2,
+        "the demo workspace and the newly saved session remain distinct"
+    );
+}
+
+#[test]
+fn closing_last_saved_chart_repairs_required_slot_with_draft_session_overlay() {
+    let repository = MemoryRepository::default();
+    ensure_demo(&repository);
+    let application =
+        RealApplication::with_repository_and_policy(repository, StartupPolicy::CurrentTransits);
+    let initial = ready(&application);
+    let draft_id = initial
+        .workspace
+        .active_chart
+        .expect("Current Transits draft");
+    let view_id = initial.workspace.active_view.expect("active view");
+    let required_slot = initial
+        .active_view
+        .as_ref()
+        .expect("active view")
+        .slots
+        .iter()
+        .find(|slot| slot.required)
+        .expect("required slot")
+        .slot
+        .clone();
+    let opened = block_on(application.dispatch(AppIntent::OpenChart {
+        definition_id: demo_ids().chart_definition_b,
+    }))
+    .expect("saved chart opens");
+    let saved_id = opened
+        .workspace
+        .active_chart
+        .expect("saved chart is active");
+    block_on(application.dispatch(AppIntent::AssignChartSlot {
+        view_id,
+        slot: required_slot.clone(),
+        chart: Some(saved_id),
+    }))
+    .expect("saved assignment replaces draft overlay");
+
+    let closing = block_on(application.dispatch(AppIntent::CloseChart {
+        instance_id: saved_id,
+    }))
+    .expect("last saved chart closes while draft remains");
+    assert_eq!(closing.workspace.active_chart, Some(draft_id));
+    assert!(closing.active_view.is_some_and(|view| {
+        view.slots
+            .iter()
+            .any(|slot| slot.slot == required_slot && slot.chart == Some(draft_id))
+    }));
+    let state = application.state.borrow();
+    let session = state.session.as_ref().expect("session");
+    assert!(session.document.chart_instances.is_empty());
+    assert!(session.document.views[0].charts.is_empty());
+    assert_eq!(
+        session.effective_chart_assignment(view_id, &required_slot),
+        Some(draft_id)
+    );
+}
+
+#[test]
+fn draft_slot_overlay_never_enters_saved_workspace_and_reload_restores_durable_assignment() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    let initial = ready(&application);
+    let view_id = initial.workspace.active_view.expect("active view");
+    let required_slot = initial
+        .active_view
+        .as_ref()
+        .expect("active view")
+        .slots
+        .iter()
+        .find(|slot| slot.required)
+        .expect("required slot")
+        .slot
+        .clone();
+    let mut fixture =
+        current_transits_session(946_728_000_000, StartupCalculationProfile::Baseline);
+    let draft = fixture
+        .draft_charts
+        .pop()
+        .expect("Current Transits provides a draft")
+        .draft;
+    let started = block_on(application.dispatch(AppIntent::StartChartDraft {
+        draft: Box::new(draft),
+    }))
+    .expect("draft starts");
+    let draft_id = started.workspace.active_chart.expect("draft is active");
+    let previewing = block_on(application.dispatch(AppIntent::AssignChartSlot {
+        view_id,
+        slot: required_slot.clone(),
+        chart: Some(draft_id),
+    }))
+    .expect("draft receives session-side slot overlay");
+    assert!(
+        !previewing.workspace.document_dirty,
+        "draft assignment alone does not change the durable document"
+    );
+    let preview =
+        block_on(application.wait_for_update(previewing.version)).expect("draft preview settles");
+    assert!(preview.active_view.is_some_and(|view| {
+        view.slots
+            .iter()
+            .any(|slot| slot.slot == required_slot && slot.chart == Some(draft_id))
+    }));
+
+    let dirty = block_on(application.dispatch(AppIntent::SetWorkspaceAspectSet {
+        resource_id: demo_ids().aspect_set_tight,
+    }))
+    .expect("unrelated durable mutation succeeds while draft overlay is active");
+    block_on(application.wait_for_update(dirty.version)).expect("preview settles");
+    block_on(application.dispatch(AppIntent::SaveWorkspace))
+        .expect("workspace saves without serializing the draft overlay");
+
+    let CanonicalResource::WorkspaceDocument(document) =
+        block_on(repository.get(demo_ids().workspace))
+            .expect("workspace read")
+            .expect("workspace exists")
+    else {
+        panic!("workspace resource")
+    };
+    assert_eq!(document.revision.get(), 2);
+    assert_eq!(
+        document.payload.views[0].charts.get(&required_slot),
+        Some(&demo_ids().chart_instance_a)
+    );
+    assert!(
+        !document.payload.views[0]
+            .charts
+            .values()
+            .any(|chart| *chart == draft_id)
+    );
+    drop(application);
+
+    let reloaded = demo_application(repository);
+    let restored = ready(&reloaded);
+    assert!(restored.active_view.is_some_and(|view| {
+        view.slots.iter().any(|slot| {
+            slot.slot == required_slot && slot.chart == Some(demo_ids().chart_instance_a)
+        })
+    }));
+}
+
+#[test]
+fn pre_save_validation_rejects_unknown_chart_instance_in_durable_view() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    let initial = ready(&application);
+    let view_id = initial.workspace.active_view.expect("active view");
+    let required_slot = initial
+        .active_view
+        .expect("active view")
+        .slots
+        .into_iter()
+        .find(|slot| slot.required)
+        .expect("required slot")
+        .slot;
+    let unknown = InstanceId::new();
+    {
+        let mut state = application.state.borrow_mut();
+        let session = state.session.as_mut().expect("session");
+        session
+            .document
+            .views
+            .iter_mut()
+            .find(|view| view.id == view_id)
+            .expect("view")
+            .charts
+            .insert(required_slot, unknown);
+        session.mark_document_dirty();
+    }
+
+    let error = block_on(application.dispatch(AppIntent::SaveWorkspace))
+        .expect_err("unknown durable chart reference is rejected before repository save");
+    assert_eq!(error.kind, AppErrorKind::InvalidIntent);
+    assert!(error.message.contains("durable references are invalid"));
+    let CanonicalResource::WorkspaceDocument(document) =
+        block_on(repository.get(demo_ids().workspace))
+            .expect("workspace read")
+            .expect("workspace exists")
+    else {
+        panic!("workspace resource")
+    };
+    assert_eq!(document.revision, Revision::INITIAL);
+}
+
+#[test]
 fn initialization_separates_structural_from_catalog_referential_validation() {
     let ids = demo_ids();
     let repository = MemoryRepository::default();
@@ -654,7 +970,7 @@ fn chart_draft_previews_then_atomically_creates_record_and_definition() {
 
     let previewing = block_on(application.dispatch(AppIntent::AssignChartSlot {
         view_id,
-        slot: required_slot,
+        slot: required_slot.clone(),
         chart: Some(instance_id),
     }))
     .expect("draft can be assigned for preview");
@@ -663,6 +979,19 @@ fn chart_draft_previews_then_atomically_creates_record_and_definition() {
     assert!(preview.active_view.is_some_and(|view| {
         view.scene.is_some() && view.computation == ViewComputationState::Fresh
     }));
+    {
+        let state = application.state.borrow();
+        let session = state.session.as_ref().expect("session");
+        assert_ne!(
+            session.document.views[0].charts.get(&required_slot),
+            Some(&instance_id),
+            "draft preview does not mutate the durable document"
+        );
+        assert_eq!(
+            session.effective_chart_assignment(view_id, &required_slot),
+            Some(instance_id)
+        );
+    }
 
     let saved = block_on(application.dispatch(AppIntent::SaveChartDraft { instance_id }))
         .expect("chart saves atomically");
@@ -676,6 +1005,16 @@ fn chart_draft_previews_then_atomically_creates_record_and_definition() {
         panic!("saved draft projects a canonical definition")
     };
     assert!(saved.workspace.document_dirty);
+    {
+        let state = application.state.borrow();
+        let session = state.session.as_ref().expect("session");
+        assert_eq!(
+            session.document.views[0].charts.get(&required_slot),
+            Some(&instance_id),
+            "saving the draft promotes its slot assignment"
+        );
+        assert!(session.draft_chart_assignments.is_empty());
+    }
     assert_eq!(repository.current_count(), 9);
     assert_eq!(repository.revision_count(), 9);
     let CanonicalResource::ChartDefinition(definition) = block_on(repository.get(definition_id))

@@ -1,9 +1,10 @@
 use super::{
     AppError, AppErrorKind, AppIntent, AppResult, BTreeMap, CalculationRuntime, CanonicalResource,
-    Command, ConfigurationLayer, InstanceId, RealApplication, RealState, ResourceId,
+    Command, ConfigurationLayer, InstanceId, RealApplication, RealState, ResourceEnvelope,
     ResourceRepository, Timestamp, ViewDocument, ViewInstanceId, WorkspaceDocument,
-    apply_workspace_command, info, not_found, repository_app_error, resolve_typed_binding, success,
-    validation::validate_session_references,
+    WorkspaceDocumentBacking, apply_workspace_command, info, not_found, repository_app_error,
+    resolve_typed_binding, success,
+    validation::{validate_durable_document_references, validate_session_references},
 };
 
 impl<R, C> RealApplication<R, C>
@@ -70,16 +71,6 @@ where
 
     pub(super) fn dispatch_workspace_intent(&self, intent: &AppIntent) -> AppResult<()> {
         let mut state = self.state.borrow_mut();
-        let workspace_id = state
-            .workspace
-            .as_ref()
-            .map(|workspace| workspace.id)
-            .ok_or_else(|| {
-                AppError::new(
-                    AppErrorKind::Unavailable,
-                    "The active session has no saved WorkspaceDocument backing",
-                )
-            })?;
         let document = state
             .session
             .as_ref()
@@ -88,10 +79,10 @@ where
                 AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
             })?;
         let (command, refresh, clear_editor, notice) =
-            state.command_for_intent(workspace_id, &document, intent)?;
+            state.command_for_intent(&document, intent)?;
         let view_documents = state.resolve_view_documents(&document)?;
         let mut next_session = state.session.clone().expect("session was checked");
-        apply_workspace_command(workspace_id, &mut next_session, &command, &view_documents)
+        apply_workspace_command(&mut next_session, &command, &view_documents)
             .map_err(|error| AppError::new(AppErrorKind::InvalidIntent, error.to_string()))?;
         validate_session_references(&next_session, &state.catalog).map_err(|error| {
             AppError::new(
@@ -114,44 +105,73 @@ where
     pub(super) async fn save_workspace(&self) -> AppResult<()> {
         let (expected_revision, next) = {
             let state = self.state.borrow();
-            let envelope = state.workspace.as_ref().ok_or_else(|| {
-                AppError::new(
-                    AppErrorKind::Unavailable,
-                    "The active session has no saved WorkspaceDocument backing",
-                )
-            })?;
             let session = state.session.as_ref().ok_or_else(|| {
                 AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
             })?;
-            if !session.document_dirty {
-                return Err(AppError::new(
-                    AppErrorKind::InvalidIntent,
-                    "The WorkspaceDocument has no changes to save",
-                ));
-            }
-            let next = envelope
-                .next_with_payload(
-                    session.document.clone(),
-                    Timestamp::from_unix_millis(state.next_timestamp),
-                )
-                .map_err(|error| {
+            validate_durable_document_references(&session.document, &state.catalog).map_err(
+                |error| {
                     AppError::new(
                         AppErrorKind::InvalidIntent,
-                        format!("WorkspaceDocument draft was invalid: {error}"),
+                        format!(
+                            "WorkspaceDocument cannot be saved because its durable references are invalid: {error}"
+                        ),
                     )
-                })?;
-            (envelope.revision, next)
+                },
+            )?;
+            let timestamp = Timestamp::from_unix_millis(state.next_timestamp);
+            match session.backing {
+                WorkspaceDocumentBacking::Unsaved => (
+                    None,
+                    ResourceEnvelope::new(
+                        "Mirabile Workspace",
+                        session.document.clone(),
+                        timestamp,
+                    ),
+                ),
+                WorkspaceDocumentBacking::Saved {
+                    document_id,
+                    revision,
+                } => {
+                    if !session.document_dirty {
+                        return Err(AppError::new(
+                            AppErrorKind::InvalidIntent,
+                            "The WorkspaceDocument has no changes to save",
+                        ));
+                    }
+                    let envelope = state.workspace.as_ref().filter(|workspace| {
+                        workspace.id == document_id && workspace.revision == revision
+                    }).ok_or_else(|| {
+                        AppError::new(
+                            AppErrorKind::Unavailable,
+                            "The saved WorkspaceDocument backing does not match the active session",
+                        )
+                    })?;
+                    let next = envelope
+                        .next_with_payload(session.document.clone(), timestamp)
+                        .map_err(|error| {
+                            AppError::new(
+                                AppErrorKind::InvalidIntent,
+                                format!("WorkspaceDocument draft was invalid: {error}"),
+                            )
+                        })?;
+                    (Some(envelope.revision), next)
+                }
+            }
         };
 
-        self.repository
-            .save(
-                expected_revision,
-                CanonicalResource::WorkspaceDocument(next.clone()),
-            )
-            .await
-            .map_err(|error| {
-                repository_app_error("Could not save the WorkspaceDocument", &error)
-            })?;
+        let resource = CanonicalResource::WorkspaceDocument(next.clone());
+        match expected_revision {
+            Some(expected_revision) => self
+                .repository
+                .save(expected_revision, resource)
+                .await
+                .map_err(|error| {
+                    repository_app_error("Could not save the WorkspaceDocument", &error)
+                })?,
+            None => self.repository.create(resource).await.map_err(|error| {
+                repository_app_error("Could not create the first WorkspaceDocument", &error)
+            })?,
+        }
 
         let mut state = self.state.borrow_mut();
         state.next_timestamp = state.next_timestamp.saturating_add(1);
@@ -164,7 +184,11 @@ where
             .as_mut()
             .expect("ready application has a session")
             .mark_saved(next.id, next.revision);
-        state.notice = Some(success("Workspace saved as a new canonical revision"));
+        state.notice = Some(success(if expected_revision.is_some() {
+            "Workspace saved as a new canonical revision"
+        } else {
+            "Workspace saved as canonical revision one"
+        }));
         state.advance()
     }
 
@@ -261,7 +285,6 @@ impl RealState {
     #[allow(clippy::too_many_lines)]
     pub(super) fn command_for_intent(
         &self,
-        workspace_id: ResourceId,
         workspace: &WorkspaceDocument,
         intent: &AppIntent,
     ) -> AppResult<(Command, bool, bool, &'static str)> {
@@ -272,7 +295,6 @@ impl RealState {
                 }
                 Ok((
                     Command::OpenSavedChart {
-                        workspace: workspace_id,
                         definition: *definition_id,
                         instance_id: InstanceId::new(),
                     },
@@ -283,7 +305,6 @@ impl RealState {
             }
             AppIntent::CloseChart { instance_id } => Ok((
                 Command::CloseChart {
-                    workspace: workspace_id,
                     instance_id: *instance_id,
                 },
                 true,
@@ -292,7 +313,6 @@ impl RealState {
             )),
             AppIntent::ActivateChart { instance_id } => Ok((
                 Command::SetActiveChart {
-                    workspace: workspace_id,
                     instance_id: Some(*instance_id),
                 },
                 false,
@@ -304,7 +324,6 @@ impl RealState {
                 selected,
             } => Ok((
                 Command::SetChartSelection {
-                    workspace: workspace_id,
                     instance_id: *instance_id,
                     selected: *selected,
                 },
@@ -314,7 +333,6 @@ impl RealState {
             )),
             AppIntent::SetActiveView { view_id } => Ok((
                 Command::SetActiveView {
-                    workspace: workspace_id,
                     view: Some(*view_id),
                 },
                 true,
@@ -358,16 +376,24 @@ impl RealState {
                         "A required chart slot cannot be cleared",
                     ));
                 }
+                let notice = if chart.is_some_and(|chart| {
+                    self.session
+                        .as_ref()
+                        .is_some_and(|session| session.contains_draft_chart(chart))
+                }) {
+                    "Draft chart assigned as a session-only preview; save the chart to promote the assignment"
+                } else {
+                    "Saved chart slot assignment changed in the working document; save the workspace to persist it"
+                };
                 Ok((
                     Command::AssignChartSlot {
-                        workspace: workspace_id,
                         view: *view_id,
                         slot: slot.clone(),
                         chart: *chart,
                     },
                     true,
                     false,
-                    "Chart slot assignment changed in the working document; save the workspace to persist it",
+                    notice,
                 ))
             }
             AppIntent::SetWorkspaceAspectSet { resource_id } => {
@@ -376,7 +402,6 @@ impl RealState {
                 }
                 Ok((
                     Command::SetWorkspaceAspectSet {
-                        workspace: workspace_id,
                         aspect_set: *resource_id,
                     },
                     true,

@@ -1,8 +1,10 @@
+use std::collections::BTreeSet;
+
 use thiserror::Error;
 
 use super::{
     BoundPayload, Catalog, ChartSource, ConfigurationLayer, DerivationSpec, ResourceBinding,
-    ResourceId, WorkspaceSession, resolve_typed_binding,
+    ResourceId, WorkspaceDocument, WorkspaceSession, resolve_typed_binding,
 };
 
 /// Validation that requires the hydrated catalog or application session graph.
@@ -29,22 +31,42 @@ pub(super) fn validate_session_references(
     session: &WorkspaceSession,
     catalog: &Catalog,
 ) -> Result<(), ReferentialValidationError> {
-    validate_profile_bindings(session, catalog)?;
+    validate_document_references(&session.document, catalog, false)?;
+    let draft_instances = validate_session_chart_identities(session)?;
+    validate_session_navigation(session)?;
+    validate_draft_assignment_references(session, catalog, &draft_instances)?;
+    validate_effective_view_references(session, catalog)
+}
 
-    for (index, chart) in session.document.chart_instances.iter().enumerate() {
-        let definition = catalog.chart_definition(chart.definition).ok_or_else(|| {
-            ReferentialValidationError::new(
-                format!("chart_instances[{index}].definition"),
-                format!("ChartDefinition {} is missing", chart.definition),
-            )
-        })?;
-        validate_chart_source(
-            &definition.payload.source,
-            catalog,
-            &format!("chart_instances[{index}].definition.source"),
-        )?;
+fn validate_session_chart_identities(
+    session: &WorkspaceSession,
+) -> Result<BTreeSet<super::InstanceId>, ReferentialValidationError> {
+    let saved_instances = session
+        .document
+        .chart_instances
+        .iter()
+        .map(|chart| chart.instance_id)
+        .collect::<BTreeSet<_>>();
+    let mut draft_instances = BTreeSet::new();
+    for (index, draft) in session.draft_charts.iter().enumerate() {
+        if saved_instances.contains(&draft.instance_id)
+            || !draft_instances.insert(draft.instance_id)
+        {
+            return Err(ReferentialValidationError::new(
+                format!("draft_charts[{index}].instance_id"),
+                format!(
+                    "chart instance {} is not unique across saved and draft session charts",
+                    draft.instance_id
+                ),
+            ));
+        }
     }
+    Ok(draft_instances)
+}
 
+fn validate_session_navigation(
+    session: &WorkspaceSession,
+) -> Result<(), ReferentialValidationError> {
     if let Some(active) = session.active_chart
         && !session.contains_chart(active)
     {
@@ -69,17 +91,76 @@ pub(super) fn validate_session_references(
             format!("view {active} is not present in the working document"),
         ));
     }
+    Ok(())
+}
 
-    for (view_index, view) in session.document.views.iter().enumerate() {
-        let document = resolve_typed_binding(&view.document, catalog, ConfigurationLayer::View)
-            .map_err(|error| {
+fn validate_draft_assignment_references(
+    session: &WorkspaceSession,
+    catalog: &Catalog,
+    draft_instances: &BTreeSet<super::InstanceId>,
+) -> Result<(), ReferentialValidationError> {
+    for (view_id, assignments) in &session.draft_chart_assignments {
+        let (view_index, view) = session
+            .document
+            .views
+            .iter()
+            .enumerate()
+            .find(|(_, view)| view.id == *view_id)
+            .ok_or_else(|| {
                 ReferentialValidationError::new(
-                    format!("views[{view_index}].document"),
-                    error.to_string(),
+                    format!("draft_chart_assignments.{view_id}"),
+                    "view is not present in the working document",
                 )
             })?;
-        for (slot, chart) in &view.charts {
-            if !document
+        let resolved_view =
+            resolve_typed_binding(&view.document, catalog, ConfigurationLayer::View).map_err(
+                |error| {
+                    ReferentialValidationError::new(
+                        format!("views[{view_index}].document"),
+                        error.to_string(),
+                    )
+                },
+            )?;
+        for (slot, chart) in assignments {
+            if !resolved_view
+                .value
+                .chart_slots
+                .iter()
+                .any(|candidate| candidate.id == *slot)
+            {
+                return Err(ReferentialValidationError::new(
+                    format!("draft_chart_assignments.{view_id}.{slot}"),
+                    "slot is not declared by the resolved ViewDocument",
+                ));
+            }
+            if !draft_instances.contains(chart) {
+                return Err(ReferentialValidationError::new(
+                    format!("draft_chart_assignments.{view_id}.{slot}"),
+                    format!("chart instance {chart} is not an open draft"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_effective_view_references(
+    session: &WorkspaceSession,
+    catalog: &Catalog,
+) -> Result<(), ReferentialValidationError> {
+    for (view_index, view) in session.document.views.iter().enumerate() {
+        let resolved_view =
+            resolve_typed_binding(&view.document, catalog, ConfigurationLayer::View).map_err(
+                |error| {
+                    ReferentialValidationError::new(
+                        format!("views[{view_index}].document"),
+                        error.to_string(),
+                    )
+                },
+            )?;
+        let effective = session.effective_chart_assignments(view.id);
+        for (slot, chart) in &effective {
+            if !resolved_view
                 .value
                 .chart_slots
                 .iter()
@@ -98,7 +179,94 @@ pub(super) fn validate_session_references(
             }
         }
         if !session.document.chart_instances.is_empty() || !session.draft_charts.is_empty() {
-            for required in document
+            for required in resolved_view
+                .value
+                .chart_slots
+                .iter()
+                .filter(|slot| slot.required)
+            {
+                if !effective.contains_key(&required.id) {
+                    return Err(ReferentialValidationError::new(
+                        format!("views[{view_index}].charts.{}", required.id),
+                        "required slot is not assigned",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validates the exact payload that may cross the canonical persistence boundary.
+///
+/// Session overlays and drafts are intentionally unavailable here, so every chart assignment must
+/// resolve to a saved chart instance in this `WorkspaceDocument`.
+pub(super) fn validate_durable_document_references(
+    document: &WorkspaceDocument,
+    catalog: &Catalog,
+) -> Result<(), ReferentialValidationError> {
+    validate_document_references(document, catalog, true)
+}
+
+fn validate_document_references(
+    document: &WorkspaceDocument,
+    catalog: &Catalog,
+    require_complete_slots: bool,
+) -> Result<(), ReferentialValidationError> {
+    validate_profile_bindings(document, catalog)?;
+    let saved_instances = document
+        .chart_instances
+        .iter()
+        .map(|chart| chart.instance_id)
+        .collect::<BTreeSet<_>>();
+
+    for (index, chart) in document.chart_instances.iter().enumerate() {
+        let definition = catalog.chart_definition(chart.definition).ok_or_else(|| {
+            ReferentialValidationError::new(
+                format!("chart_instances[{index}].definition"),
+                format!("ChartDefinition {} is missing", chart.definition),
+            )
+        })?;
+        validate_chart_source(
+            &definition.payload.source,
+            catalog,
+            &format!("chart_instances[{index}].definition.source"),
+        )?;
+    }
+
+    for (view_index, view) in document.views.iter().enumerate() {
+        let resolved_view =
+            resolve_typed_binding(&view.document, catalog, ConfigurationLayer::View).map_err(
+                |error| {
+                    ReferentialValidationError::new(
+                        format!("views[{view_index}].document"),
+                        error.to_string(),
+                    )
+                },
+            )?;
+        for (slot, chart) in &view.charts {
+            if !resolved_view
+                .value
+                .chart_slots
+                .iter()
+                .any(|candidate| candidate.id == *slot)
+            {
+                return Err(ReferentialValidationError::new(
+                    format!("views[{view_index}].charts.{slot}"),
+                    "slot is not declared by the resolved ViewDocument",
+                ));
+            }
+            if !saved_instances.contains(chart) {
+                return Err(ReferentialValidationError::new(
+                    format!("views[{view_index}].charts.{slot}"),
+                    format!(
+                        "chart instance {chart} is not a saved chart in this WorkspaceDocument"
+                    ),
+                ));
+            }
+        }
+        if require_complete_slots && !document.chart_instances.is_empty() {
+            for required in resolved_view
                 .value
                 .chart_slots
                 .iter()
@@ -117,10 +285,10 @@ pub(super) fn validate_session_references(
 }
 
 fn validate_profile_bindings(
-    session: &WorkspaceSession,
+    document: &WorkspaceDocument,
     catalog: &Catalog,
 ) -> Result<(), ReferentialValidationError> {
-    let profile = &session.document.profile;
+    let profile = &document.profile;
     require_binding(
         &profile.displayed_points,
         catalog,

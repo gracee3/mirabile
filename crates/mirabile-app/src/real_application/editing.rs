@@ -123,6 +123,7 @@ where
                 instance_id,
                 definition: definition.id,
             });
+        session.promote_draft_assignments(instance_id);
         session.mark_document_dirty();
         state.notice = Some(success(
             "ChartRecord and ChartDefinition were created atomically; save the workspace to persist membership",
@@ -145,11 +146,15 @@ where
                     format!("Chart draft {instance_id} is not open"),
                 )
             })?;
+        let refresh_active_view = session.active_view.is_some_and(|view_id| {
+            session
+                .draft_chart_assignments
+                .get(&view_id)
+                .is_some_and(|assignments| assignments.values().any(|chart| *chart == instance_id))
+        });
         session.draft_charts.remove(index);
         session.selected_charts.retain(|id| *id != instance_id);
-        for view in &mut session.document.views {
-            view.charts.retain(|_, chart| *chart != instance_id);
-        }
+        session.remove_draft_assignments(instance_id);
         if session.active_chart == Some(instance_id) {
             session.active_chart = session
                 .document
@@ -157,6 +162,9 @@ where
                 .first()
                 .map(|chart| chart.instance_id)
                 .or_else(|| session.draft_charts.first().map(|chart| chart.instance_id));
+        }
+        if refresh_active_view {
+            self.submit_active_view_refresh(&mut state)?;
         }
         state.notice = Some(info(
             "Chart draft canceled; no canonical resources were created",

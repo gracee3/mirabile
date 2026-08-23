@@ -63,10 +63,6 @@ where
             )),
             StartupPolicy::BlankWorkspace => Ok((None, blank_workspace_session())),
             StartupPolicy::OpenWorkspace(id) => Self::saved_startup_session(catalog, id),
-            StartupPolicy::OpenWorkspaces(ids) => ids.first().copied().map_or_else(
-                || Ok((None, blank_workspace_session())),
-                |id| Self::saved_startup_session(catalog, id),
-            ),
         }
     }
 

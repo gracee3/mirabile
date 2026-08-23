@@ -152,18 +152,27 @@ There is deliberately no invariant that the active chart must be selected. Shift
 is deferred. This policy is easy to revise after shared architecture review because the transitions
 live in the application adapter and tests, not DOM handlers.
 
-Saved chart membership/order, view instances and slot assignments, workspace bindings, and durable
-view overrides are the working `WorkspaceDocument` projection. Such changes mark the session dirty.
-Only `AppIntent::SaveWorkspace` writes its next revision. Temporary display overrides stay in the
-session until explicitly promoted; promotion updates the durable projection and marks it dirty.
+Saved chart membership/order, view instances and saved-chart slot assignments, workspace bindings,
+and durable view overrides are the working `WorkspaceDocument` projection. Such changes mark the
+session dirty. A slot assignment to an unsaved chart is instead a `WorkspaceSession` overlay: the
+effective view sees it, but the durable document cannot. Atomic chart save promotes matching
+overlays only after the same instance becomes a saved chart. Temporary display overrides follow
+the same explicit session-to-document promotion principle.
+
+`AppIntent::SaveWorkspace` creates revision one when the active session has `Unsaved` backing, even
+when no ordinary durable mutation has occurred. Later saves require a dirty saved document and
+write its next revision. Immediately before either write, application referential validation runs
+against the durable payload alone; an unknown or draft chart instance can never cross the canonical
+workspace boundary.
 
 ## Intents, drafts, and form buffers
 
 `AppIntent` expresses user-level application intentions. It is not the persistence-oriented
-`mirabile_core::Command`; `RealApplication` translates workspace intents into typed core commands,
-applies their semantics in `mirabile-app`. Durable mutations mark the `WorkspaceDocument` dirty,
-and explicit Save Workspace writes its next revision. Resource repository
-rules remain in `mirabile-store`.
+`mirabile_core::Command`; `RealApplication` translates workspace intents into typed core commands
+and applies their semantics to the application-selected session in `mirabile-app`. Session commands
+do not carry or require a canonical workspace identity. Durable mutations mark the
+`WorkspaceDocument` dirty, and explicit Save Workspace creates revision one or writes the next
+revision. Resource repository rules remain in `mirabile-store`.
 
 Draft mutations are typed. This slice uses `AspectSetDraftMutation::{SetOrb, SetEnabled}` with a
 typed `AspectId`, `Angle`, and boolean. String field paths and untyped JSON values are not part of
@@ -234,15 +243,17 @@ application lifetime. The application, not the web shell, owns repository or wor
 Initialization lists whatever canonical resources exist and loads pinned historical revisions
 before applying an application-level `StartupPolicy`. `RestorePreviousSession` is the default;
 because session recovery is not implemented yet, it falls back to `CurrentTransits`.
-`BlankWorkspace`, `OpenWorkspace(id)`, and the future-facing `OpenWorkspaces(ids)` forms are also
-represented. The current UI activates only the first requested workspace.
+`BlankWorkspace` and `OpenWorkspace(id)` are also represented. A plural startup request is deferred
+until the application actually owns multiple simultaneous sessions; no public policy silently
+truncates a list of requested workspaces.
 
 After each object has passed core structural validation, hydration performs application-level
 referential validation against the catalog and session graph. It resolves Follow/Pinned bindings,
 checks saved chart-definition/source links, verifies active and selected session identities, and
-checks slot assignments against the resolved `ViewDocument`. Core validators never open a
-repository. Workspace commands validate a cloned candidate session before making it authoritative,
-so a referential failure cannot leave partially mutated application state.
+checks effective slot assignments against the resolved `ViewDocument`. Core validators never open
+a repository. Workspace commands validate a cloned candidate session before making it
+authoritative, and workspace persistence separately validates the durable document without session
+overlays, so neither a failed command nor an unsaved chart can leave invalid canonical state.
 
 A genuinely empty repository is valid. Fresh startup creates an unsaved `WorkspaceSession` with
 one ephemeral Current Transits `ChartDraft`, a single wheel, system UTC time, tropical geocentric
@@ -272,7 +283,9 @@ document. Starting and canceling a draft do not write the library. A draft can b
 view and calculated through the payload-only engine seam before it has resource identities.
 
 `SaveChartDraft` creates a new revision-one `ChartRecord` and a distinct revision-one
-`ChartDefinition` whose radix source references that record. `ResourceRepository::create_batch`
+`ChartDefinition` whose radix source references that record. Any draft slot overlays are then
+promoted into the working document using the now-saved instance identity.
+`ResourceRepository::create_batch`
 is the narrow atomicity boundary: MemoryRepository prevalidates and preflights the complete batch
 before mutating its maps; IndexedDB writes both current heads and both history entries in one
 read-write transaction. Any validation, identity, or storage failure publishes neither resource,
