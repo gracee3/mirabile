@@ -5,7 +5,7 @@
 - Base: `63f081b3c9b0becf5238bdbe2cf3b6964bf09f85` (`origin/main`)
 - Branch: `goal/mirabile-consolidation`
 - Worktree: `/home/emmy/worktrees/mirabile-consolidation`
-- Current phase: 9 - standardized local validation and status finalization
+- Current phase: 10 - complete verification, residual audits, and final review
 - Delivery: unmerged goal branch; push only after the complete validation phase
 
 ## Frozen architecture
@@ -54,6 +54,7 @@
 - Core `DomainValidate` remains one-object structural validation. Application referential validation now resolves bindings and checks canonical chart sources, session identities, and resolved view-slot assignments during hydration and before workspace command state becomes authoritative.
 - Phase 8 added one reusable scenario suite that runs against both `MockApplication` and `RealApplication`: initialize/settle, projection monotonicity, activation/selection, open/close repair, workspace dirty/save, temporary override promotion, and last-good refresh behavior.
 - The Leptos source now has explicit shell, async dispatcher, library, workspace rail, view host, and inspector modules. Normal presentation remains dependent on `mirabile-app`; the Real conformance fixture uses `mirabile-store` only as a native dev-dependency.
+- Phase 9 added executable `scripts/check.sh` and `scripts/verify.sh`. The fast command runs formatting, workspace tests, strict Clippy, and staged/unstaged diff checks; the full command enumerates every required package, XALEN, native/WASM, Trunk main/Worker, dependency/license, notice, Chromium, and diff check with prerequisite diagnostics.
 
 ## Validation status
 
@@ -66,7 +67,8 @@
 - Phase 6: `mirabile-app` checks and 33 tests, strict package Clippy, formatting, workspace tests, Chromium browser contract, and `git diff --check` passed.
 - Phase 7: core/app focused tests (52 tests), workspace tests (110 tests), strict workspace Clippy, web WASM check, Chromium IndexedDB/Worker contract, formatting, and `git diff --check` passed.
 - Phase 8: shared Mock/Real conformance scenarios, workspace tests (112 tests), strict workspace Clippy, web WASM check, Chromium IndexedDB/Worker contract, formatting, and `git diff --check` passed.
-- Phase-focused checks: phase 9 onward pending.
+- Phase 9: shell syntax checks, `./scripts/check.sh` (112 tests plus formatting, strict Clippy, and both diff checks), script coverage review, and executable-bit inspection passed.
+- Phase-focused checks: phase 10 pending.
 - Full local verification: pending.
 
 ## Deferred work

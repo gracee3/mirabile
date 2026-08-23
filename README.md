@@ -32,22 +32,26 @@ as a historical record, not as the current product description.
 
 ## Development
 
+Use the fast native development loop for ordinary changes:
+
 ```bash
-cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo check -p mirabile-web --target wasm32-unknown-unknown
-(
-  cd apps/web
-  env -u NO_COLOR trunk build
-)
-./scripts/check-xalen-dependencies.sh
-./scripts/test-browser.sh
+./scripts/check.sh
+```
+
+Before handoff, run the complete local suite:
+
+```bash
+./scripts/verify.sh
 ```
 
 All validation is local. This repository intentionally has no hosted CI. The browser contract
 builds both the main app and Worker, validates distributed notice assets, then exercises IndexedDB,
 application reload, and Worker calculation in an isolated headless Chromium profile.
+
+`verify.sh` runs formatting, every package and workspace test suite, XALEN-enabled tests, strict
+Clippy, provider-neutral and XALEN native/WASM checks, the web WASM check, the Trunk main/Worker
+build, the dependency/license guard, notice-asset validation, the Chromium contract, and staged
+plus unstaged diff checks. Missing local prerequisites fail with an actionable message.
 
 The WASM build requires the `wasm32-unknown-unknown` Rust target. Run the app with:
 
