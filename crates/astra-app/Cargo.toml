@@ -10,7 +10,9 @@ repository.workspace = true
 [dependencies]
 astra-core = { path = "../astra-core" }
 astra-engine = { path = "../astra-engine" }
+astra-store = { path = "../astra-store" }
 async-trait.workspace = true
+futures.workspace = true
 thiserror.workspace = true
 
 [lints]
