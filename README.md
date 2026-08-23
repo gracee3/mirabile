@@ -9,7 +9,8 @@ The project is intentionally not an astronomical authority yet. Its current calc
 - `crates/astra-core`: portable domain resources, workspace/query/view models, commands, and editor state
 - `crates/astra-engine`: calculation keys, deterministic ephemeris, aspect analysis, layout, and scene primitives
 - `crates/astra-store`: validated repository contract, versioned tombstones, portable JSON, and IndexedDB adapter
-- `apps/web`: Leptos 0.8 CSR presentation adapter and the reactive aspect-draft demo
+- `crates/astra-app`: frozen application boundary plus real hydration, persistence, draft, and derived-pipeline orchestration
+- `apps/web`: Leptos 0.8 CSR presentation adapter; normal WASM uses `RealApplication`, while native frontend tests use the mock
 
 Architecture decisions and state semantics live in [`docs/architecture.md`](docs/architecture.md), [`docs/domain-model.md`](docs/domain-model.md), and [`docs/state-and-persistence.md`](docs/state-and-persistence.md).
 
@@ -37,7 +38,9 @@ trunk serve
 
 ## Status
 
-This repository is at the architecture-foundation milestone. The wheel uses a deterministic fake ephemeris and demonstrates dependency-selective recomputation; it is not suitable for real astrological calculation.
+This repository has a persisted real-application foundation. The wheel still uses a deterministic
+fake ephemeris and in-thread pending execution; it is not suitable for real astrological
+calculation.
 
 ## License
 

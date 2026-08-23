@@ -7,12 +7,19 @@ astra-core
    ↑       ↑
 engine   store
    ↑       ↑
-   └── web ┘
+   └─ astra-app
+         ↑
+        web
 ```
 
-`astra-core` is portable and has no browser, Leptos, storage, or astronomy-provider dependency. `astra-engine` has no DOM or persistence dependency. `astra-store` owns persistence adapters. `astra-web` is a CSR adapter that dispatches intent and renders derived state.
+`astra-core` is portable and has no browser, Leptos, storage, or astronomy-provider dependency.
+`astra-engine` has no DOM or persistence dependency. `astra-store` owns persistence adapters.
+`astra-app` owns `Application`, `RealApplication`, hydration, canonical-to-read-model projection,
+workspace command semantics, draft orchestration, and the real derived pipeline. `astra-web` is a
+CSR presentation adapter that imports only `astra-app` in normal source.
 
-The four packages are intentionally broader than the eventual conceptual layers. Strong module boundaries are enough for the first milestone and avoid an early proliferation of tiny crates.
+The five workspace packages are intentionally broader than the eventual conceptual layers. Strong
+module boundaries avoid an early proliferation of tiny crates.
 
 ## Pipeline
 
@@ -60,11 +67,24 @@ value can be reused without returning stale resource context.
 
 ## Commands and reactive UI
 
-Mutation intent is represented by commands in `astra-core`. The milestone UI keeps separate signals for canonical resources, editor state, source inputs, and presentation theme. Memoized values resolve effective analysis inputs and run downstream pure functions. Components do not calculate positions or mutate browser storage directly.
+User intent crosses the UI boundary as `AppIntent`. `RealApplication` translates canonical
+Workspace changes into typed `astra_core::Command` values. Open, close, activation, selection,
+active-view, chart-slot, and AspectSet-binding semantics are applied in `astra-app`; repository
+revision validation stays in `astra-store`. Components do not calculate positions, own canonical
+resources, or mutate browser storage directly.
 
-The AspectSet editor dispatches `SaveResourceDraft` through the resource command handler. The handler applies repository revision rules in one place; the component replaces its canonical signal only after IndexedDB confirms the local transaction. Draft edits and Cancel are ephemeral transitions and therefore never touch the repository. Browser startup is a private `Loading`/`Ready`/`Error` state machine: only `Ready` owns an editor and retained repository handle, while `Error` fails closed and offers Retry.
+The AspectSet editor is application-owned. A typed mutation changes only its draft and queues an
+analysis/layout refresh. Save publishes `Saving`, then asks the repository to accept the next
+revision; success replaces canonical state and conflict retains the draft with both revisions.
+Cancel performs no repository write. Browser startup is an application
+`Initializing`/`Ready`/`Error` state machine and retains one IndexedDB handle.
 
-A production worker is intentionally deferred. The calculation request/result types and `CalculationEngine` boundary are native and serializable so the same calculation can move behind a Web Worker without changing domain or view models.
+`RealApplication` runs the deterministic pipeline as queued pending work: ChartDefinition and
+ChartRecord produce `CalcKey`; `ComputationCache` yields or stores `CalculationValue`; current
+resource revisions rebuild `SnapshotContext`; analysis consumes effective point/aspect/profile
+bindings; layout consumes displayed points and wheel; `Scene::from_wheel` produces the frontend
+boundary. A production worker is intentionally deferred. The pending executor can move behind a
+Web Worker without changing the application contract.
 
 ## Intentional skeletons
 

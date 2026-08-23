@@ -1,9 +1,10 @@
 # Application interface contract
 
 `astra-app` is the shared boundary between presentation adapters and application implementations.
-The current Leptos adapter uses `MockApplication`; a later `RealApplication` must implement the
-same `Application` interface and preserve the semantics below. The contract does not implement or
-replace canonical domain state, repositories, calculation, analysis, or persistence.
+The normal Leptos/WASM adapter uses `RealApplication`; native frontend tests retain
+`MockApplication`. Both implement the same frozen `Application` interface and preserve the
+semantics below. Read models remain projections of canonical domain and repository state rather
+than a replacement for either.
 
 ## Authority and dependency boundary
 
@@ -13,9 +14,10 @@ accepted. The initial `dispatch` result is a full projection for correctness. Re
 be queried independently rather than remaining one permanent, database-sized aggregate.
 
 `astra-app` re-exports Astra's existing stable IDs and current astrology-free `Scene` primitives.
-It does not create parallel frontend identity domains or duplicate `Scene`. Normal UI modules
-depend on `astra-app`; the feature-gated IndexedDB browser-contract harness remains an isolated
-test-only exception with direct foundation dependencies.
+It does not create parallel frontend identity domains or duplicate `Scene`. The crate now depends
+on `astra-store` because it owns real orchestration and hydration. Normal UI modules still depend
+only on `astra-app`; the feature-gated IndexedDB browser-contract harness remains an isolated
+test-only exception with direct repository dependencies for its pre-existing adapter checks.
 
 No `AppEvent` stream exists in this slice. If events are added, they announce that authoritative
 application state changed; read models remain authoritative. Missing an event must be recoverable
@@ -77,11 +79,12 @@ repository, or mock work. Repeated snapshots without a transition return the sam
 
 `wait_for_update(after)` returns only a projection whose version is strictly newer than `after`.
 It may return immediately if that newer projection already exists; otherwise the implementation
-awaits a meaningful authoritative transition. The deterministic mock completes one queued unit of
-work without a timer. A future real adapter may await repository or worker completion. The runtime
-notification primitive is deliberately outside the contract, and no authoritative event stream is
-introduced. The frontend calls this method only for a projection that declares pending work; the
-mock returns `Unavailable` rather than fabricating a version when nothing is queued.
+awaits a meaningful authoritative transition. `RealApplication` completes one queued deterministic
+computation or repository save without a timer. Its version notification is shared observation,
+not a single-consumer message: all waiters after version N can observe N+1 or another version newer
+than N. If no work is queued, a waiter remains registered for the next authoritative transition
+rather than polling or fabricating a version. The runtime notification primitive is deliberately
+outside the contract, and no authoritative event stream is introduced.
 
 The frontend pending lifecycle is:
 
@@ -117,13 +120,14 @@ or failed view without becoming a shell-level error.
 | some | `Failed(error)` | Keep displaying the last good Scene and surface the scoped error. |
 | none | `Failed(error)` | Surface that the view has never computed successfully. |
 
-The mock returns accepted intermediate states from `dispatch` and deterministically completes one
-queued operation through `wait_for_update`. This proves last-good-Scene behavior without sleeps and
-does not prescribe the future real application's worker notification mechanism.
+The real implementation returns accepted intermediate states from `dispatch` and deterministically
+completes queued work through `wait_for_update`. A calculation failure changes only the computation
+state and notice; it never clears the last successful `Scene`.
 
 ## Workspace selection policy
 
-Active and selected charts are separate contract fields. The mock uses this provisional policy:
+Active and selected charts are separate contract fields. `RealApplication` applies this policy to
+the canonical revisioned Workspace:
 
 - activating a chart does not add or remove selection;
 - selecting or deselecting a chart does not activate it;
@@ -141,8 +145,9 @@ live in the application adapter and tests, not DOM handlers.
 ## Intents, drafts, and form buffers
 
 `AppIntent` expresses user-level application intentions. It is not the persistence-oriented
-`astra_core::Command`; a real adapter will translate intents into orchestration, domain commands,
-repository calls, and engine work behind this boundary.
+`astra_core::Command`; `RealApplication` translates workspace intents into typed core commands,
+applies their semantics in `astra-app`, then saves the next Workspace revision. Resource repository
+rules remain in `astra-store`.
 
 Draft mutations are typed. This slice uses `AspectSetDraftMutation::{SetOrb, SetEnabled}` with a
 typed `AspectId`, `Angle`, and boolean. String field paths and untyped JSON values are not part of
@@ -152,13 +157,15 @@ the application API.
 remote revision metadata. The application owns that resource-level lifecycle. The frontend owns
 only HTML mechanics such as focus, input text, temporary invalid syntax, and validation display.
 It parses a valid buffer into a typed mutation; it does not create a second resource editor state
-machine. Save advances the canonical mock revision and returns the draft to `Clean`; Cancel restores
-the currently projected canonical value. The Wide fixture produces one deterministic save conflict
-to exercise retained local draft and remote-revision UI.
+machine. Save constructs the next canonical AspectSet revision but publishes it only after the
+repository accepts the optimistic write. Cancel resolves the current canonical value without a
+write. A repository `Conflict` projects the real base and remote revisions while retaining the
+local draft and leaving `ApplicationStatus::Ready`.
 
 Changing a valid Aspect Set draft queues a view refresh while retaining the previous `Scene`. The
-mock changes opaque fixture Scene geometry only. It does not reproduce astrology or computation-key
-logic; calculation identity and invalidation correctness remain foundation-owned.
+real pipeline reuses `CalculationValue` by `CalcKey`, rebuilds `SnapshotContext`, and reruns aspect
+analysis and wheel layout with the preview. Save does not recalculate an astronomically identical
+chart, and Cancel returns analysis to canonical AspectSet semantics through the same cache path.
 
 ## Capabilities and presentation commands
 
@@ -180,5 +187,33 @@ the editor with both revisions visible.
 
 Frontend construction injects an `Application` trait object. Normal shell components know only
 `AppIntent`, read models, capabilities, errors, stable IDs, and `Scene`; they do not know whether the
-implementation uses a mock, IndexedDB, memory, workers, a calculation engine, or future sync. A
-`RealApplication` can therefore replace `MockApplication` without redesigning frontend state.
+implementation uses a mock, IndexedDB, memory, workers, a calculation engine, or future sync. The
+normal WASM shell now constructs `RealApplication::browser_default()` without importing store or
+engine crates.
+
+## RealApplication construction and hydration
+
+`RealApplication<R, P>` lives in `crates/astra-app/src/real_application.rs`. `R` is a cloneable
+`ResourceRepository`, and `P` is an `EphemerisProvider`. Native tests inject a shared
+`MemoryRepository`; the WASM constructor uses `IndexedDbRepositorySource`, which lazily opens one
+`IndexedDbRepository` during initialization and retains its cloneable `Rc<Rexie>` handle for the
+application lifetime. The application, not the web shell, owns repository acquisition.
+
+Initialization idempotently ensures seven deterministic bootstrap resources: two ChartRecords,
+two ChartDefinitions, Standard and Tight AspectSets, and one Workspace. It lists current canonical
+resources, loads any pinned historical revisions referenced by workspaces, restores the
+deterministic Workspace resource, creates synchronous read projections, marks the active view
+`Loading`, and queues its first calculation. Interrupted bootstrap retries inspect each stable ID
+and create only missing resources; deleted or wrong-kind bootstrap identities fail initialization
+instead of being silently replaced. General atomic multi-resource chart creation remains deferred.
+
+The bootstrap Workspace stores its AspectSet as `Follow(Standard)`. Point sets, analysis profile,
+theme, wheel template, and view document are honest inline values with no fabricated identity. The
+resolver calls the core `resolve_binding` implementation for Follow, Pinned, and Inline; pinned
+history is hydrated before synchronous projection and computation.
+
+Pending work is an internal queue. Deterministic computation currently executes synchronously
+inside the awaited pending transition, while optimistic resource saves await the retained
+repository. `snapshot()` never drives that queue. This seam can move calculation behind a Web
+Worker later without changing intents, read models, or wait semantics. The provider remains
+`DeterministicEphemeris`; this is a real persistence/orchestration application, not real astronomy.
