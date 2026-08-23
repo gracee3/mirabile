@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CalculationContext {
     pub time: ResolvedTime,
-    pub location: NumericLocation,
+    pub location: Option<NumericLocation>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

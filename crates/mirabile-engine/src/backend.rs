@@ -210,7 +210,6 @@ impl CalculationBackend for DeterministicBackend {
         }
 
         let day = request.context.time.instant.julian_day() - 2_451_545.0;
-        let location_shift = request.context.location.longitude.degrees() * 0.02;
         let catalog = Self::catalog()
             .into_iter()
             .map(|(id, phase, speed)| (id, (phase, speed)))
@@ -221,7 +220,7 @@ impl CalculationBackend for DeterministicBackend {
                 .get(point.as_str())
                 .copied()
                 .ok_or_else(|| CalculationBackendError::invalid("catalog lookup failed"))?;
-            let longitude = Angle::normalized(phase + day * speed + location_shift)
+            let longitude = Angle::normalized(phase + day * speed)
                 .map_err(|_| CalculationBackendError::invalid("non-finite celestial input"))?;
             positions.insert(
                 point.clone(),
@@ -246,9 +245,14 @@ impl CalculationBackend for DeterministicBackend {
             .houses
             .as_ref()
             .map(|_| {
+                let location = request.context.location.as_ref().ok_or_else(|| {
+                    CalculationBackendError::invalid(
+                        "house calculation requires an observer location",
+                    )
+                })?;
                 let ascendant = Angle::normalized(
                     request.context.time.instant.julian_day().fract() * 360.0
-                        + request.context.location.longitude.degrees(),
+                        + location.longitude.degrees(),
                 )
                 .map_err(|_| CalculationBackendError::invalid("non-finite house input"))?;
                 let midheaven = Angle::normalized(ascendant.degrees() + 90.0)

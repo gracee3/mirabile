@@ -121,13 +121,13 @@ fn sample_resources() -> (
                 zone: TimeZoneAssertion::UniversalTime,
                 disambiguation: None,
             },
-            location: LocationAssertion {
+            location: Some(LocationAssertion {
                 display_name: "Greenwich".into(),
                 country_region: Some("GB".into()),
                 latitude: Latitude::from_degrees(51.48).expect("valid latitude"),
                 longitude: Longitude::from_degrees(0.0).expect("valid longitude"),
                 atlas_provenance: None,
-            },
+            }),
             source: SourceProvenance {
                 description: "Architecture fixture".into(),
                 source_type: SourceType::UserAssertion,
@@ -255,7 +255,12 @@ fn metadata_only_rename_does_not_invalidate_calculation() {
         created_at: Timestamp::from_unix_millis(1),
     });
     renamed.payload.source.description = "Different source wording".into();
-    renamed.payload.location.display_name = "Different atlas label".into();
+    renamed
+        .payload
+        .location
+        .as_mut()
+        .expect("fixture location")
+        .display_name = "Different atlas label".into();
     let mut renamed_definition = definition.clone();
     renamed_definition.title = "Renamed definition".into();
     let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
@@ -275,7 +280,12 @@ fn every_calculation_dependency_changes_the_calculation_key() {
     let original = engine.calc_key(&definition, &record).expect("original key");
 
     let mut moved = record.clone();
-    moved.payload.location.longitude = Longitude::from_degrees(1.0).expect("valid longitude");
+    moved
+        .payload
+        .location
+        .as_mut()
+        .expect("fixture location")
+        .longitude = Longitude::from_degrees(1.0).expect("valid longitude");
     assert_ne!(
         original,
         engine.calc_key(&definition, &moved).expect("moved key")
@@ -513,7 +523,12 @@ fn cached_calculation_reuses_values_with_current_resource_context() {
     let mut revised_record = record
         .next_with_payload(record.payload.clone(), Timestamp::from_unix_millis(1))
         .expect("record revision");
-    revised_record.payload.location.display_name = "Current display label".into();
+    revised_record
+        .payload
+        .location
+        .as_mut()
+        .expect("fixture location")
+        .display_name = "Current display label".into();
     let revised_definition = definition
         .next_with_payload(definition.payload.clone(), Timestamp::from_unix_millis(1))
         .expect("definition revision");
@@ -530,11 +545,19 @@ fn cached_calculation_reuses_values_with_current_resource_context() {
         .snapshot_from_cached(&revised_definition, &revised_record, cached)
         .expect("current snapshot context");
     assert_eq!(current.calculation, snapshot.calculation);
-    assert_eq!(current.context.definition.revision.get(), 2);
+    assert_eq!(
+        current
+            .context
+            .definition
+            .expect("canonical snapshot records its definition revision")
+            .revision
+            .get(),
+        2
+    );
     assert_eq!(current.context.records[0].revision.get(), 2);
     assert_eq!(
-        current.context.location_display_name,
-        "Current display label"
+        current.context.location_display_name.as_deref(),
+        Some("Current display label")
     );
 }
 
@@ -560,8 +583,12 @@ fn julian_day_fixtures_cover_offsets_calendars_year_zero_and_lmt_sign() {
             zone,
             disambiguation: None,
         };
-        record.payload.location.longitude =
-            Longitude::from_degrees(longitude).expect("valid longitude");
+        record
+            .payload
+            .location
+            .as_mut()
+            .expect("fixture location")
+            .longitude = Longitude::from_degrees(longitude).expect("valid longitude");
         TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1")
             .calculate(&definition, &record)
             .expect("calculation")

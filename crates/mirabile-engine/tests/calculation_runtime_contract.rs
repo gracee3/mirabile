@@ -31,13 +31,13 @@ fn resources() -> (
                 zone: TimeZoneAssertion::UniversalTime,
                 disambiguation: None,
             },
-            location: LocationAssertion {
+            location: Some(LocationAssertion {
                 display_name: "Greenwich".into(),
                 country_region: Some("GB".into()),
                 latitude: Latitude::from_degrees(51.48).expect("latitude"),
                 longitude: Longitude::from_degrees(0.0).expect("longitude"),
                 atlas_provenance: None,
-            },
+            }),
             source: SourceProvenance {
                 description: "Calculation contract fixture".into(),
                 source_type: SourceType::UserAssertion,
@@ -155,6 +155,69 @@ fn resolved_request_separates_celestial_houses_and_derived_responsibilities() {
             .map(|id| PointId::new(id).expect("point ID"))
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn locationless_geocentric_no_house_calculation_is_truthful_and_executable() {
+    let (mut record, mut definition) = resources();
+    record.payload.location = None;
+    definition.payload.calculation.houses = HouseSystem::NoHouses;
+    let prepared = engine()
+        .prepare(
+            &definition,
+            &record,
+            &point_set(&["sun", "moon"]),
+            &point_set(&[]),
+        )
+        .expect("locationless geocentric positions are valid");
+    assert_eq!(prepared.request.context.location, None);
+    assert!(prepared.request.houses.is_none());
+    let result = DeterministicBackend
+        .calculate(&prepared.request)
+        .expect("backend needs no invented observer for geocentric positions");
+    let value = engine()
+        .complete(&prepared, result)
+        .expect("locationless calculation completes");
+    assert_eq!(value.numeric_location, None);
+
+    definition.payload.calculation.houses = HouseSystem::Equal;
+    assert!(matches!(
+        engine().prepare(&definition, &record, &point_set(&["sun"]), &point_set(&[]),),
+        Err(mirabile_engine::CalculationError::LocationRequired(
+            "house and angle calculation"
+        ))
+    ));
+
+    definition.payload.calculation.houses = HouseSystem::NoHouses;
+    definition.payload.calculation.coordinates = CoordinateSystem::Topocentric;
+    assert!(matches!(
+        engine().prepare(&definition, &record, &point_set(&["sun"]), &point_set(&[]),),
+        Err(mirabile_engine::CalculationError::LocationRequired(
+            "topocentric celestial calculation"
+        ))
+    ));
+}
+
+#[test]
+fn payload_only_resolution_needs_no_canonical_identity() {
+    let (mut record, mut definition) = resources();
+    record.payload.location = None;
+    definition.payload.calculation.houses = HouseSystem::NoHouses;
+    let resolved = engine()
+        .resolve(
+            &record.payload,
+            &definition.payload.calculation,
+            &point_set(&["sun"]),
+            &point_set(&[]),
+        )
+        .expect("draft payloads resolve directly");
+    let prepared = resolved.with_context(mirabile_engine::SnapshotContext {
+        definition: None,
+        records: Vec::new(),
+        location_display_name: None,
+    });
+    assert_eq!(prepared.snapshot_context.definition, None);
+    assert!(prepared.snapshot_context.records.is_empty());
 }
 
 #[test]
@@ -541,7 +604,12 @@ fn canonical_metadata_does_not_enter_resolved_request_or_calc_key() {
         .expect("baseline");
     let mut metadata_record = record.clone();
     metadata_record.title = "Renamed resource".into();
-    metadata_record.payload.location.display_name = "Renamed place".into();
+    metadata_record
+        .payload
+        .location
+        .as_mut()
+        .expect("fixture location")
+        .display_name = "Renamed place".into();
     metadata_record.payload.source.description = "Different source wording".into();
     metadata_record.payload.notes.push(mirabile_core::Note {
         text: "Non-calculation note".into(),

@@ -210,22 +210,31 @@ uses `WorkerCalculationRuntime` plus `IndexedDbRepositorySource`, which lazily o
 `IndexedDbRepository` during initialization and retains its cloneable `Rc<Rexie>` handle for the
 application lifetime. The application, not the web shell, owns repository or worker orchestration.
 
-Initialization idempotently ensures seven deterministic bootstrap resources: two ChartRecords,
-two ChartDefinitions, Standard and Tight AspectSets, and one Workspace. It lists current canonical
-resources, loads any pinned historical revisions referenced by workspaces, restores the
-deterministic Workspace resource, creates synchronous read projections, marks the active view
-`Loading`, and queues its first calculation. Interrupted bootstrap retries inspect each stable ID
-and create only missing resources; deleted or wrong-kind bootstrap identities fail initialization
-instead of being silently replaced. General atomic multi-resource chart creation remains deferred.
-Normal XALEN browser construction uses the same stable seed identities with the two example chart
-definitions explicitly requesting apparent-place corrections. An untouched legacy seed definition
-is migrated to that profile as a new revision; any user-modified definition is preserved. Native
-inline XALEN construction uses `RealApplication::with_xalen_backend` and the same profile.
+Initialization lists whatever canonical resources exist and loads pinned historical revisions
+before applying an application-level `StartupPolicy`. `RestorePreviousSession` is the default;
+because session recovery is not implemented yet, it falls back to `CurrentTransits`.
+`BlankWorkspace`, `OpenWorkspace(id)`, and the future-facing `OpenWorkspaces(ids)` forms are also
+represented. The current UI activates only the first requested workspace.
 
-The bootstrap Workspace stores its AspectSet as `Follow(Standard)`. Point sets, analysis profile,
-theme, wheel template, and view document are honest inline values with no fabricated identity. The
-resolver calls the core `resolve_binding` implementation for Follow, Pinned, and Inline; pinned
-history is hydrated before synchronous projection and computation.
+A genuinely empty repository is valid. Fresh startup creates an unsaved `WorkspaceSession` with
+one ephemeral Current Transits `ChartDraft`, a single wheel, system UTC time, tropical geocentric
+positions, the currently supported six-point set, no houses, and no asserted location. This path
+does not write a `ChartRecord`, `ChartDefinition`, or `WorkspaceDocument`, request geolocation, or
+invent coordinates. The XALEN constructor selects its required apparent-place correction profile;
+the deterministic test constructor selects the baseline no-correction profile.
+
+The seven-resource example set remains available only through the explicit `demo_resources()` or
+`apparent_place_demo_resources()` bundle. Tests and the browser reload contract load that bundle
+deliberately and open its saved workspace through `StartupPolicy::OpenWorkspace`. The demo
+workspace stores its AspectSet as `Follow(Standard)`; its other bindings are honest inline values.
+The resolver calls core `resolve_binding` for Follow, Pinned, and Inline, and pinned history is
+hydrated before projection and computation.
+
+`CalculationEngine::resolve` accepts payload-only `ChartRecord` plus `CalculationSpec` semantics.
+Canonical preparation adds resource revision context separately; draft preparation attaches a
+`SnapshotContext` with no canonical identities. Geocentric no-house calculation accepts absent
+location. Topocentric calculation, houses, and local-mean-time resolution fail explicitly when
+their required observer assertion is absent.
 
 Calculation requests are submitted through `CalculationRuntime` as soon as the authoritative
 intent is prepared. Native inline and controlled runtimes use the exact versioned worker protocol.

@@ -19,7 +19,7 @@ use mirabile_engine::{
     AspectAnalyzer, CalcKey, CalculationEngine, CalculationOutcome, CalculationRequestId,
     CalculationWorkerFailure, CalculationWorkerFailureCategory, CalculationWorkerRequest,
     CalculationWorkerResult, ComputationCache, DeterministicBackend, ImplementationIdentity,
-    PreparedCalculation, Scene, WorkerProtocolVersion, layout_wheel, render_key,
+    PreparedCalculation, Scene, SnapshotContext, WorkerProtocolVersion, layout_wheel, render_key,
 };
 #[cfg(target_arch = "wasm32")]
 use mirabile_store::ResourceTombstone;
@@ -32,26 +32,25 @@ use crate::{
     BindingSourceSummary, CalculationRuntime, CalculationRuntimeError, ChartPersistence,
     ChartSlotAssignment, CommandCapability, DraftState, InlineCalculationRuntime,
     InspectorReadModel, LibraryChartSummary, LibraryReadModel, OpenChartSummary, ProjectionVersion,
-    ResourceBindingSummary, ResourceEditorReadModel, ViewComputationState, ViewReadModel,
-    ViewSummary, WorkspaceReadModel, WorkspaceSession, bootstrap_ids, bootstrap_resources,
+    ResourceBindingSummary, ResourceEditorReadModel, StartupCalculationProfile, StartupPolicy,
+    ViewComputationState, ViewReadModel, ViewSummary, WorkspaceReadModel, WorkspaceSession,
+    blank_workspace_session, current_transits_session, current_unix_millis,
     workspace_commands::apply_workspace_command,
 };
-#[cfg(feature = "xalen-backend")]
-use crate::{apparent_place_bootstrap_resources, migrate_legacy_bootstrap_resource};
 #[cfg(feature = "xalen-backend")]
 use mirabile_engine::XalenBackend;
 
 pub const DEFAULT_INDEXED_DB_NAME: &str = "mirabile";
 
-type BootstrapResources = fn() -> Vec<CanonicalResource>;
-type BootstrapMigration = fn(&CanonicalResource, &CanonicalResource) -> Option<CanonicalResource>;
+type Clock = fn() -> i64;
 
 pub struct RealApplication<R, C = InlineCalculationRuntime<DeterministicBackend>> {
     repository: R,
     engine: CalculationEngine,
     runtime: C,
-    bootstrap_resources: BootstrapResources,
-    bootstrap_migration: Option<BootstrapMigration>,
+    startup_policy: StartupPolicy,
+    startup_calculation_profile: StartupCalculationProfile,
+    clock: Clock,
     runtime_receive_gate: Mutex<()>,
     state: RefCell<RealState>,
 }
@@ -62,6 +61,14 @@ where
 {
     pub fn with_repository(repository: R) -> Self {
         Self::with_backend(repository, DeterministicBackend)
+    }
+
+    pub fn with_repository_and_policy(repository: R, startup_policy: StartupPolicy) -> Self {
+        Self::with_runtime_and_policy(
+            repository,
+            InlineCalculationRuntime::new(DeterministicBackend),
+            startup_policy,
+        )
     }
 }
 
@@ -84,14 +91,29 @@ where
     C: CalculationRuntime,
 {
     pub fn with_runtime(repository: R, runtime: C) -> Self {
-        Self::with_runtime_and_bootstrap(repository, runtime, bootstrap_resources, None)
+        Self::with_runtime_and_policy(repository, runtime, StartupPolicy::default())
     }
 
-    fn with_runtime_and_bootstrap(
+    pub fn with_runtime_and_policy(
         repository: R,
         runtime: C,
-        bootstrap: BootstrapResources,
-        migration: Option<BootstrapMigration>,
+        startup_policy: StartupPolicy,
+    ) -> Self {
+        Self::with_runtime_startup_profile_and_clock(
+            repository,
+            runtime,
+            startup_policy,
+            StartupCalculationProfile::Baseline,
+            current_unix_millis,
+        )
+    }
+
+    fn with_runtime_startup_profile_and_clock(
+        repository: R,
+        runtime: C,
+        startup_policy: StartupPolicy,
+        startup_calculation_profile: StartupCalculationProfile,
+        clock: Clock,
     ) -> Self {
         let descriptor = runtime.backend_descriptor();
         Self {
@@ -106,8 +128,9 @@ where
                 "deterministic-tz-v1",
             ),
             runtime,
-            bootstrap_resources: bootstrap,
-            bootstrap_migration: migration,
+            startup_policy,
+            startup_calculation_profile,
+            clock,
             runtime_receive_gate: Mutex::new(()),
             state: RefCell::new(RealState::default()),
         }
@@ -125,14 +148,18 @@ impl<R> RealApplication<R, InlineCalculationRuntime<XalenBackend>>
 where
     R: ResourceRepository + Clone,
 {
-    /// Constructs a native XALEN application with the apparent-place seed
-    /// profile required by that backend.
+    /// Constructs a native XALEN application with its required apparent-place profile.
     pub fn with_xalen_backend(repository: R) -> Self {
-        Self::with_runtime_and_bootstrap(
+        Self::with_xalen_backend_and_policy(repository, StartupPolicy::default())
+    }
+
+    pub fn with_xalen_backend_and_policy(repository: R, startup_policy: StartupPolicy) -> Self {
+        Self::with_runtime_startup_profile_and_clock(
             repository,
             InlineCalculationRuntime::new(XalenBackend),
-            apparent_place_bootstrap_resources,
-            Some(migrate_legacy_bootstrap_resource),
+            startup_policy,
+            StartupCalculationProfile::ApparentPlace,
+            current_unix_millis,
         )
     }
 }
@@ -224,11 +251,21 @@ impl RealApplication<IndexedDbRepositorySource, crate::WorkerCalculationRuntime>
         database_name: impl Into<String>,
         runtime: crate::WorkerCalculationRuntime,
     ) -> Self {
-        Self::with_runtime_and_bootstrap(
+        Self::indexed_db_with_runtime_and_policy(database_name, runtime, StartupPolicy::default())
+    }
+
+    #[cfg(feature = "xalen-backend")]
+    pub fn indexed_db_with_runtime_and_policy(
+        database_name: impl Into<String>,
+        runtime: crate::WorkerCalculationRuntime,
+        startup_policy: StartupPolicy,
+    ) -> Self {
+        Self::with_runtime_startup_profile_and_clock(
             IndexedDbRepositorySource::new(database_name),
             runtime,
-            apparent_place_bootstrap_resources,
-            Some(migrate_legacy_bootstrap_resource),
+            startup_policy,
+            StartupCalculationProfile::ApparentPlace,
+            current_unix_millis,
         )
     }
 
@@ -267,15 +304,15 @@ where
             Ok(hydrated) => {
                 let mut state = self.state.borrow_mut();
                 state.catalog = hydrated.catalog;
-                state.session = Some(WorkspaceSession::from_saved(&hydrated.workspace));
-                state.workspace = Some(hydrated.workspace);
+                state.session = Some(hydrated.session);
+                state.workspace = hydrated.workspace;
                 state.next_timestamp = hydrated.next_timestamp;
                 state.status = ApplicationStatus::Ready;
                 state.editor = None;
                 state.pending.clear();
                 state.inflight.clear();
                 state.notice = Some(info(
-                    "Canonical library and workspace hydrated; calculating the active view",
+                    "Canonical library hydrated and startup session established",
                 ));
                 state.ensure_view_runtimes();
                 self.submit_active_view_refresh(&mut state)?;
@@ -316,13 +353,18 @@ where
         match intent {
             AppIntent::OpenChart { .. }
             | AppIntent::CloseChart { .. }
-            | AppIntent::ActivateChart { .. }
-            | AppIntent::SetChartSelection { .. }
-            | AppIntent::SetActiveView { .. }
             | AppIntent::AssignChartSlot { .. }
             | AppIntent::SetWorkspaceAspectSet { .. } => {
                 self.dispatch_workspace_intent(&intent)?;
             }
+            AppIntent::ActivateChart { instance_id } => {
+                self.activate_session_chart(instance_id)?;
+            }
+            AppIntent::SetChartSelection {
+                instance_id,
+                selected,
+            } => self.set_session_chart_selection(instance_id, selected)?,
+            AppIntent::SetActiveView { view_id } => self.set_active_session_view(view_id)?,
             AppIntent::SaveWorkspace => self.save_workspace().await?,
             AppIntent::SetTemporaryPointHidden { point_id, hidden } => {
                 self.set_temporary_point_hidden(point_id, hidden)?;
@@ -390,7 +432,6 @@ where
     C: CalculationRuntime,
 {
     async fn hydrate(&self) -> AppResult<HydratedState> {
-        self.ensure_bootstrap().await?;
         let resources =
             self.repository.list(None).await.map_err(|error| {
                 initialization_error("Could not load canonical resources", &error)
@@ -403,69 +444,112 @@ where
         }
         self.hydrate_pinned_revisions(&mut catalog).await?;
 
-        let workspace_id = bootstrap_ids().workspace;
-        let workspace = catalog.workspace(workspace_id).cloned().ok_or_else(|| {
-            AppError::new(
-                AppErrorKind::Initialization,
-                format!("Bootstrap workspace {workspace_id} was not available after hydration"),
-            )
-        })?;
+        let (workspace, session) = self.startup_session(&catalog)?;
         Ok(HydratedState {
             catalog,
             workspace,
+            session,
             next_timestamp: latest_timestamp.saturating_add(1),
         })
     }
 
-    async fn ensure_bootstrap(&self) -> AppResult<()> {
-        for resource in (self.bootstrap_resources)() {
-            let id = resource.id();
-            match self.repository.get_head(id).await.map_err(|error| {
-                initialization_error(format!("Could not inspect bootstrap resource {id}"), &error)
-            })? {
-                None => match self.repository.create(resource.clone()).await {
-                    Ok(()) | Err(RepositoryError::AlreadyExists(_)) => {}
-                    Err(error) => {
-                        return Err(initialization_error(
-                            format!("Could not create bootstrap resource {id}"),
-                            &error,
-                        ));
-                    }
-                },
-                Some(ResourceState::Present(existing)) if existing.kind() == resource.kind() => {
-                    if let Some(migration) = self.bootstrap_migration
-                        && let Some(migrated) = migration(&existing, &resource)
-                    {
-                        self.repository
-                            .save(existing.revision(), migrated)
-                            .await
-                            .map_err(|error| {
-                                initialization_error(
-                                    format!("Could not migrate bootstrap resource {id}"),
-                                    &error,
-                                )
-                            })?;
-                    }
-                }
-                Some(ResourceState::Present(existing)) => {
-                    return Err(AppError::new(
-                        AppErrorKind::Initialization,
-                        format!(
-                            "Bootstrap identity {id} contains {:?}, expected {:?}",
-                            existing.kind(),
-                            resource.kind()
-                        ),
-                    ));
-                }
-                Some(ResourceState::Deleted(_)) => {
-                    return Err(AppError::new(
-                        AppErrorKind::Initialization,
-                        format!("Bootstrap resource {id} was deleted and cannot be recreated"),
-                    ));
-                }
-            }
+    fn activate_session_chart(&self, instance_id: InstanceId) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let session = state.session.as_mut().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })?;
+        if !session.contains_chart(instance_id) {
+            return Err(AppError::new(
+                AppErrorKind::NotFound,
+                format!("Chart instance {instance_id} is not open"),
+            ));
         }
-        Ok(())
+        session.active_chart = Some(instance_id);
+        state.notice = Some(info("Active chart changed; selection was preserved"));
+        state.advance()
+    }
+
+    fn set_session_chart_selection(
+        &self,
+        instance_id: InstanceId,
+        selected: bool,
+    ) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let session = state.session.as_mut().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })?;
+        if !session.contains_chart(instance_id) {
+            return Err(AppError::new(
+                AppErrorKind::NotFound,
+                format!("Chart instance {instance_id} is not open"),
+            ));
+        }
+        if selected && !session.selected_charts.contains(&instance_id) {
+            session.selected_charts.push(instance_id);
+        } else if !selected {
+            session.selected_charts.retain(|id| *id != instance_id);
+        }
+        state.notice = Some(info("Chart selection changed independently of activation"));
+        state.advance()
+    }
+
+    fn set_active_session_view(&self, view_id: ViewInstanceId) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let session = state.session.as_mut().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })?;
+        if !session.document.views.iter().any(|view| view.id == view_id) {
+            return Err(AppError::new(
+                AppErrorKind::NotFound,
+                format!("View {view_id} was not found"),
+            ));
+        }
+        session.active_view = Some(view_id);
+        self.submit_active_view_refresh(&mut state)?;
+        state.notice = Some(info("Active view changed and its projection is refreshing"));
+        state.advance()
+    }
+
+    fn startup_session(
+        &self,
+        catalog: &Catalog,
+    ) -> AppResult<(
+        Option<ResourceEnvelope<WorkspaceDocument>>,
+        WorkspaceSession,
+    )> {
+        let policy = match &self.startup_policy {
+            StartupPolicy::RestorePreviousSession => StartupPolicy::CurrentTransits,
+            policy => policy.clone(),
+        };
+        match policy {
+            StartupPolicy::CurrentTransits | StartupPolicy::RestorePreviousSession => Ok((
+                None,
+                current_transits_session((self.clock)(), self.startup_calculation_profile),
+            )),
+            StartupPolicy::BlankWorkspace => Ok((None, blank_workspace_session())),
+            StartupPolicy::OpenWorkspace(id) => Self::saved_startup_session(catalog, id),
+            StartupPolicy::OpenWorkspaces(ids) => ids.first().copied().map_or_else(
+                || Ok((None, blank_workspace_session())),
+                |id| Self::saved_startup_session(catalog, id),
+            ),
+        }
+    }
+
+    fn saved_startup_session(
+        catalog: &Catalog,
+        id: ResourceId,
+    ) -> AppResult<(
+        Option<ResourceEnvelope<WorkspaceDocument>>,
+        WorkspaceSession,
+    )> {
+        let workspace = catalog.workspace(id).cloned().ok_or_else(|| {
+            AppError::new(
+                AppErrorKind::Initialization,
+                format!("Requested startup WorkspaceDocument {id} was not found"),
+            )
+        })?;
+        let session = WorkspaceSession::from_saved(&workspace);
+        Ok((Some(workspace), session))
     }
 
     async fn hydrate_pinned_revisions(&self, catalog: &mut Catalog) -> AppResult<()> {
@@ -1241,48 +1325,79 @@ where
                     "The active view has no assigned chart",
                 )
             })?;
-        let workspace_chart = workspace
+        let (prepared, effective) = if let Some(workspace_chart) = workspace
             .chart_instances
             .iter()
             .find(|chart| chart.instance_id() == chart_instance)
-            .ok_or_else(|| {
-                AppError::new(
-                    AppErrorKind::ViewComputation,
-                    format!("Assigned chart {chart_instance} is not open"),
+        {
+            let definition_id = workspace_chart.definition;
+            let definition = state
+                .catalog
+                .chart_definition(definition_id)
+                .cloned()
+                .ok_or_else(|| not_found_for_view("ChartDefinition", definition_id))?;
+            let record_id = match definition.payload.source {
+                ChartSource::Radix { record } => record,
+                ChartSource::Derived { .. } => {
+                    return Err(AppError::new(
+                        AppErrorKind::ViewComputation,
+                        "Derived chart calculation remains intentionally deferred",
+                    ));
+                }
+            };
+            let record = state
+                .catalog
+                .chart_record(record_id)
+                .cloned()
+                .ok_or_else(|| not_found_for_view("ChartRecord", record_id))?;
+            let effective =
+                state.effective_configuration(&definition.payload.calculation, &view)?;
+            let mut effective_definition = definition;
+            effective_definition.payload.calculation = effective.calculation.value.clone();
+            let prepared = self
+                .engine
+                .prepare(
+                    &effective_definition,
+                    &record,
+                    &effective.displayed_points.value,
+                    &effective.aspected_points.value,
                 )
-            })?;
-        let definition_id = workspace_chart.definition;
-        let definition = state
-            .catalog
-            .chart_definition(definition_id)
-            .cloned()
-            .ok_or_else(|| not_found_for_view("ChartDefinition", definition_id))?;
-        let record_id = match definition.payload.source {
-            ChartSource::Radix { record } => record,
-            ChartSource::Derived { .. } => {
-                return Err(AppError::new(
-                    AppErrorKind::ViewComputation,
-                    "Derived chart calculation remains intentionally deferred",
-                ));
-            }
+                .map_err(view_computation_error)?;
+            (prepared, effective)
+        } else {
+            let draft = state
+                .session()?
+                .draft_charts
+                .iter()
+                .find(|chart| chart.instance_id == chart_instance)
+                .ok_or_else(|| {
+                    AppError::new(
+                        AppErrorKind::ViewComputation,
+                        format!("Assigned chart {chart_instance} is not open"),
+                    )
+                })?;
+            let effective = state.effective_configuration(&draft.draft.calculation, &view)?;
+            let prepared = self
+                .engine
+                .resolve(
+                    &draft.draft.record,
+                    &effective.calculation.value,
+                    &effective.displayed_points.value,
+                    &effective.aspected_points.value,
+                )
+                .map_err(view_computation_error)?
+                .with_context(SnapshotContext {
+                    definition: None,
+                    records: Vec::new(),
+                    location_display_name: draft
+                        .draft
+                        .record
+                        .location
+                        .as_ref()
+                        .map(|location| location.display_name.clone()),
+                });
+            (prepared, effective)
         };
-        let record = state
-            .catalog
-            .chart_record(record_id)
-            .cloned()
-            .ok_or_else(|| not_found_for_view("ChartRecord", record_id))?;
-        let effective = state.effective_configuration(&definition, &view)?;
-        let mut effective_definition = definition;
-        effective_definition.payload.calculation = effective.calculation.value.clone();
-        let prepared = self
-            .engine
-            .prepare(
-                &effective_definition,
-                &record,
-                &effective.displayed_points.value,
-                &effective.aspected_points.value,
-            )
-            .map_err(view_computation_error)?;
         Ok((
             prepared,
             ViewCalculationPlan {
@@ -1403,7 +1518,7 @@ impl RealState {
 
     fn effective_configuration(
         &self,
-        definition: &ResourceEnvelope<ChartDefinition>,
+        calculation_spec: &CalculationSpec,
         view: &ViewInstance,
     ) -> AppResult<EffectiveConfiguration> {
         let workspace = self.workspace().ok_or_else(|| {
@@ -1413,7 +1528,7 @@ impl RealState {
             built_in: CalculationSpec::default(),
             user_default: None,
             workspace: None,
-            chart_definition: Some(definition.payload.calculation.clone()),
+            chart_definition: Some(calculation_spec.clone()),
             view_override: None,
             editor_preview: None,
         }
@@ -1651,11 +1766,17 @@ impl RealState {
         })?;
         let session = self.session()?;
         let library_charts = self.catalog.library_charts()?;
-        let open_charts = workspace
+        let mut open_charts = workspace
             .chart_instances
             .iter()
             .map(|chart| self.catalog.open_chart_summary(chart))
             .collect::<AppResult<Vec<_>>>()?;
+        open_charts.extend(session.draft_charts.iter().map(|chart| OpenChartSummary {
+            instance_id: chart.instance_id,
+            title: chart.draft.title.clone(),
+            subtitle: chart_record_subtitle(&chart.draft.record),
+            persistence: ChartPersistence::Ephemeral,
+        }));
         let active_chart = session.active_chart.and_then(|active_id| {
             open_charts
                 .iter()
@@ -1869,7 +1990,8 @@ impl RealState {
 
 struct HydratedState {
     catalog: Catalog,
-    workspace: ResourceEnvelope<WorkspaceDocument>,
+    workspace: Option<ResourceEnvelope<WorkspaceDocument>>,
+    session: WorkspaceSession,
     next_timestamp: i64,
 }
 
@@ -1945,9 +2067,10 @@ impl Catalog {
             })
             .map(|definition| {
                 let subtitle = match definition.payload.source {
-                    ChartSource::Radix { record } => self
-                        .chart_record(record)
-                        .map_or_else(|| "Missing source record".into(), chart_subtitle),
+                    ChartSource::Radix { record } => self.chart_record(record).map_or_else(
+                        || "Missing source record".into(),
+                        |record| chart_record_subtitle(&record.payload),
+                    ),
                     ChartSource::Derived { .. } => "Derived chart".into(),
                 };
                 Ok(LibraryChartSummary {
@@ -1964,9 +2087,10 @@ impl Catalog {
             .chart_definition(chart.definition)
             .ok_or_else(|| not_found("ChartDefinition", chart.definition))?;
         let subtitle = match definition_envelope.payload.source {
-            ChartSource::Radix { record } => self
-                .chart_record(record)
-                .map_or_else(|| "Missing source record".into(), chart_subtitle),
+            ChartSource::Radix { record } => self.chart_record(record).map_or_else(
+                || "Missing source record".into(),
+                |record| chart_record_subtitle(&record.payload),
+            ),
             ChartSource::Derived { .. } => "Derived chart".into(),
         };
         Ok(OpenChartSummary {
@@ -2183,8 +2307,8 @@ fn push_pin<T>(binding: &ResourceBinding<T>, output: &mut Vec<(ResourceId, Revis
     }
 }
 
-fn chart_subtitle(record: &ResourceEnvelope<ChartRecord>) -> String {
-    let date = record.payload.time.civil_datetime.date;
+fn chart_record_subtitle(record: &ChartRecord) -> String {
+    let date = record.time.civil_datetime.date;
     let month = match date.month() {
         1 => "Jan",
         2 => "Feb",
@@ -2204,7 +2328,12 @@ fn chart_subtitle(record: &ResourceEnvelope<ChartRecord>) -> String {
         "{month} {}, {} · {}",
         date.day(),
         date.year(),
-        record.payload.location.display_name
+        record
+            .location
+            .as_ref()
+            .map_or("Location unknown", |location| location
+                .display_name
+                .as_str())
     )
 }
 
@@ -2352,6 +2481,8 @@ mod tests {
         CalculationBackendErrorCategory, CalculationBackendResult, ResolvedCalculationRequest,
     };
     use mirabile_store::ResourceTombstone;
+
+    use crate::{demo_ids, demo_resources};
 
     use super::*;
 
@@ -2616,6 +2747,62 @@ mod tests {
             .state
     }
 
+    fn ensure_demo<R>(repository: &R)
+    where
+        R: ResourceRepository + Clone,
+    {
+        for resource in demo_resources() {
+            if block_on(repository.get_head(resource.id()))
+                .expect("demo identity can be inspected")
+                .is_none()
+            {
+                block_on(repository.create(resource)).expect("demo resource can be created");
+            }
+        }
+    }
+
+    fn demo_application<R>(
+        repository: R,
+    ) -> RealApplication<R, InlineCalculationRuntime<DeterministicBackend>>
+    where
+        R: ResourceRepository + Clone,
+    {
+        ensure_demo(&repository);
+        RealApplication::with_repository_and_policy(
+            repository,
+            StartupPolicy::OpenWorkspace(demo_ids().workspace),
+        )
+    }
+
+    fn demo_backend_application<R, B>(
+        repository: R,
+        backend: B,
+    ) -> RealApplication<R, InlineCalculationRuntime<B>>
+    where
+        R: ResourceRepository + Clone,
+        B: CalculationBackend + Clone,
+    {
+        ensure_demo(&repository);
+        RealApplication::with_runtime_and_policy(
+            repository,
+            InlineCalculationRuntime::new(backend),
+            StartupPolicy::OpenWorkspace(demo_ids().workspace),
+        )
+    }
+
+    fn demo_runtime_application<R, C>(repository: R, runtime: C) -> RealApplication<R, C>
+    where
+        R: ResourceRepository + Clone,
+        C: CalculationRuntime,
+    {
+        ensure_demo(&repository);
+        RealApplication::with_runtime_and_policy(
+            repository,
+            runtime,
+            StartupPolicy::OpenWorkspace(demo_ids().workspace),
+        )
+    }
+
     #[derive(Clone, Copy)]
     enum TestViewDocumentBinding {
         Inline,
@@ -2625,25 +2812,25 @@ mod tests {
 
     fn repository_with_view_document_binding(binding: TestViewDocumentBinding) -> MemoryRepository {
         let repository = MemoryRepository::default();
-        let bootstrap = RealApplication::with_repository(repository.clone());
-        ready(&bootstrap);
-        drop(bootstrap);
+        let demo = demo_application(repository.clone());
+        ready(&demo);
+        drop(demo);
 
         if matches!(binding, TestViewDocumentBinding::Inline) {
             return repository;
         }
 
-        let workspace_id = bootstrap_ids().workspace;
+        let workspace_id = demo_ids().workspace;
         let CanonicalResource::WorkspaceDocument(workspace) =
             block_on(repository.get(workspace_id))
                 .expect("workspace read succeeds")
                 .expect("workspace exists")
         else {
-            panic!("bootstrap resource is a WorkspaceDocument");
+            panic!("demo resource is a WorkspaceDocument");
         };
         let ResourceBinding::Inline { value: document } = &workspace.payload.views[0].document
         else {
-            panic!("bootstrap ViewDocument is inline");
+            panic!("demo ViewDocument is inline");
         };
         let document_id = ResourceId::new();
         let first = ResourceEnvelope::with_id(
@@ -2688,9 +2875,9 @@ mod tests {
     }
 
     fn assert_close_repair_uses_resolved_view_document(repository: MemoryRepository) {
-        let application = RealApplication::with_repository(repository);
+        let application = demo_application(repository);
         let initial = ready(&application);
-        let ids = bootstrap_ids();
+        let ids = demo_ids();
         let view_id = initial.workspace.active_view.expect("active view");
         let view = initial.active_view.expect("active view projection");
         let required = view
@@ -2771,9 +2958,9 @@ mod tests {
     }
 
     #[test]
-    fn initialization_is_versioned_snapshot_is_immediate_and_bootstrap_is_idempotent() {
+    fn initialization_is_versioned_and_snapshot_is_immediate() {
         let repository = MemoryRepository::default();
-        let first = RealApplication::with_repository(repository.clone());
+        let first = demo_application(repository.clone());
         let initial = block_on(first.snapshot()).expect("snapshot succeeds");
         assert_eq!(initial.version, ProjectionVersion::INITIAL);
         assert_eq!(initial.status, ApplicationStatus::Initializing);
@@ -2794,10 +2981,30 @@ mod tests {
             Some(ViewComputationState::Fresh)
         ));
 
-        let second = RealApplication::with_repository(repository.clone());
+        let second = demo_application(repository.clone());
         ready(&second);
         assert_eq!(repository.current_count(), 7);
         assert_eq!(repository.revision_count(), 7);
+    }
+
+    #[test]
+    fn genuinely_empty_repository_starts_ephemeral_current_transits_without_writes() {
+        let repository = MemoryRepository::default();
+        let application = RealApplication::with_repository(repository.clone());
+        let projection = ready(&application);
+
+        assert!(projection.library.charts.is_empty());
+        assert!(projection.library.aspect_sets.is_empty());
+        assert_eq!(projection.workspace.charts.len(), 1);
+        assert_eq!(
+            projection.workspace.charts[0].persistence,
+            ChartPersistence::Ephemeral
+        );
+        assert_eq!(projection.workspace.document_id, None);
+        assert_eq!(projection.workspace.document_revision, None);
+        assert!(!projection.workspace.document_dirty);
+        assert_eq!(repository.current_count(), 0);
+        assert_eq!(repository.revision_count(), 0);
     }
 
     #[cfg(feature = "xalen-backend")]
@@ -2838,9 +3045,9 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     fn workspace_dirty_save_and_session_navigation_semantics() {
         let repository = MemoryRepository::default();
-        let application = RealApplication::with_repository(repository.clone());
+        let application = demo_application(repository.clone());
         let initial = ready(&application);
-        let ids = bootstrap_ids();
+        let ids = demo_ids();
         let view_id = initial.workspace.active_view.expect("active view");
         let required_slot = initial
             .active_view
@@ -2967,7 +3174,7 @@ mod tests {
             Some(2)
         );
 
-        let reloaded = RealApplication::with_repository(repository);
+        let reloaded = demo_application(repository);
         let restored = ready(&reloaded);
         assert_eq!(restored.workspace.active_chart, Some(chart_b));
         assert_eq!(
@@ -2980,9 +3187,9 @@ mod tests {
     #[test]
     fn temporary_display_override_requires_explicit_promotion_and_workspace_save() {
         let repository = MemoryRepository::default();
-        let application = RealApplication::with_repository(repository.clone());
+        let application = demo_application(repository.clone());
         let initial = ready(&application);
-        let ids = bootstrap_ids();
+        let ids = demo_ids();
         assert!(!initial.workspace.document_dirty);
         let sun = PointId::new("sun").expect("point ID");
 
@@ -3024,11 +3231,11 @@ mod tests {
         let repository = MemoryRepository::default();
         let backend = ControlledBackend::new();
         let calls = Rc::clone(&backend.calls);
-        let application = RealApplication::with_backend(repository, backend);
+        let application = demo_backend_application(repository, backend);
         let initial = ready(&application);
         assert_eq!(calls.get(), 1);
         let original_scene = initial.active_view.unwrap().scene.expect("initial Scene");
-        let standard = bootstrap_ids().aspect_set_standard;
+        let standard = demo_ids().aspect_set_standard;
 
         let begin = block_on(application.dispatch(AppIntent::BeginAspectSetEdit {
             resource_id: standard,
@@ -3099,9 +3306,9 @@ mod tests {
     #[test]
     fn optimistic_conflict_retains_local_draft_and_cancel_adopts_remote() {
         let repository = MemoryRepository::default();
-        let application = RealApplication::with_repository(repository.clone());
+        let application = demo_application(repository.clone());
         ready(&application);
-        let standard = bootstrap_ids().aspect_set_standard;
+        let standard = demo_ids().aspect_set_standard;
         block_on(application.dispatch(AppIntent::BeginAspectSetEdit {
             resource_id: standard,
         }))
@@ -3119,7 +3326,7 @@ mod tests {
             .expect("repository read succeeds")
             .expect("Aspect Set exists")
         else {
-            panic!("bootstrap resource is an Aspect Set");
+            panic!("demo resource is an Aspect Set");
         };
         let mut remote_payload = remote_one.payload.clone();
         remote_payload
@@ -3174,9 +3381,9 @@ mod tests {
     #[test]
     fn conflict_remote_read_failure_settles_dirty_and_allows_cancel_and_retry() {
         let repository = SaveFailureRepository::new(InjectedSaveFailure::ConflictThenReadFailure);
-        let application = RealApplication::with_repository(repository);
+        let application = demo_application(repository);
         ready(&application);
-        let standard = bootstrap_ids().aspect_set_standard;
+        let standard = demo_ids().aspect_set_standard;
         block_on(application.dispatch(AppIntent::BeginAspectSetEdit {
             resource_id: standard,
         }))
@@ -3269,10 +3476,10 @@ mod tests {
     #[test]
     fn generic_repository_save_failure_settles_dirty_and_can_retry() {
         let repository = SaveFailureRepository::new(InjectedSaveFailure::Adapter);
-        let application = RealApplication::with_repository(repository);
+        let application = demo_application(repository);
         ready(&application);
         block_on(application.dispatch(AppIntent::BeginAspectSetEdit {
-            resource_id: bootstrap_ids().aspect_set_standard,
+            resource_id: demo_ids().aspect_set_standard,
         }))
         .expect("begin succeeds");
         let dirty = block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
@@ -3317,10 +3524,10 @@ mod tests {
 
     #[test]
     fn update_notification_is_non_consuming_for_multiple_waiters() {
-        let application = RealApplication::in_memory();
+        let application = demo_application(MemoryRepository::default());
         ready(&application);
         block_on(application.dispatch(AppIntent::BeginAspectSetEdit {
-            resource_id: bootstrap_ids().aspect_set_standard,
+            resource_id: demo_ids().aspect_set_standard,
         }))
         .expect("begin succeeds");
         let refreshing = block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
@@ -3348,7 +3555,7 @@ mod tests {
     #[test]
     fn asynchronous_worker_result_advances_all_projection_waiters_without_double_receive() {
         let runtime = ControlledCalculationRuntime::new();
-        let application = Rc::new(RealApplication::with_runtime(
+        let application = Rc::new(demo_runtime_application(
             MemoryRepository::default(),
             runtime.clone(),
         ));
@@ -3398,7 +3605,7 @@ mod tests {
 
     #[test]
     fn registered_waiters_are_broadcast_a_later_dispatch_transition() {
-        let application = RealApplication::in_memory();
+        let application = demo_application(MemoryRepository::default());
         let ready = ready(&application);
         let after = ready.version;
         let active = ready.workspace.active_chart.expect("active chart");
@@ -3425,11 +3632,11 @@ mod tests {
         let repository = MemoryRepository::default();
         let backend = ControlledBackend::new();
         let fail_next = Rc::clone(&backend.fail_next);
-        let application = RealApplication::with_backend(repository, backend);
+        let application = demo_backend_application(repository, backend);
         let initial = ready(&application);
         let original = initial.active_view.unwrap().scene.expect("initial Scene");
         let opened = block_on(application.dispatch(AppIntent::OpenChart {
-            definition_id: bootstrap_ids().chart_definition_b,
+            definition_id: demo_ids().chart_definition_b,
         }))
         .expect("chart B opens");
         let chart_b = opened.workspace.active_chart.expect("chart B active");
@@ -3480,8 +3687,7 @@ mod tests {
     #[allow(clippy::similar_names)]
     fn latest_request_wins_when_controlled_runtime_completes_successes_out_of_order() {
         let runtime = ControlledCalculationRuntime::new();
-        let application =
-            RealApplication::with_runtime(MemoryRepository::default(), runtime.clone());
+        let application = demo_runtime_application(MemoryRepository::default(), runtime.clone());
         let initial = controlled_ready(&application, &runtime);
         let scene_zero = initial
             .active_view
@@ -3557,8 +3763,7 @@ mod tests {
     #[allow(clippy::similar_names)]
     fn stale_failure_cannot_overwrite_newer_success() {
         let runtime = ControlledCalculationRuntime::new();
-        let application =
-            RealApplication::with_runtime(MemoryRepository::default(), runtime.clone());
+        let application = demo_runtime_application(MemoryRepository::default(), runtime.clone());
         let initial = controlled_ready(&application, &runtime);
         let scene_zero = initial
             .active_view
@@ -3606,8 +3811,7 @@ mod tests {
     #[test]
     fn current_request_with_calc_key_mismatch_is_rejected_as_integrity_failure() {
         let runtime = ControlledCalculationRuntime::new();
-        let application =
-            RealApplication::with_runtime(MemoryRepository::default(), runtime.clone());
+        let application = demo_runtime_application(MemoryRepository::default(), runtime.clone());
         let initial = controlled_ready(&application, &runtime);
         let last_good = initial
             .active_view
@@ -3650,9 +3854,9 @@ mod tests {
     #[test]
     fn memory_repository_reload_restores_saved_document_not_session_navigation() {
         let repository = MemoryRepository::default();
-        let first = RealApplication::with_repository(repository.clone());
+        let first = demo_application(repository.clone());
         ready(&first);
-        let ids = bootstrap_ids();
+        let ids = demo_ids();
         let opened = block_on(first.dispatch(AppIntent::OpenChart {
             definition_id: ids.chart_definition_b,
         }))
@@ -3675,7 +3879,7 @@ mod tests {
         block_on(first.dispatch(AppIntent::SaveWorkspace)).expect("workspace saves explicitly");
         drop(first);
 
-        let second = RealApplication::with_repository(repository);
+        let second = demo_application(repository);
         let restored = ready(&second);
         assert_eq!(restored.workspace.active_chart, Some(ids.chart_instance_a));
         assert!(restored.workspace.selected_charts.is_empty());
@@ -3749,9 +3953,9 @@ mod tests {
     #[test]
     fn initialization_hydrates_pinned_history_and_projects_true_binding_sources() {
         let repository = MemoryRepository::default();
-        let bootstrap = RealApplication::with_repository(repository.clone());
-        ready(&bootstrap);
-        let ids = bootstrap_ids();
+        let demo = demo_application(repository.clone());
+        ready(&demo);
+        let ids = demo_ids();
 
         let CanonicalResource::AspectSet(standard_one) =
             block_on(repository.get(ids.aspect_set_standard))
@@ -3777,7 +3981,7 @@ mod tests {
                 .expect("repository read succeeds")
                 .expect("WorkspaceDocument exists")
         else {
-            panic!("bootstrap resource is a WorkspaceDocument");
+            panic!("demo resource is a WorkspaceDocument");
         };
         let mut pinned_payload = workspace_one.payload.clone();
         pinned_payload.profile.aspects = ResourceBinding::Pinned {
@@ -3792,9 +3996,9 @@ mod tests {
             CanonicalResource::WorkspaceDocument(workspace_two),
         ))
         .expect("WorkspaceDocument pin saves");
-        drop(bootstrap);
+        drop(demo);
 
-        let application = RealApplication::with_repository(repository);
+        let application = demo_application(repository);
         let restored = ready(&application);
         let aspect_binding = restored
             .inspector

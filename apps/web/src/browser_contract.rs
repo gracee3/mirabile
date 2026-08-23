@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 use mirabile_app::{
     AppIntent, AppReadModel, Application, AspectSetDraftMutation, ChartPersistence, DraftState,
-    IndexedDbRepositorySource, RealApplication, ViewComputationState, WorkerCalculationRuntime,
-    bootstrap_ids,
+    IndexedDbRepositorySource, RealApplication, StartupPolicy, ViewComputationState,
+    WorkerCalculationRuntime, apparent_place_demo_resources, demo_ids,
 };
 use mirabile_core::{
     Angle, AspectId, CanonicalResource, PointId, PointSelector, PointSet, ResourceEnvelope,
@@ -175,9 +175,40 @@ async fn run_contract() -> Result<(), String> {
 
 async fn run_real_application_reload() -> Result<(), String> {
     let database_name = format!("mirabile-real-application-contract-{}", ResourceId::new());
-    let ids = bootstrap_ids();
+    let ids = demo_ids();
+    let empty_repository = IndexedDbRepository::open(&database_name)
+        .await
+        .map_err(message)?;
+    let fresh_runtime = WorkerCalculationRuntime::xalen();
+    let fresh = RealApplication::indexed_db_with_runtime(&database_name, fresh_runtime.clone());
+    let fresh_ready = settle_initialization(&fresh).await?;
+    ensure(
+        fresh_ready.library.charts.is_empty()
+            && fresh_ready.library.aspect_sets.is_empty()
+            && fresh_ready.workspace.document_id.is_none()
+            && fresh_ready.workspace.charts.len() == 1
+            && fresh_ready.workspace.charts[0].persistence == ChartPersistence::Ephemeral,
+        "empty IndexedDB did not start an ephemeral Current Transits session",
+    )?;
+    ensure(
+        empty_repository
+            .list(None)
+            .await
+            .map_err(message)?
+            .is_empty(),
+        "Current Transits startup polluted the canonical IndexedDB library",
+    )?;
+    drop(fresh);
+
+    for resource in apparent_place_demo_resources() {
+        empty_repository.create(resource).await.map_err(message)?;
+    }
     let first_runtime = WorkerCalculationRuntime::xalen();
-    let first = RealApplication::indexed_db_with_runtime(&database_name, first_runtime.clone());
+    let first = RealApplication::indexed_db_with_runtime_and_policy(
+        &database_name,
+        first_runtime.clone(),
+        StartupPolicy::OpenWorkspace(ids.workspace),
+    );
     let first_ready = settle_initialization(&first).await?;
     ensure(
         first_ready.active_view.as_ref().is_some_and(|view| {
@@ -274,7 +305,11 @@ async fn run_real_application_reload() -> Result<(), String> {
     drop(first);
 
     let second_runtime = WorkerCalculationRuntime::xalen();
-    let second = RealApplication::indexed_db_with_runtime(&database_name, second_runtime.clone());
+    let second = RealApplication::indexed_db_with_runtime_and_policy(
+        &database_name,
+        second_runtime.clone(),
+        StartupPolicy::OpenWorkspace(ids.workspace),
+    );
     let restored = settle_initialization(&second).await?;
     ensure(
         restored.workspace.active_chart == Some(ids.chart_instance_a),

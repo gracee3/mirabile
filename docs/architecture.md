@@ -112,8 +112,14 @@ is test/demo-only and not astronomical authority. Its honest capability surface 
 geocentric celestial output with no corrections, its checked-in point catalog, and Equal houses.
 It rejects sidereal, topocentric, heliocentric, enabled-correction, Placidus, Whole Sign, derived,
 and unknown-point requests rather than echoing unimplemented semantics into provenance. The
-bootstrap chart definitions explicitly select Equal houses for this fixture; Mirabile's canonical
+explicit demo chart definitions select Equal houses for this fixture; Mirabile's canonical
 `CalculationSpec` default remains unchanged.
+
+Observer location is an optional factual assertion on `ChartRecord`. Absence means unknown or not
+applicable; it never means Greenwich or zero coordinates. The provider-neutral calculation request
+therefore also carries optional numeric location. Geocentric, no-house celestial positions can run
+without it, while topocentric positions, houses/angles, and local mean time reject absence with a
+typed error.
 
 ## Content-addressed invalidation
 

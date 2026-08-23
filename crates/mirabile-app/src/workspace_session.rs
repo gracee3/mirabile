@@ -5,6 +5,14 @@ use mirabile_core::{
     WorkspaceDocument,
 };
 
+use crate::ChartDraft;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorkspaceSessionDraftChart {
+    pub instance_id: InstanceId,
+    pub draft: ChartDraft,
+}
+
 /// Whether a session's durable projection has a canonical saved document.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkspaceDocumentBacking {
@@ -26,6 +34,7 @@ pub struct WorkspaceSession {
     pub active_chart: Option<InstanceId>,
     pub selected_charts: Vec<InstanceId>,
     pub active_view: Option<ViewInstanceId>,
+    pub draft_charts: Vec<WorkspaceSessionDraftChart>,
     pub temporary_view_overrides: BTreeMap<ViewInstanceId, ViewOverrides>,
     pub document_dirty: bool,
 }
@@ -45,6 +54,25 @@ impl WorkspaceSession {
             selected_charts: Vec::new(),
             active_view: document.payload.views.first().map(|view| view.id),
             document: document.payload.clone(),
+            draft_charts: Vec::new(),
+            temporary_view_overrides: BTreeMap::new(),
+            document_dirty: false,
+        }
+    }
+
+    pub fn unsaved(document: WorkspaceDocument) -> Self {
+        let active_chart = document
+            .chart_instances
+            .first()
+            .map(|chart| chart.instance_id);
+        let active_view = document.views.first().map(|view| view.id);
+        Self {
+            backing: WorkspaceDocumentBacking::Unsaved,
+            document,
+            active_chart,
+            selected_charts: Vec::new(),
+            active_view,
+            draft_charts: Vec::new(),
             temporary_view_overrides: BTreeMap::new(),
             document_dirty: false,
         }
@@ -67,5 +95,9 @@ impl WorkspaceSession {
             .chart_instances
             .iter()
             .any(|chart| chart.instance_id == instance_id)
+            || self
+                .draft_charts
+                .iter()
+                .any(|chart| chart.instance_id == instance_id)
     }
 }

@@ -69,6 +69,7 @@ pub enum SourceType {
     Published,
     Research,
     UserAssertion,
+    SystemClock,
     Unknown,
 }
 
@@ -91,7 +92,8 @@ pub struct ChartRecord {
     pub event_kind: EventKind,
     pub subject: Option<SubjectInfo>,
     pub time: TemporalAssertion,
-    pub location: LocationAssertion,
+    /// Truthful observer/source location, when asserted and applicable.
+    pub location: Option<LocationAssertion>,
     pub source: SourceProvenance,
     pub notes: Vec<Note>,
     pub life_events: Vec<LifeEvent>,
@@ -258,9 +260,11 @@ impl DomainValidate for ChartRecord {
         self.time
             .domain_validate()
             .map_err(|error| error.prepend("time"))?;
-        self.location
-            .domain_validate()
-            .map_err(|error| error.prepend("location"))?;
+        if let Some(location) = &self.location {
+            location
+                .domain_validate()
+                .map_err(|error| error.prepend("location"))?;
+        }
         nonempty(&self.source.description, "source.description")?;
         if let Some(recorded_by) = &self.source.recorded_by {
             nonempty(recorded_by, "source.recorded_by")?;

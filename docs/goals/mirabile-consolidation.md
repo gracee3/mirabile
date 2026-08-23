@@ -5,7 +5,7 @@
 - Base: `63f081b3c9b0becf5238bdbe2cf3b6964bf09f85` (`origin/main`)
 - Branch: `goal/mirabile-consolidation`
 - Worktree: `/home/emmy/worktrees/mirabile-consolidation`
-- Current phase: 4 - empty-install startup, Current Transits, and optional location
+- Current phase: 5 - ChartDraft lifecycle and atomic chart creation
 - Delivery: unmerged goal branch; push only after the complete validation phase
 
 ## Frozen architecture
@@ -41,6 +41,11 @@
 - Application-owned `WorkspaceSession` now holds the document working copy plus active/selected chart, active view, temporary view overrides, backing revision, and dirty state. Navigation never dirties or persists the document.
 - Opening/closing saved charts, slot assignment, workspace binding changes, and promotion mark the working document dirty. `SaveWorkspace` alone writes the next canonical revision. A temporary hidden-point override proves session-only behavior and promotion into durable configuration.
 - The authority/lifetime model is documented independently: Canonical/Derived authority is separate from Library/Saved workspace/Session/Draft/Cache/Sync metadata lifetime.
+- Phase 4 removed automatic canonical demo installation. `StartupPolicy` now models restore, Current Transits, blank, and explicit workspace opening; restore currently falls back to Current Transits because recovery is intentionally deferred.
+- Empty memory and IndexedDB repositories initialize successfully and remain canonically empty. The explicit `demo_resources()` bundles are loaded only by tests or an eventual user-facing demo command.
+- Fresh Current Transits is an unsaved session `ChartDraft` using the browser/system UTC clock, tropical geocentric positions, the supported Sun-through-Jupiter set, a single wheel, no houses, no geolocation request, and no asserted location.
+- `ChartRecord::location`, provider-neutral numeric calculation location, `CalculationValue` location, and snapshot display location are optional. Geocentric no-house positions accept absence; topocentric positions, houses/angles, and local mean time fail with typed location-required errors.
+- `CalculationEngine::resolve` prepares payload-only semantics independently of resource identity. Canonical calculations attach resource revisions afterward; draft calculations attach an explicitly non-canonical `SnapshotContext`.
 
 ## Validation status
 
@@ -48,7 +53,8 @@
 - Phase 1: `cargo fmt --all -- --check`, `cargo test --workspace` (99 tests), strict workspace Clippy, `mirabile-web` WASM check, XALEN dependency guard, browser IndexedDB/Worker contract, and `git diff --check` passed.
 - Phase 2: documentation link targets inspected; `cargo fmt --all -- --check`, `cargo test -p mirabile-app` (27 tests), and `git diff --check` passed.
 - Phase 3: `cargo test --workspace` (100 tests), strict workspace Clippy, Chromium IndexedDB/Worker reload contract with explicit workspace save, formatting, and `git diff --check` passed.
-- Phase-focused checks: phase 4 onward pending.
+- Phase 4: package suite (105 native tests, including XALEN-enabled coverage), strict workspace Clippy, engine/web WASM checks, Chromium empty-IndexedDB plus explicit-demo reload/Worker contract, formatting, and `git diff --check` passed.
+- Phase-focused checks: phase 5 onward pending.
 - Full local verification: pending.
 
 ## Deferred work

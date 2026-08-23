@@ -83,7 +83,9 @@ browser wiring constructs the XALEN descriptor on the UI thread and the XALEN
 backend inside the calculation Worker; the worker protocol, canonical resources,
 `CalculationValue`, analysis, layout, and frontend remain XALEN-free.
 Native construction uses `RealApplication::with_xalen_backend`, which selects the
-same apparent-place bootstrap profile as the browser constructor.
+same apparent-place startup profile as the browser constructor. A fresh, locationless
+Current Transits session requests no houses, so the adapter does not require or invent
+an observer location.
 
 The static time fingerprint records `xalen-time`, UTC input, TT celestial time,
 UT1 house time, the embedded IERS 1972-2017 leap-second table, and SMH2016

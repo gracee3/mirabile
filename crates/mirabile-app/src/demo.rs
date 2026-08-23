@@ -23,7 +23,7 @@ const CHART_INSTANCE_A: &str = "15000000-0000-4000-8000-000000000001";
 const VIEW: &str = "16000000-0000-4000-8000-000000000001";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BootstrapIds {
+pub struct DemoIds {
     pub chart_record_a: ResourceId,
     pub chart_record_b: ResourceId,
     pub chart_definition_a: ResourceId,
@@ -35,13 +35,13 @@ pub struct BootstrapIds {
     pub view: ViewInstanceId,
 }
 
-/// Returns the stable identities reserved for the deterministic first-run bootstrap.
+/// Returns stable identities reserved for the explicit deterministic demo bundle.
 ///
 /// # Panics
 ///
-/// Panics only if a checked-in bootstrap UUID literal is invalid.
-pub fn bootstrap_ids() -> BootstrapIds {
-    BootstrapIds {
+/// Panics only if a checked-in demo UUID literal is invalid.
+pub fn demo_ids() -> DemoIds {
+    DemoIds {
         chart_record_a: resource_id(CHART_RECORD_A),
         chart_record_b: resource_id(CHART_RECORD_B),
         chart_definition_a: resource_id(CHART_DEFINITION_A),
@@ -51,20 +51,25 @@ pub fn bootstrap_ids() -> BootstrapIds {
         workspace: resource_id(WORKSPACE),
         chart_instance_a: CHART_INSTANCE_A
             .parse()
-            .expect("bootstrap chart instance ID is valid"),
-        view: VIEW.parse().expect("bootstrap view ID is valid"),
+            .expect("demo chart instance ID is valid"),
+        view: VIEW.parse().expect("demo view ID is valid"),
     }
 }
 
-pub(crate) fn bootstrap_resources() -> Vec<CanonicalResource> {
-    let ids = bootstrap_ids();
+/// Returns the explicit baseline demo bundle.
+///
+/// # Panics
+///
+/// Panics only if a checked-in demo identifier or value is invalid.
+pub fn demo_resources() -> Vec<CanonicalResource> {
+    let ids = demo_ids();
     let now = Timestamp::from_unix_millis(1);
     let record_a = chart_record(
         ids.chart_record_a,
         "Example Natal Record",
         EventKind::Birth,
-        CivilDate::new(2000, 1, 1).expect("bootstrap date is valid"),
-        CivilTime::new(12, 0, 0).expect("bootstrap time is valid"),
+        CivilDate::new(2000, 1, 1).expect("demo date is valid"),
+        CivilTime::new(12, 0, 0).expect("demo time is valid"),
         TimeZoneAssertion::UniversalTime,
         "Greenwich",
         "GB",
@@ -76,10 +81,10 @@ pub(crate) fn bootstrap_resources() -> Vec<CanonicalResource> {
         ids.chart_record_b,
         "Example Event Record",
         EventKind::Event,
-        CivilDate::new(1985, 7, 4).expect("bootstrap date is valid"),
-        CivilTime::new(9, 30, 0).expect("bootstrap time is valid"),
+        CivilDate::new(1985, 7, 4).expect("demo date is valid"),
+        CivilTime::new(9, 30, 0).expect("demo time is valid"),
         TimeZoneAssertion::FixedOffset(
-            Offset::from_seconds(-14_400).expect("bootstrap offset is valid"),
+            Offset::from_seconds(-14_400).expect("demo offset is valid"),
         ),
         "New York",
         "US",
@@ -141,8 +146,13 @@ pub(crate) fn bootstrap_resources() -> Vec<CanonicalResource> {
 /// The canonical schema is unchanged; only the two checked-in example chart
 /// definitions opt into all three corrections explicitly.
 #[cfg(any(feature = "xalen-backend", test))]
-pub(crate) fn apparent_place_bootstrap_resources() -> Vec<CanonicalResource> {
-    let mut resources = bootstrap_resources();
+/// Returns the explicit demo bundle configured for an apparent-place backend.
+///
+/// # Panics
+///
+/// Panics only if the baseline checked-in demo bundle is invalid.
+pub fn apparent_place_demo_resources() -> Vec<CanonicalResource> {
+    let mut resources = demo_resources();
     for resource in &mut resources {
         if let CanonicalResource::ChartDefinition(definition) = resource {
             definition.payload.calculation.corrections = mirabile_core::CorrectionSpec {
@@ -153,36 +163,6 @@ pub(crate) fn apparent_place_bootstrap_resources() -> Vec<CanonicalResource> {
         }
     }
     resources
-}
-
-/// Safely upgrades only a byte-for-byte untouched legacy seed resource.
-///
-/// A user-modified resource never equals the checked-in legacy value and is
-/// therefore left alone. Only chart definitions differ between the legacy and
-/// apparent-place seed sets.
-#[cfg(any(feature = "xalen-backend", test))]
-pub(crate) fn migrate_legacy_bootstrap_resource(
-    existing: &CanonicalResource,
-    desired: &CanonicalResource,
-) -> Option<CanonicalResource> {
-    let legacy = bootstrap_resources()
-        .into_iter()
-        .find(|resource| resource.id() == existing.id())?;
-    if existing != &legacy || existing == desired {
-        return None;
-    }
-    let (CanonicalResource::ChartDefinition(existing), CanonicalResource::ChartDefinition(desired)) =
-        (existing, desired)
-    else {
-        return None;
-    };
-    existing
-        .next_with_payload(
-            desired.payload.clone(),
-            Timestamp::from_unix_millis(existing.modified_at.unix_millis().saturating_add(1)),
-        )
-        .ok()
-        .map(CanonicalResource::ChartDefinition)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -211,16 +191,15 @@ fn chart_record(
                 zone,
                 disambiguation: None,
             },
-            location: LocationAssertion {
+            location: Some(LocationAssertion {
                 display_name: location.into(),
                 country_region: Some(country_region.into()),
-                latitude: Latitude::from_degrees(latitude).expect("bootstrap latitude is valid"),
-                longitude: Longitude::from_degrees(longitude)
-                    .expect("bootstrap longitude is valid"),
+                latitude: Latitude::from_degrees(latitude).expect("demo latitude is valid"),
+                longitude: Longitude::from_degrees(longitude).expect("demo longitude is valid"),
                 atlas_provenance: None,
-            },
+            }),
             source: SourceProvenance {
-                description: "Deterministic Mirabile bootstrap fixture".into(),
+                description: "Explicit Mirabile demo fixture".into(),
                 source_type: SourceType::UserAssertion,
                 recorded_by: None,
             },
@@ -235,7 +214,7 @@ fn aspect_set(conjunction_orb: f64, square_orb: f64) -> AspectSet {
     AspectSet {
         aspects: vec![
             AspectDefinition {
-                id: AspectId::new("conjunction").expect("bootstrap aspect ID is valid"),
+                id: AspectId::new("conjunction").expect("demo aspect ID is valid"),
                 name: "Conjunction".into(),
                 angle: angle(0.0),
                 enabled: true,
@@ -246,7 +225,7 @@ fn aspect_set(conjunction_orb: f64, square_orb: f64) -> AspectSet {
                 classification: AspectClass::Major,
             },
             AspectDefinition {
-                id: AspectId::new("square").expect("bootstrap aspect ID is valid"),
+                id: AspectId::new("square").expect("demo aspect ID is valid"),
                 name: "Square".into(),
                 angle: angle(90.0),
                 enabled: true,
@@ -260,9 +239,9 @@ fn aspect_set(conjunction_orb: f64, square_orb: f64) -> AspectSet {
     }
 }
 
-fn workspace(ids: BootstrapIds) -> WorkspaceDocument {
-    let radix = ChartSlotId::new("radix").expect("bootstrap slot ID is valid");
-    let comparison = ChartSlotId::new("comparison").expect("bootstrap slot ID is valid");
+fn workspace(ids: DemoIds) -> WorkspaceDocument {
+    let radix = ChartSlotId::new("radix").expect("demo slot ID is valid");
+    let comparison = ChartSlotId::new("comparison").expect("demo slot ID is valid");
     let points = point_set();
     let document = ViewDocument {
         chart_slots: vec![
@@ -360,19 +339,17 @@ fn point_set() -> PointSet {
     PointSet {
         points: ["sun", "moon", "mercury", "venus", "mars", "jupiter"]
             .into_iter()
-            .map(|value| {
-                PointSelector::Point(PointId::new(value).expect("bootstrap point ID is valid"))
-            })
+            .map(|value| PointSelector::Point(PointId::new(value).expect("demo point ID is valid")))
             .collect(),
     }
 }
 
 fn angle(value: f64) -> Angle {
-    Angle::from_degrees(value).expect("bootstrap angle is valid")
+    Angle::from_degrees(value).expect("demo angle is valid")
 }
 
 fn resource_id(value: &str) -> ResourceId {
-    ResourceId::from_str(value).expect("bootstrap resource ID is valid")
+    ResourceId::from_str(value).expect("demo resource ID is valid")
 }
 
 #[cfg(test)]
@@ -382,54 +359,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bootstrap_is_small_deterministic_and_domain_valid() {
-        let first = bootstrap_resources();
-        let second = bootstrap_resources();
+    fn demo_bundle_is_small_deterministic_and_domain_valid() {
+        let first = demo_resources();
+        let second = demo_resources();
 
         assert_eq!(first, second);
         assert_eq!(first.len(), 7);
         for resource in &first {
-            resource.validate().expect("bootstrap resource validates");
+            resource.validate().expect("demo resource validates");
         }
         let CanonicalResource::WorkspaceDocument(workspace) = &first[6] else {
-            panic!("last bootstrap resource is the workspace");
+            panic!("last demo resource is the workspace");
         };
         workspace
             .payload
             .domain_validate()
-            .expect("bootstrap workspace validates");
+            .expect("demo workspace validates");
     }
 
     #[test]
-    fn apparent_seed_migrates_only_untouched_legacy_definitions() {
-        let legacy = bootstrap_resources()
-            .into_iter()
-            .find(|resource| matches!(resource, CanonicalResource::ChartDefinition(_)))
-            .expect("legacy definition");
-        let desired = apparent_place_bootstrap_resources()
-            .into_iter()
-            .find(|resource| resource.id() == legacy.id())
-            .expect("apparent definition");
-        let migrated =
-            migrate_legacy_bootstrap_resource(&legacy, &desired).expect("untouched seed migrates");
-        let CanonicalResource::ChartDefinition(migrated) = migrated else {
-            panic!("migration preserves the definition kind")
-        };
-        assert_eq!(migrated.revision.get(), 2);
-        assert_eq!(
-            migrated.payload.calculation.corrections,
-            mirabile_core::CorrectionSpec {
-                aberration: true,
-                light_time: true,
-                nutation: true,
+    fn apparent_demo_changes_only_calculation_corrections() {
+        let baseline = demo_resources();
+        let apparent = apparent_place_demo_resources();
+        assert_eq!(baseline.len(), apparent.len());
+        for (baseline, apparent) in baseline.into_iter().zip(apparent) {
+            assert_eq!(baseline.id(), apparent.id());
+            match (baseline, apparent) {
+                (
+                    CanonicalResource::ChartDefinition(_),
+                    CanonicalResource::ChartDefinition(apparent),
+                ) => assert_eq!(
+                    apparent.payload.calculation.corrections,
+                    mirabile_core::CorrectionSpec {
+                        aberration: true,
+                        light_time: true,
+                        nutation: true,
+                    }
+                ),
+                (baseline, apparent) => assert_eq!(baseline, apparent),
             }
-        );
-
-        let mut user_modified = legacy;
-        let CanonicalResource::ChartDefinition(definition) = &mut user_modified else {
-            unreachable!()
-        };
-        definition.title = "User title".into();
-        assert!(migrate_legacy_bootstrap_resource(&user_modified, &desired).is_none());
+        }
     }
 }

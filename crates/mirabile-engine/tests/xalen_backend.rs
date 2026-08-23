@@ -42,13 +42,13 @@ fn resources() -> (
                 zone: TimeZoneAssertion::UniversalTime,
                 disambiguation: None,
             },
-            location: LocationAssertion {
+            location: Some(LocationAssertion {
                 display_name: "House oracle location".into(),
                 country_region: Some("IN".into()),
                 latitude: Latitude::from_degrees(28.0).expect("latitude"),
                 longitude: Longitude::from_degrees(73.85).expect("longitude"),
                 atlas_provenance: None,
-            },
+            }),
             source: SourceProvenance {
                 description: "Pinned JPL Horizons and pyswisseph reference fixture".into(),
                 source_type: SourceType::Research,

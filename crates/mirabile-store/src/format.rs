@@ -81,13 +81,13 @@ mod tests {
                     zone: TimeZoneAssertion::NamedZone("America/New_York".into()),
                     disambiguation: Some(mirabile_core::TimeChoice::Later),
                 },
-                location: LocationAssertion {
+                location: Some(LocationAssertion {
                     display_name: "New York".into(),
                     country_region: Some("US-NY".into()),
                     latitude: Latitude::from_degrees(40.7128).expect("valid latitude"),
                     longitude: Longitude::from_degrees(-74.006).expect("valid longitude"),
                     atlas_provenance: None,
-                },
+                }),
                 source: SourceProvenance {
                     description: "User-provided test assertion".into(),
                     source_type: SourceType::UserAssertion,

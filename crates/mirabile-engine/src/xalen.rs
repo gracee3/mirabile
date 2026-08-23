@@ -310,9 +310,12 @@ fn validate_request(request: &ResolvedCalculationRequest) -> Result<(), Calculat
                 ),
             ));
         }
-        if houses.system == HouseSystem::Placidus
-            && request.context.location.latitude.degrees().abs() > 66.5
-        {
+        let location = request
+            .context
+            .location
+            .as_ref()
+            .ok_or_else(|| invalid("XALEN house calculation requires an observer location"))?;
+        if houses.system == HouseSystem::Placidus && location.latitude.degrees().abs() > 66.5 {
             return Err(unsupported(
                 BackendCapability::HousesAndAngles,
                 "XALEN Placidus is unsupported above 66.5 degrees latitude; no silent Porphyry fallback is accepted",
@@ -335,9 +338,14 @@ fn calculate_houses(
     })?;
     let delta_t_model = DeltaTModel::StephensonMorrisonHohenkerk2016;
     let jd_ut1 = jd_tt.to_ut1(&delta_t_model);
+    let numeric_location = request
+        .context
+        .location
+        .as_ref()
+        .ok_or_else(|| invalid("XALEN house calculation requires an observer location"))?;
     let location = GeoLocation::try_new(
-        request.context.location.latitude.degrees(),
-        request.context.location.longitude.degrees(),
+        numeric_location.latitude.degrees(),
+        numeric_location.longitude.degrees(),
     )
     .ok_or_else(|| invalid("Mirabile location could not be represented by XALEN"))?;
     let epsilon = xalen_coords::mean_obliquity(jd_tt.julian_centuries_from_j2000());

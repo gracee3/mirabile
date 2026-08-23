@@ -5,22 +5,26 @@
 //! orchestration, persistence, and derived computation.
 
 mod application;
-mod bootstrap;
+mod chart_draft;
+mod demo;
 mod intent;
 mod read_model;
 mod real_application;
 mod runtime;
+mod startup;
 #[cfg(target_arch = "wasm32")]
 mod web_worker_runtime;
 mod workspace_commands;
 mod workspace_session;
 
 pub use application::*;
-pub use bootstrap::*;
+pub use chart_draft::*;
+pub use demo::*;
 pub use intent::*;
 pub use read_model::*;
 pub use real_application::*;
 pub use runtime::*;
+pub use startup::*;
 #[cfg(target_arch = "wasm32")]
 pub use web_worker_runtime::*;
 pub use workspace_session::*;

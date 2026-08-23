@@ -8,7 +8,7 @@ This plan was written after inspecting the clean README-only repository on 2026-
 available toolchain is Rust/Cargo 1.97.1 and Trunk 0.21.14. The browser WASM target is now installed
 and included in local verification.
 
-1. Bootstrap a four-member Rust workspace and a minimal Leptos 0.8 CSR app using Trunk. Keep Leptos and DOM dependencies in `mirabile-web` only.
+1. Establish a four-member Rust workspace and a minimal Leptos 0.8 CSR app using Trunk. Keep Leptos and DOM dependencies in `mirabile-web` only.
 2. Build portable, serializable canonical types in `mirabile-core`: typed identifiers/units, chart assertions and definitions, typed resource envelopes, bindings, workspaces, views, queries, commands, and draft editor transitions.
 3. Build the derived pipeline in `mirabile-engine`: provider-neutral calculation, deterministic fake ephemeris, content keys, aspect analysis, layout, and astrology-free scene output.
 4. Put persistence behind an async repository contract in `mirabile-store`. Preserve revision history in the deterministic memory adapter and provide a thin IndexedDB adapter using the same portable JSON representation without leaking IndexedDB fields into domain resources.
@@ -46,7 +46,7 @@ atomic multi-resource chart creation, hosted CI, and real astronomy remain out o
 ## Real application integration
 
 `mirabile-app` now contains the production facade behind the frozen `Application` contract. It owns
-repository acquisition and hydration, deterministic canonical bootstrap, persisted Workspace
+repository acquisition and hydration, the then-current deterministic canonical demo seed, persisted Workspace
 commands, binding resolution, calculation/cache/snapshot/analysis/layout orchestration, read-model
 projection, capabilities, draft Save/Cancel/conflict, ProjectionVersion, and non-consuming update
 notifications. The normal WASM shell constructs this implementation over IndexedDB; native web

@@ -88,13 +88,13 @@ fn calendar_validation_reaches_nested_life_events() {
         event_kind: EventKind::Birth,
         subject: None,
         time: assertion(2000, CalendarSpec::ProlepticGregorian),
-        location: LocationAssertion {
+        location: Some(LocationAssertion {
             display_name: "Greenwich".into(),
             country_region: None,
             latitude: Latitude::from_degrees(51.48).expect("valid latitude"),
             longitude: Longitude::from_degrees(0.0).expect("valid longitude"),
             atlas_provenance: None,
-        },
+        }),
         source: SourceProvenance {
             description: "fixture".into(),
             source_type: SourceType::UserAssertion,

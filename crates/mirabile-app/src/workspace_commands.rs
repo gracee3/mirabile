@@ -242,12 +242,12 @@ pub(crate) enum WorkspaceCommandError {
 mod tests {
     use mirabile_core::{ChartSlotId, Command, ResourceBinding, WorkspaceDocument};
 
-    use crate::{bootstrap_ids, bootstrap_resources};
+    use crate::{demo_ids, demo_resources};
 
     use super::*;
 
     fn workspace_fixture() -> (ResourceId, WorkspaceSession) {
-        let resource = bootstrap_resources()
+        let resource = demo_resources()
             .into_iter()
             .find(|resource| {
                 matches!(
@@ -255,7 +255,7 @@ mod tests {
                     mirabile_core::CanonicalResource::WorkspaceDocument(_)
                 )
             })
-            .expect("bootstrap workspace exists");
+            .expect("demo workspace exists");
         let mirabile_core::CanonicalResource::WorkspaceDocument(envelope) = resource else {
             unreachable!()
         };
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn close_repairs_required_inline_slot_to_neighbor() {
-        let ids = bootstrap_ids();
+        let ids = demo_ids();
         let (workspace_id, mut session) = workspace_fixture();
         let view_documents = inline_view_documents(&session.document);
         let second = InstanceId::new();

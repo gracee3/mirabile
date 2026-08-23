@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use mirabile_core::{
-    AngleState, CalendarSpec, ChartDefinition, ChartRecord, ChartSource, HouseState, Offset,
-    PointId, PointSelector, PointSet, PointState, ResolvedTime, ResourceEnvelope, ResourceError,
-    ResourceRevisionRef, TimeZoneAssertion, ZodiacSpec,
+    AngleState, CalculationSpec, CalendarSpec, ChartDefinition, ChartRecord, ChartSource,
+    DomainValidate, DomainValidationError, HouseState, Offset, PointId, PointSelector, PointSet,
+    PointState, ResolvedTime, ResourceEnvelope, ResourceError, ResourceRevisionRef,
+    TimeZoneAssertion, ZodiacSpec,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -19,7 +20,7 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CalculationValue {
     pub resolved_time: ResolvedTime,
-    pub numeric_location: NumericLocation,
+    pub numeric_location: Option<NumericLocation>,
     pub celestial_positions: BTreeMap<PointId, PointState>,
     pub houses: Option<HouseState>,
     pub angles: AngleState,
@@ -43,9 +44,9 @@ impl CalculationValue {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SnapshotContext {
-    pub definition: ResourceRevisionRef,
+    pub definition: Option<ResourceRevisionRef>,
     pub records: Vec<ResourceRevisionRef>,
-    pub location_display_name: String,
+    pub location_display_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -60,6 +61,23 @@ pub struct PreparedCalculation {
     pub calc_key: CalcKey,
     pub request: ResolvedCalculationRequest,
     pub snapshot_context: SnapshotContext,
+}
+
+/// Calculation semantics resolved independently of canonical resource identity/context.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedCalculation {
+    pub calc_key: CalcKey,
+    pub request: ResolvedCalculationRequest,
+}
+
+impl ResolvedCalculation {
+    pub fn with_context(self, snapshot_context: SnapshotContext) -> PreparedCalculation {
+        PreparedCalculation {
+            calc_key: self.calc_key,
+            request: self.request,
+            snapshot_context,
+        }
+    }
 }
 
 /// Mirabile orchestration: canonical inputs become provider-neutral execution semantics.
@@ -98,13 +116,44 @@ impl CalculationEngine {
         aspected_points: &PointSet,
     ) -> Result<PreparedCalculation, CalculationError> {
         validate_radix_inputs(definition, record)?;
-        let calculation = &definition.payload.calculation;
+        Ok(self
+            .resolve(
+                &record.payload,
+                &definition.payload.calculation,
+                displayed_points,
+                aspected_points,
+            )?
+            .with_context(snapshot_context(definition, record)))
+    }
+
+    pub fn resolve(
+        &self,
+        record: &ChartRecord,
+        calculation: &CalculationSpec,
+        displayed_points: &PointSet,
+        aspected_points: &PointSet,
+    ) -> Result<ResolvedCalculation, CalculationError> {
+        record.domain_validate()?;
+        calculation.domain_validate()?;
+        let location = record.location.as_ref().map(|location| NumericLocation {
+            latitude: location.latitude,
+            longitude: location.longitude,
+        });
+        if calculation.coordinates == mirabile_core::CoordinateSystem::Topocentric
+            && location.is_none()
+        {
+            return Err(CalculationError::LocationRequired(
+                "topocentric celestial calculation",
+            ));
+        }
+        if calculation.houses != mirabile_core::HouseSystem::NoHouses && location.is_none() {
+            return Err(CalculationError::LocationRequired(
+                "house and angle calculation",
+            ));
+        }
         let context = CalculationContext {
-            time: resolve_time(&record.payload, &self.timezone_data_version)?,
-            location: NumericLocation {
-                latitude: record.payload.location.latitude,
-                longitude: record.payload.location.longitude,
-            },
+            time: resolve_time(record, &self.timezone_data_version)?,
+            location,
         };
         let zodiac = resolve_zodiac(&calculation.zodiac)?;
         let (requested_points, derived) = resolve_requested_points(
@@ -134,11 +183,7 @@ impl CalculationEngine {
             derived,
         };
         let calc_key = CalcKey::derive(&request, &self.engine_identity, &self.backend.fingerprint)?;
-        Ok(PreparedCalculation {
-            calc_key,
-            request,
-            snapshot_context: snapshot_context(definition, record),
-        })
+        Ok(ResolvedCalculation { calc_key, request })
     }
 
     pub fn complete(
@@ -401,15 +446,19 @@ fn snapshot_context(
     record: &ResourceEnvelope<ChartRecord>,
 ) -> SnapshotContext {
     SnapshotContext {
-        definition: ResourceRevisionRef {
+        definition: Some(ResourceRevisionRef {
             id: definition.id,
             revision: definition.revision,
-        },
+        }),
         records: vec![ResourceRevisionRef {
             id: record.id,
             revision: record.revision,
         }],
-        location_display_name: record.payload.location.display_name.clone(),
+        location_display_name: record
+            .payload
+            .location
+            .as_ref()
+            .map(|location| location.display_name.clone()),
     }
 }
 
@@ -437,8 +486,12 @@ fn resolve_time(
         TimeZoneAssertion::FixedOffset(value) => *value,
         TimeZoneAssertion::UniversalTime => Offset::UTC,
         TimeZoneAssertion::LocalMeanTime => {
+            let location = record
+                .location
+                .as_ref()
+                .ok_or(TimeResolutionError::LocationRequiredForLocalMeanTime)?;
             #[allow(clippy::cast_possible_truncation)]
-            let seconds = (record.location.longitude.degrees() * 240.0).round() as i32;
+            let seconds = (location.longitude.degrees() * 240.0).round() as i32;
             Offset::from_seconds(seconds).map_err(|_| TimeResolutionError::InvalidOffset)?
         }
         TimeZoneAssertion::NamedZone(name) => {
@@ -500,6 +553,10 @@ pub enum CalculationError {
     UnresolvedPointCategory(String),
     #[error("sidereal ayanamsa identity must not be empty")]
     InvalidAyanamsa,
+    #[error("observer location is required for {0}")]
+    LocationRequired(&'static str),
+    #[error(transparent)]
+    InvalidDomain(#[from] DomainValidationError),
     #[error("backend result integrity failure: {0}")]
     BackendResultMismatch(String),
     #[error(transparent)]
@@ -518,6 +575,8 @@ pub enum TimeResolutionError {
     LocalApparentTimeUnavailable,
     #[error("an unknown timezone cannot be resolved")]
     UnknownZone,
+    #[error("local mean time requires an asserted longitude")]
+    LocationRequiredForLocalMeanTime,
     #[error("historical calendar transition {0} is not implemented")]
     HistoricalCalendarUnavailable(String),
     #[error("resolved UTC offset is invalid")]
