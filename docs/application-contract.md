@@ -21,6 +21,86 @@ No `AppEvent` stream exists in this slice. If events are added, they announce th
 application state changed; read models remain authoritative. Missing an event must be recoverable
 by requesting a new projection.
 
+## Binding projections
+
+`ResourceBindingSummary` contains a display label and a truthful `BindingSourceSummary`:
+
+- `Follow { resource_id, resource_title, revision }` identifies the followed resource and exposes
+  the current revision resolved by the application;
+- `Pinned { resource_id, resource_title, revision }` identifies the resource and exact pinned
+  revision;
+- `Inline` carries no `ResourceId`, title, or `Revision`, because canonical inline bindings have no
+  independent resource identity.
+
+The application must never fabricate identity or revision metadata to present an inline value.
+This projection does not change canonical `ResourceBinding` semantics.
+
+## Chart Definition identity
+
+Chart library and saved-workspace identity always means a canonical `ChartDefinition`, not the
+`ChartRecord` referenced by that definition. The contract makes this explicit through
+`LibraryChartSummary::definition_id`, `ChartPersistence::Saved { definition_id }`, and
+`AppIntent::OpenChart { definition_id }`. These fields continue to use Astra's existing
+`ResourceId`; no duplicate chart ID type exists. Aspect Sets and other genuinely generic resources
+retain `resource_id` naming.
+
+## Projection identity and asynchronous completion
+
+Every `AppReadModel` has a `ProjectionVersion`, a monotonically increasing `u64` sequence scoped to
+one `Application` instance. Version zero is the frontend's pre-initialization placeholder. The
+version is application projection state: it is not a canonical resource `Revision`, is not derived
+from resource revisions, and is not a persistent synchronization token.
+
+Every authoritative state transition that can produce a new read model receives a newer version.
+This includes accepted initialization and intents as well as asynchronous transitions such as
+`Loading` to `Fresh`, `Fresh` to `Refreshing`, `Refreshing` to `Fresh` or `Failed`, `Dirty` to
+`Saving`, and `Saving` to `Clean` or `Conflict`. An immediate read without an intervening transition
+keeps the current version.
+
+The application interface is:
+
+```rust
+#[async_trait(?Send)]
+pub trait Application {
+    async fn initialize(&self) -> AppResult<AppReadModel>;
+    async fn dispatch(&self, intent: AppIntent) -> AppResult<AppReadModel>;
+    async fn snapshot(&self) -> AppResult<AppReadModel>;
+    async fn wait_for_update(
+        &self,
+        after: ProjectionVersion,
+    ) -> AppResult<AppReadModel>;
+}
+```
+
+`snapshot()` is an immediate authoritative read. It neither waits for nor completes worker,
+repository, or mock work. Repeated snapshots without a transition return the same version.
+
+`wait_for_update(after)` returns only a projection whose version is strictly newer than `after`.
+It may return immediately if that newer projection already exists; otherwise the implementation
+awaits a meaningful authoritative transition. The deterministic mock completes one queued unit of
+work without a timer. A future real adapter may await repository or worker completion. The runtime
+notification primitive is deliberately outside the contract, and no authoritative event stream is
+introduced. The frontend calls this method only for a projection that declares pending work; the
+mock returns `Unavailable` rather than fabricating a version when nothing is queued.
+
+The frontend pending lifecycle is:
+
+```text
+dispatch
+→ publish accepted pending projection N
+→ wait_for_update(after=N)
+→ publish authoritative projection N+1
+→ repeat only while the projection remains pending
+```
+
+There is no hidden browser-tick or one-snapshot completion assumption. Loading and Refreshing views
+and Saving drafts promise a later authoritative transition to a settled success or error state.
+
+All asynchronous read-model results use one publication rule: accept only
+`incoming.version > current.version`. Equal versions are redundant copies and older versions are
+stale completions; both are ignored. Therefore a version 11 response can never replace version 12
+frontend state.
+
 ## Application and view status
 
 `ApplicationStatus::{Initializing, Ready, Error}` describes application hydration. It is
@@ -38,9 +118,8 @@ or failed view without becoming a shell-level error.
 | none | `Failed(error)` | Surface that the view has never computed successfully. |
 
 The mock returns accepted intermediate states from `dispatch` and deterministically completes one
-queued operation on the next `snapshot`. The frontend publishes the intermediate projection before
-re-querying. This proves last-good-Scene behavior without sleeps and does not prescribe the future
-real application's worker/event mechanism.
+queued operation through `wait_for_update`. This proves last-good-Scene behavior without sleeps and
+does not prescribe the future real application's worker notification mechanism.
 
 ## Workspace selection policy
 

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::{AppIntent, AppReadModel};
+use crate::{AppIntent, AppReadModel, ProjectionVersion};
 
 pub type AppResult<T> = Result<T, AppError>;
 
@@ -33,14 +33,23 @@ impl AppError {
 
 /// Authoritative application boundary used by presentation adapters.
 ///
-/// Dispatch currently returns a complete projection. Implementations may expose an accepted
-/// intermediate state (for example, `Refreshing`) and complete queued work in a later `snapshot`
-/// call. That keeps asynchronous view state visible without making events authoritative.
+/// Dispatch returns the authoritative projection after an intent is accepted. It may expose an
+/// intermediate state such as `Refreshing` or `Saving`.
 #[async_trait(?Send)]
 pub trait Application {
     async fn initialize(&self) -> AppResult<AppReadModel>;
 
     async fn dispatch(&self, intent: AppIntent) -> AppResult<AppReadModel>;
 
+    /// Returns the current authoritative projection immediately.
+    ///
+    /// This method never waits for or completes pending work.
     async fn snapshot(&self) -> AppResult<AppReadModel>;
+
+    /// Waits for an authoritative projection newer than `after`.
+    ///
+    /// If a newer projection already exists, it may be returned immediately. Otherwise the
+    /// implementation waits for a meaningful application transition, such as repository or
+    /// worker completion. A successful result always has `version > after`.
+    async fn wait_for_update(&self, after: ProjectionVersion) -> AppResult<AppReadModel>;
 }

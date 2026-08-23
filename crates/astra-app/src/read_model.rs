@@ -1,9 +1,12 @@
+use std::fmt;
+
 use crate::{
     Angle, AppError, AspectId, ChartSlotId, InstanceId, ResourceId, Revision, Scene, ViewInstanceId,
 };
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppReadModel {
+    pub version: ProjectionVersion,
     pub status: ApplicationStatus,
     pub library: LibraryReadModel,
     pub workspace: WorkspaceReadModel,
@@ -17,6 +20,7 @@ pub struct AppReadModel {
 impl AppReadModel {
     pub fn initializing() -> Self {
         Self {
+            version: ProjectionVersion::INITIAL,
             status: ApplicationStatus::Initializing,
             library: LibraryReadModel::default(),
             workspace: WorkspaceReadModel::default(),
@@ -38,6 +42,38 @@ impl AppReadModel {
     }
 }
 
+/// Monotonic identity for authoritative application projections.
+///
+/// This sequence is scoped to an `Application` instance and is independent from canonical
+/// resource [`Revision`]. Zero identifies the frontend's pre-initialization placeholder.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ProjectionVersion(u64);
+
+impl ProjectionVersion {
+    pub const INITIAL: Self = Self(0);
+
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    pub const fn checked_next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+}
+
+impl fmt::Display for ProjectionVersion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ApplicationStatus {
     Initializing,
@@ -53,7 +89,8 @@ pub struct LibraryReadModel {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LibraryChartSummary {
-    pub resource_id: ResourceId,
+    /// Stable identity of the saved `ChartDefinition` represented by this library entry.
+    pub definition_id: ResourceId,
     pub title: String,
     pub subtitle: String,
 }
@@ -85,7 +122,10 @@ pub struct OpenChartSummary {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChartPersistence {
-    Saved { resource_id: ResourceId },
+    Saved {
+        /// Stable identity of the saved `ChartDefinition`, not its source `ChartRecord`.
+        definition_id: ResourceId,
+    },
     Ephemeral,
 }
 
@@ -138,16 +178,23 @@ pub struct ActiveChartInspector {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceBindingSummary {
     pub label: String,
-    pub resource_id: ResourceId,
-    pub resource_title: String,
-    pub revision: Revision,
-    pub mode: BindingMode,
+    pub source: BindingSourceSummary,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BindingMode {
-    Follow,
-    Pinned,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BindingSourceSummary {
+    Follow {
+        resource_id: ResourceId,
+        resource_title: String,
+        /// Current resolved revision of the followed resource.
+        revision: Revision,
+    },
+    Pinned {
+        resource_id: ResourceId,
+        resource_title: String,
+        /// Exact revision selected by the pinned binding.
+        revision: Revision,
+    },
     Inline,
 }
 
@@ -259,11 +306,38 @@ mod tests {
         let model = AppReadModel::initializing();
 
         assert_eq!(model.status, ApplicationStatus::Initializing);
+        assert_eq!(model.version, ProjectionVersion::INITIAL);
         assert!(model.active_view.is_none());
         assert_eq!(
             model.availability(AppAction::SaveDraft),
             Availability::Hidden
         );
+    }
+
+    #[test]
+    fn inline_binding_summary_requires_no_resource_identity() {
+        let binding = ResourceBindingSummary {
+            label: "Theme".into(),
+            source: BindingSourceSummary::Inline,
+        };
+
+        assert_eq!(binding.source, BindingSourceSummary::Inline);
+    }
+
+    #[test]
+    fn chart_definition_identity_is_explicit_in_contract() {
+        let definition_id = ResourceId::new();
+        let summary = LibraryChartSummary {
+            definition_id,
+            title: "Definition fixture".into(),
+            subtitle: "Saved chart definition".into(),
+        };
+        let persistence = ChartPersistence::Saved { definition_id };
+        let intent = crate::AppIntent::OpenChart { definition_id };
+
+        assert_eq!(summary.definition_id, definition_id);
+        assert_eq!(persistence, ChartPersistence::Saved { definition_id });
+        assert_eq!(intent, crate::AppIntent::OpenChart { definition_id });
     }
 
     #[test]

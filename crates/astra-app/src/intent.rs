@@ -3,7 +3,8 @@ use crate::{Angle, AspectId, ChartSlotId, InstanceId, ResourceId, ViewInstanceId
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppIntent {
     OpenChart {
-        resource_id: ResourceId,
+        /// Stable identity of the saved `ChartDefinition`, not its source `ChartRecord`.
+        definition_id: ResourceId,
     },
     CloseChart {
         instance_id: InstanceId,

@@ -4,15 +4,15 @@ use astra_app::{
     ActiveChartInspector, Angle, AppAction, AppError, AppErrorKind, AppIntent, AppNotice,
     AppNoticeKind, AppReadModel, AppResult, Application, ApplicationStatus, AspectDraftValue,
     AspectId, AspectSetDraftMutation, AspectSetDraftReadModel, AspectSetSummary, Availability,
-    BindingMode, ChartPersistence, ChartSlotAssignment, ChartSlotId, Circle, CommandCapability,
-    DraftState, FillRole, InspectorReadModel, InstanceId, Label, LibraryChartSummary,
-    LibraryReadModel, Line, OpenChartSummary, ResourceBindingSummary, ResourceEditorReadModel,
-    ResourceId, Revision, Scene, StrokeRole, ViewComputationState, ViewInstanceId, ViewReadModel,
-    ViewSummary, WorkspaceReadModel,
+    BindingSourceSummary, ChartPersistence, ChartSlotAssignment, ChartSlotId, Circle,
+    CommandCapability, DraftState, FillRole, InspectorReadModel, InstanceId, Label,
+    LibraryChartSummary, LibraryReadModel, Line, OpenChartSummary, ProjectionVersion,
+    ResourceBindingSummary, ResourceEditorReadModel, ResourceId, Revision, Scene, StrokeRole,
+    ViewComputationState, ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel,
 };
 use async_trait::async_trait;
 
-const CHART_RESOURCE_IDS: [&str; 5] = [
+const CHART_DEFINITION_IDS: [&str; 5] = [
     "10000000-0000-4000-8000-000000000001",
     "10000000-0000-4000-8000-000000000002",
     "10000000-0000-4000-8000-000000000003",
@@ -67,9 +67,11 @@ impl Default for MockApplication {
 impl Application for MockApplication {
     async fn initialize(&self) -> AppResult<AppReadModel> {
         let mut state = self.state.borrow_mut();
+        let next_version = state.next_version()?;
         if let Some(error) = state.initialization_failure.take() {
             state.status = ApplicationStatus::Error(error);
             state.notice = None;
+            state.version = next_version;
             return Ok(state.read_model());
         }
 
@@ -87,6 +89,7 @@ impl Application for MockApplication {
         view.scene = None;
         view.computation = ViewComputationState::Loading;
         state.pending = Some(PendingWork::InitialView);
+        state.version = next_version;
         Ok(state.read_model())
     }
 
@@ -98,18 +101,49 @@ impl Application for MockApplication {
                 "The application must be ready before it can accept commands",
             ));
         }
-        state.apply(intent)?;
+        let next_version = state.next_version()?;
+        let prior_notice = state.notice.clone();
+        if let Err(error) = state.apply(intent) {
+            state.notice = prior_notice;
+            return Err(error);
+        }
+        state.version = next_version;
         Ok(state.read_model())
     }
 
     async fn snapshot(&self) -> AppResult<AppReadModel> {
+        Ok(self.state.borrow().read_model())
+    }
+
+    async fn wait_for_update(&self, after: ProjectionVersion) -> AppResult<AppReadModel> {
         let mut state = self.state.borrow_mut();
+        if state.version > after {
+            return Ok(state.read_model());
+        }
+        if state.version < after {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                format!(
+                    "Cannot wait after future projection {after}; current projection is {}",
+                    state.version
+                ),
+            ));
+        }
+        if state.pending.is_none() {
+            return Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "The deterministic mock has no authoritative update queued",
+            ));
+        }
+        let next_version = state.next_version()?;
         state.complete_pending()?;
+        state.version = next_version;
         Ok(state.read_model())
     }
 }
 
 struct MockState {
+    version: ProjectionVersion,
     status: ApplicationStatus,
     library_charts: Vec<LibraryChartSummary>,
     aspect_sets: Vec<AspectSetFixture>,
@@ -163,7 +197,7 @@ enum PendingWork {
 impl MockState {
     #[allow(clippy::too_many_lines)]
     fn fixture(initialization_failure: Option<AppError>) -> Self {
-        let chart_resources = CHART_RESOURCE_IDS.map(parse_resource);
+        let chart_definitions = CHART_DEFINITION_IDS.map(parse_resource);
         let instances = INSTANCE_IDS.map(parse_instance);
         let views = VIEW_IDS.map(parse_view);
         let aspect_sets = ASPECT_SET_IDS.map(parse_resource);
@@ -172,27 +206,27 @@ impl MockState {
 
         let library_charts = vec![
             library_chart(
-                chart_resources[0],
+                chart_definitions[0],
                 "Mara Ellison",
                 "Natal · Portland, Maine",
             ),
             library_chart(
-                chart_resources[1],
+                chart_definitions[1],
                 "Harbor Launch",
                 "Event · Baltimore, Maryland",
             ),
             library_chart(
-                chart_resources[2],
+                chart_definitions[2],
                 "August Ingress",
                 "Event · Washington, D.C.",
             ),
             library_chart(
-                chart_resources[3],
+                chart_definitions[3],
                 "Ada Lovelace",
                 "Natal · London, England",
             ),
             library_chart(
-                chart_resources[4],
+                chart_definitions[4],
                 "Lunar Eclipse",
                 "Event · Reykjavík, Iceland",
             ),
@@ -250,6 +284,7 @@ impl MockState {
         ];
 
         Self {
+            version: ProjectionVersion::INITIAL,
             status: ApplicationStatus::Initializing,
             library_charts,
             aspect_sets: aspect_set_fixtures,
@@ -272,6 +307,7 @@ impl MockState {
     fn read_model(&self) -> AppReadModel {
         if !matches!(self.status, ApplicationStatus::Ready) {
             let mut model = AppReadModel::initializing();
+            model.version = self.version;
             model.status = self.status.clone();
             model.notice.clone_from(&self.notice);
             return model;
@@ -300,6 +336,7 @@ impl MockState {
             .expect("fixture active view exists");
 
         AppReadModel {
+            version: self.version,
             status: self.status.clone(),
             library: LibraryReadModel {
                 charts: self.library_charts.clone(),
@@ -334,10 +371,11 @@ impl MockState {
                 active_chart,
                 bindings: vec![ResourceBindingSummary {
                     label: "Aspect set".into(),
-                    resource_id: aspect_set.summary.resource_id,
-                    resource_title: aspect_set.summary.title.clone(),
-                    revision: aspect_set.summary.revision,
-                    mode: BindingMode::Follow,
+                    source: BindingSourceSummary::Follow {
+                        resource_id: aspect_set.summary.resource_id,
+                        resource_title: aspect_set.summary.title.clone(),
+                        revision: aspect_set.summary.revision,
+                    },
                 }],
                 active_aspect_set: Some(self.active_aspect_set),
             },
@@ -357,6 +395,15 @@ impl MockState {
             capabilities: self.capabilities(),
             notice: self.notice.clone(),
         }
+    }
+
+    fn next_version(&self) -> AppResult<ProjectionVersion> {
+        self.version.checked_next().ok_or_else(|| {
+            AppError::new(
+                AppErrorKind::Unavailable,
+                "Application projection version overflowed",
+            )
+        })
     }
 
     fn capabilities(&self) -> Vec<CommandCapability> {
@@ -407,7 +454,7 @@ impl MockState {
     fn apply(&mut self, intent: AppIntent) -> AppResult<()> {
         self.notice = None;
         match intent {
-            AppIntent::OpenChart { resource_id } => self.open_chart(resource_id),
+            AppIntent::OpenChart { definition_id } => self.open_chart(definition_id),
             AppIntent::CloseChart { instance_id } => self.close_chart(instance_id),
             AppIntent::ActivateChart { instance_id } => {
                 self.ensure_open(instance_id)?;
@@ -550,9 +597,9 @@ impl MockState {
         Ok(())
     }
 
-    fn open_chart(&mut self, resource_id: ResourceId) -> AppResult<()> {
+    fn open_chart(&mut self, definition_id: ResourceId) -> AppResult<()> {
         if let Some(existing) = self.charts.iter().find(|chart| {
-            matches!(chart.persistence, ChartPersistence::Saved { resource_id: id } if id == resource_id)
+            matches!(chart.persistence, ChartPersistence::Saved { definition_id: id } if id == definition_id)
         }) {
             self.active_chart = Some(existing.instance_id);
             self.notice = Some(info("The chart was already open; it is now active"));
@@ -561,11 +608,11 @@ impl MockState {
         let library = self
             .library_charts
             .iter()
-            .find(|chart| chart.resource_id == resource_id)
+            .find(|chart| chart.definition_id == definition_id)
             .ok_or_else(|| not_found("library chart"))?;
-        let instance_id = match resource_id {
-            id if id == parse_resource(CHART_RESOURCE_IDS[3]) => parse_instance(INSTANCE_IDS[4]),
-            id if id == parse_resource(CHART_RESOURCE_IDS[4]) => parse_instance(INSTANCE_IDS[5]),
+        let instance_id = match definition_id {
+            id if id == parse_resource(CHART_DEFINITION_IDS[3]) => parse_instance(INSTANCE_IDS[4]),
+            id if id == parse_resource(CHART_DEFINITION_IDS[4]) => parse_instance(INSTANCE_IDS[5]),
             _ => {
                 return Err(AppError::new(
                     AppErrorKind::Unavailable,
@@ -819,9 +866,9 @@ impl MockState {
     }
 }
 
-fn library_chart(resource_id: ResourceId, title: &str, subtitle: &str) -> LibraryChartSummary {
+fn library_chart(definition_id: ResourceId, title: &str, subtitle: &str) -> LibraryChartSummary {
     LibraryChartSummary {
-        resource_id,
+        definition_id,
         title: title.into(),
         subtitle: subtitle.into(),
     }
@@ -833,7 +880,7 @@ fn open_saved(chart: &LibraryChartSummary, instance_id: InstanceId) -> OpenChart
         title: chart.title.clone(),
         subtitle: chart.subtitle.clone(),
         persistence: ChartPersistence::Saved {
-            resource_id: chart.resource_id,
+            definition_id: chart.definition_id,
         },
     }
 }
@@ -1019,7 +1066,7 @@ mod tests {
             loading.active_view.as_ref().map(|view| &view.computation),
             Some(ViewComputationState::Loading)
         ));
-        block_on(application.snapshot()).expect("first view settles")
+        block_on(application.wait_for_update(loading.version)).expect("first view settles")
     }
 
     #[test]
@@ -1036,6 +1083,40 @@ mod tests {
         assert_eq!(error.status, ApplicationStatus::Error(expected));
         let retry = block_on(failing.initialize()).expect("retry succeeds");
         assert_eq!(retry.status, ApplicationStatus::Ready);
+    }
+
+    #[test]
+    fn projection_versions_are_monotonic_across_initialize_dispatch_and_completion() {
+        let application = MockApplication::new();
+        let initial = block_on(application.snapshot()).expect("initial snapshot succeeds");
+        let loading = block_on(application.initialize()).expect("initialization succeeds");
+        let ready =
+            block_on(application.wait_for_update(loading.version)).expect("initial view settles");
+        let refreshing = block_on(application.dispatch(AppIntent::SetWorkspaceAspectSet {
+            resource_id: parse_resource(ASPECT_SET_IDS[1]),
+        }))
+        .expect("refresh is accepted");
+        let fresh =
+            block_on(application.wait_for_update(refreshing.version)).expect("refresh completes");
+
+        assert!(initial.version < loading.version);
+        assert!(loading.version < ready.version);
+        assert!(ready.version < refreshing.version);
+        assert!(refreshing.version < fresh.version);
+    }
+
+    #[test]
+    fn snapshot_is_immediate_and_preserves_projection_version() {
+        let application = MockApplication::new();
+        let loading = block_on(application.initialize()).expect("initialization succeeds");
+        let snapshot = block_on(application.snapshot()).expect("snapshot succeeds");
+
+        assert_eq!(snapshot.version, loading.version);
+        assert_eq!(snapshot, loading);
+        assert!(matches!(
+            snapshot.active_view.map(|view| view.computation),
+            Some(ViewComputationState::Loading)
+        ));
     }
 
     #[test]
@@ -1086,7 +1167,7 @@ mod tests {
         assert!(!closed.workspace.selected_charts.contains(&first));
 
         let opened = block_on(application.dispatch(AppIntent::OpenChart {
-            resource_id: parse_resource(CHART_RESOURCE_IDS[3]),
+            definition_id: parse_resource(CHART_DEFINITION_IDS[3]),
         }))
         .expect("open succeeds");
         let opened_id = opened
@@ -1150,7 +1231,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_retains_last_good_scene_on_success_and_failure() {
+    fn wait_for_update_settles_refresh_with_last_good_scene() {
         let application = MockApplication::new();
         let initial = ready(&application);
         let original = initial
@@ -1163,13 +1244,16 @@ mod tests {
             resource_id: parse_resource(ASPECT_SET_IDS[1]),
         }))
         .expect("aspect selection succeeds");
+        let refreshing_version = refreshing.version;
         let refreshing_view = refreshing.active_view.expect("active view");
         assert_eq!(refreshing_view.scene, Some(original.clone()));
         assert_eq!(
             refreshing_view.computation,
             ViewComputationState::Refreshing
         );
-        let fresh = block_on(application.snapshot()).expect("refresh settles");
+        let fresh =
+            block_on(application.wait_for_update(refreshing_version)).expect("refresh settles");
+        assert!(fresh.version > refreshing_version);
         let fresh_view = fresh.active_view.expect("active view");
         let new_scene = fresh_view.scene.expect("new scene");
         assert_ne!(new_scene, original);
@@ -1177,6 +1261,7 @@ mod tests {
 
         let failing = block_on(application.dispatch(AppIntent::RefreshActiveView))
             .expect("manual refresh accepted");
+        let failing_version = failing.version;
         assert_eq!(
             failing
                 .active_view
@@ -1188,7 +1273,9 @@ mod tests {
             failing.active_view.map(|view| view.computation),
             Some(ViewComputationState::Refreshing)
         ));
-        let failed = block_on(application.snapshot()).expect("failed refresh settles");
+        let failed =
+            block_on(application.wait_for_update(failing_version)).expect("failed refresh settles");
+        assert!(failed.version > failing_version);
         let failed_view = failed.active_view.expect("active view");
         assert_eq!(failed_view.scene, Some(new_scene));
         assert!(matches!(
@@ -1201,7 +1288,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_draft_cancel_and_save_preserve_revision_semantics() {
+    fn wait_for_update_completes_saving_as_clean() {
         let application = MockApplication::new();
         let initial = ready(&application);
         let standard = initial.library.aspect_sets[0].clone();
@@ -1222,13 +1309,15 @@ mod tests {
             },
         )))
         .expect("typed mutation succeeds");
+        let dirty_version = dirty.version;
         let draft = dirty.resource_editor.aspect_set.expect("draft");
         assert_eq!(draft.conjunction.maximum_orb, changed_orb);
         assert!(matches!(draft.state, DraftState::Dirty { .. }));
-        block_on(application.snapshot()).expect("preview refresh settles");
+        block_on(application.wait_for_update(dirty_version)).expect("preview refresh settles");
 
         let canceled =
             block_on(application.dispatch(AppIntent::CancelDraft)).expect("cancel succeeds");
+        let canceled_version = canceled.version;
         let canceled_draft = canceled
             .resource_editor
             .aspect_set
@@ -1238,17 +1327,20 @@ mod tests {
             standard.conjunction_orb
         );
         assert!(matches!(canceled_draft.state, DraftState::Clean { .. }));
-        block_on(application.snapshot()).expect("cancel refresh settles");
+        block_on(application.wait_for_update(canceled_version)).expect("cancel refresh settles");
 
-        block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        let refreshing = block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
             AspectSetDraftMutation::SetOrb {
                 aspect_id: conjunction_id(),
                 maximum: changed_orb,
             },
         )))
         .expect("second mutation succeeds");
-        block_on(application.snapshot()).expect("preview refresh settles");
+        let preview = block_on(application.wait_for_update(refreshing.version))
+            .expect("preview refresh settles");
         let saving = block_on(application.dispatch(AppIntent::SaveDraft)).expect("save begins");
+        let saving_version = saving.version;
+        assert!(preview.version < saving_version);
         assert!(matches!(
             saving
                 .resource_editor
@@ -1258,7 +1350,8 @@ mod tests {
             Some(DraftState::Saving { .. })
         ));
         assert!(!saving.availability(AppAction::SaveDraft).is_enabled());
-        let saved = block_on(application.snapshot()).expect("save settles");
+        let saved = block_on(application.wait_for_update(saving_version)).expect("save settles");
+        assert!(saved.version > saving_version);
         let saved_summary = saved
             .library
             .aspect_sets
@@ -1274,29 +1367,42 @@ mod tests {
     }
 
     #[test]
-    fn wide_fixture_exposes_revision_conflict_and_disabled_reason() {
+    fn wait_for_update_completes_saving_as_conflict() {
         let application = MockApplication::new();
         let initial = ready(&application);
         let wide = initial.library.aspect_sets[2].clone();
-        block_on(application.dispatch(AppIntent::SetWorkspaceAspectSet {
+        let selecting = block_on(application.dispatch(AppIntent::SetWorkspaceAspectSet {
             resource_id: wide.resource_id,
         }))
         .expect("aspect selection succeeds");
-        block_on(application.snapshot()).expect("selection refresh settles");
+        block_on(application.wait_for_update(selecting.version))
+            .expect("selection refresh settles");
         block_on(application.dispatch(AppIntent::BeginAspectSetEdit {
             resource_id: wide.resource_id,
         }))
         .expect("begin edit succeeds");
-        block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        let refreshing = block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
             AspectSetDraftMutation::SetOrb {
                 aspect_id: conjunction_id(),
                 maximum: angle(11.0),
             },
         )))
         .expect("typed mutation succeeds");
-        block_on(application.snapshot()).expect("preview refresh settles");
-        block_on(application.dispatch(AppIntent::SaveDraft)).expect("save begins");
-        let conflict = block_on(application.snapshot()).expect("save conflict settles");
+        let preview = block_on(application.wait_for_update(refreshing.version))
+            .expect("preview refresh settles");
+        let saving = block_on(application.dispatch(AppIntent::SaveDraft)).expect("save begins");
+        assert!(preview.version < saving.version);
+        assert!(matches!(
+            saving
+                .resource_editor
+                .aspect_set
+                .as_ref()
+                .map(|draft| &draft.state),
+            Some(DraftState::Saving { .. })
+        ));
+        let conflict =
+            block_on(application.wait_for_update(saving.version)).expect("save conflict settles");
+        assert!(conflict.version > saving.version);
         assert!(matches!(
             conflict
                 .resource_editor

@@ -1,9 +1,11 @@
 use std::{rc::Rc, str::FromStr};
 
+#[cfg(test)]
+use astra_app::ProjectionVersion;
 use astra_app::{
     Angle, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind, AppReadModel,
-    Application, ApplicationStatus, AspectSetDraftMutation, Availability, ChartPersistence,
-    DraftState, InstanceId, ResourceId, ViewComputationState,
+    Application, ApplicationStatus, AspectSetDraftMutation, Availability, BindingSourceSummary,
+    ChartPersistence, DraftState, InstanceId, ResourceId, ViewComputationState,
 };
 use leptos::{ev, prelude::*};
 use wasm_bindgen::JsCast;
@@ -69,16 +71,54 @@ impl Dispatcher {
 async fn publish_and_settle(
     application: Rc<dyn Application>,
     model: RwSignal<AppReadModel>,
-    updated: AppReadModel,
+    mut incoming: AppReadModel,
 ) {
-    let needs_settle = has_pending_work(&updated);
-    model.set(updated);
-    if needs_settle {
-        leptos::task::tick().await;
-        match application.snapshot().await {
-            Ok(settled) => model.set(settled),
-            Err(error) => publish_command_error(model, error),
+    loop {
+        let after = incoming.version;
+        let pending = has_pending_work(&incoming);
+        publish_projection(model, incoming);
+        if !pending {
+            return;
         }
+
+        match application.wait_for_update(after).await {
+            Ok(updated) if updated.version > after => incoming = updated,
+            Ok(updated) => {
+                publish_command_error(
+                    model,
+                    AppError::new(
+                        AppErrorKind::Unavailable,
+                        format!(
+                            "Application returned projection {} while waiting after {after}",
+                            updated.version
+                        ),
+                    ),
+                );
+                return;
+            }
+            Err(error) => {
+                publish_command_error(model, error);
+                return;
+            }
+        }
+    }
+}
+
+fn publish_projection(model: RwSignal<AppReadModel>, incoming: AppReadModel) {
+    model.update(|current| {
+        publish_if_newer(current, incoming);
+    });
+}
+
+/// Publishes only a strictly newer authoritative projection.
+///
+/// Equal versions are redundant copies; older versions are stale asynchronous completions.
+fn publish_if_newer(current: &mut AppReadModel, incoming: AppReadModel) -> bool {
+    if incoming.version > current.version {
+        *current = incoming;
+        true
+    } else {
+        false
     }
 }
 
@@ -392,7 +432,7 @@ fn WorkspaceRail(model: RwSignal<AppReadModel>, dispatcher: Dispatcher) -> impl 
                         let snapshot = model.get();
                         snapshot.library.charts.into_iter().map(|chart| {
                             let is_open = snapshot.workspace.charts.iter().any(|open| {
-                                matches!(open.persistence, ChartPersistence::Saved { resource_id } if resource_id == chart.resource_id)
+                                matches!(open.persistence, ChartPersistence::Saved { definition_id } if definition_id == chart.definition_id)
                             });
                             let dispatch = dispatcher;
                             let label = if is_open {
@@ -407,7 +447,7 @@ fn WorkspaceRail(model: RwSignal<AppReadModel>, dispatcher: Dispatcher) -> impl 
                                         type="button"
                                         aria-label=label
                                         on:click=move |_| dispatch.dispatch(AppIntent::OpenChart {
-                                            resource_id: chart.resource_id,
+                                            definition_id: chart.definition_id,
                                         })
                                     >
                                         <span>{chart.title}</span>
@@ -618,11 +658,26 @@ fn Inspector(
 
                 <div class="binding-summary">
                     {move || model.get().inspector.bindings.into_iter().map(|binding| view! {
-                        <div>
-                            <span>{binding.label}</span>
-                            <strong>{binding.resource_title}</strong>
-                            <small>{format!("Follow · revision {}", binding.revision)}</small>
-                        </div>
+                        {
+                            let (title, detail) = match binding.source {
+                                BindingSourceSummary::Follow { resource_title, revision, .. } => {
+                                    (resource_title, format!("Follow · resolved revision {revision}"))
+                                }
+                                BindingSourceSummary::Pinned { resource_title, revision, .. } => {
+                                    (resource_title, format!("Pinned · revision {revision}"))
+                                }
+                                BindingSourceSummary::Inline => {
+                                    ("Inline value".into(), "Embedded in the workspace".into())
+                                }
+                            };
+                            view! {
+                                <div>
+                                    <span>{binding.label}</span>
+                                    <strong>{title}</strong>
+                                    <small>{detail}</small>
+                                </div>
+                            }
+                        }
                     }).collect_view()}
                 </div>
 
@@ -874,5 +929,23 @@ mod tests {
         assert!(parse_orb("").is_err());
         assert!(parse_orb("1.").is_ok());
         assert!(parse_orb("21").is_err());
+    }
+
+    #[test]
+    fn publish_if_newer_rejects_stale_projection() {
+        let mut current = model_at(10);
+
+        assert!(publish_if_newer(&mut current, model_at(12)));
+        assert_eq!(current.version, ProjectionVersion::new(12));
+        assert!(!publish_if_newer(&mut current, model_at(11)));
+        assert_eq!(current.version, ProjectionVersion::new(12));
+        assert!(!publish_if_newer(&mut current, model_at(12)));
+        assert_eq!(current.version, ProjectionVersion::new(12));
+    }
+
+    fn model_at(version: u64) -> AppReadModel {
+        let mut model = AppReadModel::initializing();
+        model.version = ProjectionVersion::new(version);
+        model
     }
 }
