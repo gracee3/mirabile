@@ -1,6 +1,7 @@
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, str::FromStr};
 
-use astra_app::{
+use async_trait::async_trait;
+use mirabile_app::{
     ActiveChartInspector, Angle, AppAction, AppError, AppErrorKind, AppIntent, AppNotice,
     AppNoticeKind, AppReadModel, AppResult, Application, ApplicationStatus, AspectDraftValue,
     AspectId, AspectSetDraftMutation, AspectSetDraftReadModel, AspectSetSummary, Availability,
@@ -10,7 +11,6 @@ use astra_app::{
     ResourceBindingSummary, ResourceEditorReadModel, ResourceId, Revision, Scene, StrokeRole,
     ViewComputationState, ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel,
 };
-use async_trait::async_trait;
 
 const CHART_DEFINITION_IDS: [&str; 5] = [
     "10000000-0000-4000-8000-000000000001",

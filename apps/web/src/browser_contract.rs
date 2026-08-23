@@ -1,14 +1,14 @@
-use astra_app::{
+use leptos::prelude::*;
+use mirabile_app::{
     AppIntent, AppReadModel, Application, AspectSetDraftMutation, ChartPersistence, DraftState,
     IndexedDbRepositorySource, RealApplication, ViewComputationState, WorkerCalculationRuntime,
     bootstrap_ids,
 };
-use astra_core::{
+use mirabile_core::{
     Angle, AspectId, CanonicalResource, PointId, PointSelector, PointSet, ResourceEnvelope,
     ResourceId, Revision, Timestamp,
 };
-use astra_store::{IndexedDbRepository, RepositoryError, ResourceRepository, ResourceState};
-use leptos::prelude::*;
+use mirabile_store::{IndexedDbRepository, RepositoryError, ResourceRepository, ResourceState};
 
 #[component]
 pub fn BrowserContract() -> impl IntoView {
@@ -19,18 +19,18 @@ pub fn BrowserContract() -> impl IntoView {
         match run_contract().await {
             Ok(()) => {
                 status.set("passed".into());
-                detail.set("ASTRA_BROWSER_CONTRACT:PASS".into());
+                detail.set("MIRABILE_BROWSER_CONTRACT:PASS".into());
             }
             Err(error) => {
                 status.set("failed".into());
-                detail.set(format!("ASTRA_BROWSER_CONTRACT:FAIL:{error}"));
+                detail.set(format!("MIRABILE_BROWSER_CONTRACT:FAIL:{error}"));
             }
         }
     });
 
     view! {
         <main>
-            <h1>"Astra IndexedDB browser contract"</h1>
+            <h1>"Mirabile IndexedDB browser contract"</h1>
             <p id="browser-contract-result" data-status=move || status.get()>
                 {move || detail.get()}
             </p>
@@ -40,7 +40,7 @@ pub fn BrowserContract() -> impl IntoView {
 
 #[allow(clippy::too_many_lines)]
 async fn run_contract() -> Result<(), String> {
-    let database_name = format!("astra-browser-contract-{}", ResourceId::new());
+    let database_name = format!("mirabile-browser-contract-{}", ResourceId::new());
     let first = IndexedDbRepository::open(&database_name)
         .await
         .map_err(message)?;
@@ -174,7 +174,7 @@ async fn run_contract() -> Result<(), String> {
 }
 
 async fn run_real_application_reload() -> Result<(), String> {
-    let database_name = format!("astra-real-application-contract-{}", ResourceId::new());
+    let database_name = format!("mirabile-real-application-contract-{}", ResourceId::new());
     let ids = bootstrap_ids();
     let first_runtime = WorkerCalculationRuntime::xalen();
     let first = RealApplication::indexed_db_with_runtime(&database_name, first_runtime.clone());
@@ -192,7 +192,7 @@ async fn run_real_application_reload() -> Result<(), String> {
     ensure(
         first_runtime
             .last_backend_identity()
-            .is_some_and(|identity| identity.id == astra_engine::XalenBackend::ID),
+            .is_some_and(|identity| identity.id == mirabile_engine::XalenBackend::ID),
         "Web Worker result did not identify the XALEN backend",
     )?;
 
@@ -299,7 +299,7 @@ async fn run_real_application_reload() -> Result<(), String> {
     ensure(
         second_runtime
             .last_backend_identity()
-            .is_some_and(|identity| identity.id == astra_engine::XalenBackend::ID),
+            .is_some_and(|identity| identity.id == mirabile_engine::XalenBackend::ID),
         "reloaded Web Worker result did not identify the XALEN backend",
     )?;
     Ok(())

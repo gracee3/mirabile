@@ -1,10 +1,10 @@
-# Astra third-party notices
+# Mirabile third-party notices
 
-This notice covers third-party software added to Astra's browser distribution
+This notice covers third-party software added to Mirabile's browser distribution
 by the XALEN analytical calculation backend. The browser bundle includes XALEN
 code and the `vsop87` Rust crate described below.
 
-The optional XALEN Hipparcos catalog is **not bundled**. Astra disables
+The optional XALEN Hipparcos catalog is **not bundled**. Mirabile disables
 `xalen-ephem` default features and does not include `hip-catalog`,
 `xalen-stars-hip-data`, Hipparcos/Tycho catalog data, or XALEN's cloud,
 Western, or Vedic layers.
@@ -35,7 +35,7 @@ Relevant acknowledgments retained from XALEN's upstream `NOTICE`:
   Names, IAU Division C Working Group on Star Names, used under Creative
   Commons Attribution.
 
-No DE440 kernel or fixed-star catalog data is distributed by Astra. DE440 is
+No DE440 kernel or fixed-star catalog data is distributed by Mirabile. DE440 is
 used only as the source of fixed numeric validation expectations in tests.
 
 ## ERFA-derived coordinate routines — BSD 3-Clause
@@ -78,6 +78,6 @@ ERFA upstream: https://github.com/liberfa/erfa
 
 Copyright (c) 2015-2016 Iban Eguia
 
-The `vsop87` crate is available under MIT or Apache-2.0. Astra distributes it
+The `vsop87` crate is available under MIT or Apache-2.0. Mirabile distributes it
 under the MIT option. The complete MIT terms are distributed at
 [`third_party_licenses/vsop87-MIT.txt`](third_party_licenses/vsop87-MIT.txt).

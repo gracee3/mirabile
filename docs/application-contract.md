@@ -1,6 +1,6 @@
 # Application interface contract
 
-`astra-app` is the shared boundary between presentation adapters and application implementations.
+`mirabile-app` is the shared boundary between presentation adapters and application implementations.
 The normal Leptos/WASM adapter uses `RealApplication`; native frontend tests retain
 `MockApplication`. Both implement the same frozen `Application` interface and preserve the
 semantics below. Read models remain projections of canonical domain and repository state rather
@@ -13,10 +13,10 @@ they do not mutate a local `Workspace`, `ViewInstance`, or canonical resource an
 accepted. The initial `dispatch` result is a full projection for correctness. Read models may later
 be queried independently rather than remaining one permanent, database-sized aggregate.
 
-`astra-app` re-exports Astra's existing stable IDs and current astrology-free `Scene` primitives.
+`mirabile-app` re-exports Mirabile's existing stable IDs and current astrology-free `Scene` primitives.
 It does not create parallel frontend identity domains or duplicate `Scene`. The crate now depends
-on `astra-store` because it owns real orchestration and hydration. Normal UI modules still depend
-only on `astra-app`; the feature-gated IndexedDB browser-contract harness remains an isolated
+on `mirabile-store` because it owns real orchestration and hydration. Normal UI modules still depend
+only on `mirabile-app`; the feature-gated IndexedDB browser-contract harness remains an isolated
 test-only exception with direct repository dependencies for its pre-existing adapter checks.
 
 No `AppEvent` stream exists in this slice. If events are added, they announce that authoritative
@@ -42,7 +42,7 @@ This projection does not change canonical `ResourceBinding` semantics.
 Chart library and saved-workspace identity always means a canonical `ChartDefinition`, not the
 `ChartRecord` referenced by that definition. The contract makes this explicit through
 `LibraryChartSummary::definition_id`, `ChartPersistence::Saved { definition_id }`, and
-`AppIntent::OpenChart { definition_id }`. These fields continue to use Astra's existing
+`AppIntent::OpenChart { definition_id }`. These fields continue to use Mirabile's existing
 `ResourceId`; no duplicate chart ID type exists. Aspect Sets and other genuinely generic resources
 retain `resource_id` naming.
 
@@ -149,9 +149,9 @@ live in the application adapter and tests, not DOM handlers.
 ## Intents, drafts, and form buffers
 
 `AppIntent` expresses user-level application intentions. It is not the persistence-oriented
-`astra_core::Command`; `RealApplication` translates workspace intents into typed core commands,
-applies their semantics in `astra-app`, then saves the next Workspace revision. Resource repository
-rules remain in `astra-store`.
+`mirabile_core::Command`; `RealApplication` translates workspace intents into typed core commands,
+applies their semantics in `mirabile-app`, then saves the next Workspace revision. Resource repository
+rules remain in `mirabile-store`.
 
 Draft mutations are typed. This slice uses `AspectSetDraftMutation::{SetOrb, SetEnabled}` with a
 typed `AspectId`, `Angle`, and boolean. String field paths and untyped JSON values are not part of
@@ -197,7 +197,7 @@ engine crates.
 
 ## RealApplication construction and hydration
 
-`RealApplication<R, C>` lives in `crates/astra-app/src/real_application.rs`. `R` is a cloneable
+`RealApplication<R, C>` lives in `crates/mirabile-app/src/real_application.rs`. `R` is a cloneable
 `ResourceRepository`, and `C` implements the application-facing `CalculationRuntime`. Native code
 uses `InlineCalculationRuntime<DeterministicBackend>` or a controlled runtime. The WASM constructor
 uses `WorkerCalculationRuntime` plus `IndexedDbRepositorySource`, which lazily opens one

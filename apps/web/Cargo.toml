@@ -1,6 +1,6 @@
 [package]
-name = "astra-web"
-description = "Leptos CSR presentation adapter for Astra"
+name = "mirabile-web"
+description = "Leptos CSR presentation adapter for Mirabile"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,14 +9,14 @@ repository.workspace = true
 
 [features]
 default = ["xalen-backend"]
-browser-contract = ["dep:astra-core", "dep:astra-store", "astra-store/browser-contract"]
-xalen-backend = ["astra-app/xalen-backend", "astra-engine/xalen-backend"]
+browser-contract = ["dep:mirabile-core", "dep:mirabile-store", "mirabile-store/browser-contract"]
+xalen-backend = ["mirabile-app/xalen-backend", "mirabile-engine/xalen-backend"]
 
 [dependencies]
-astra-app.workspace = true
-astra-core = { path = "../../crates/astra-core", optional = true }
-astra-engine = { path = "../../crates/astra-engine" }
-astra-store = { path = "../../crates/astra-store", optional = true }
+mirabile-app.workspace = true
+mirabile-core = { path = "../../crates/mirabile-core", optional = true }
+mirabile-engine = { path = "../../crates/mirabile-engine" }
+mirabile-store = { path = "../../crates/mirabile-store", optional = true }
 async-trait.workspace = true
 js-sys.workspace = true
 leptos.workspace = true

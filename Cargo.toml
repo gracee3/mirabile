@@ -1,10 +1,10 @@
 [workspace]
 members = [
     "apps/web",
-    "crates/astra-app",
-    "crates/astra-core",
-    "crates/astra-engine",
-    "crates/astra-store",
+    "crates/mirabile-app",
+    "crates/mirabile-core",
+    "crates/mirabile-engine",
+    "crates/mirabile-store",
 ]
 resolver = "2"
 
@@ -13,10 +13,10 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-repository = "https://github.com/gracee3/astra"
+repository = "https://github.com/gracee3/mirabile"
 
 [workspace.dependencies]
-astra-app = { path = "crates/astra-app" }
+mirabile-app = { path = "crates/mirabile-app" }
 async-trait = "0.1.89"
 blake3 = "1.8.2"
 futures = "0.3.31"

@@ -3,32 +3,32 @@
 ## Dependency direction
 
 ```text
-astra-core
+mirabile-core
    ↑       ↑
 engine   store
    ↑       ↑
-   └─ astra-app
+   └─ mirabile-app
          ↑
         web
 ```
 
-`astra-core` is portable and has no browser, Leptos, storage, or calculation-provider dependency.
-`astra-engine` owns provider-neutral execution contracts, orchestration, content keys, analysis, and
-layout; it has no DOM or persistence dependency. `astra-store` owns persistence adapters.
-`astra-app` owns `Application`, `RealApplication`, hydration, calculation runtime orchestration,
-canonical-to-read-model projection, workspace commands, and drafts. `astra-web` is the CSR
+`mirabile-core` is portable and has no browser, Leptos, storage, or calculation-provider dependency.
+`mirabile-engine` owns provider-neutral execution contracts, orchestration, content keys, analysis, and
+layout; it has no DOM or persistence dependency. `mirabile-store` owns persistence adapters.
+`mirabile-app` owns `Application`, `RealApplication`, hydration, calculation runtime orchestration,
+canonical-to-read-model projection, workspace commands, and drafts. `mirabile-web` is the CSR
 presentation adapter and also packages the calculation-worker binary; normal UI modules still see
-only `astra-app`.
+only `mirabile-app`.
 
 ## Calculation ownership and execution boundary
 
-`astra_core::CalculationSpec` remains canonical orchestration configuration. It records the user's
+`mirabile_core::CalculationSpec` remains canonical orchestration configuration. It records the user's
 zodiac, houses, coordinates, node, Black Moon, fortune-formula, and correction choices. It is not a
 backend request and contains no XALEN or Swiss types.
 
 `CalculationEngine::prepare` resolves a radix `ChartRecord`, effective `CalculationSpec`, and the
 union of concrete displayed/aspected points into `ResolvedCalculationRequest` from
-`astra-engine/src/contract.rs`. Point categories must be expanded before this boundary. The
+`mirabile-engine/src/contract.rs`. Point categories must be expanded before this boundary. The
 resolved request contains only calculation facts:
 
 ```text
@@ -67,7 +67,7 @@ crosses the backend/worker boundary. Current resource revisions and display labe
 
 ## Backend contract, capability, and identity
 
-`astra-engine/src/backend.rs` defines one provider-neutral interface:
+`mirabile-engine/src/backend.rs` defines one provider-neutral interface:
 
 ```rust
 pub trait CalculationBackend {
@@ -98,26 +98,26 @@ it is never silently omitted or substituted.
 model with optional version, revision, and data fingerprint. It does not assume JPL data. A
 validation reference is not reported as the underlying model.
 
-`CalculationProvenance` records the Astra calculation-engine identity and timezone-data version,
+`CalculationProvenance` records the Mirabile calculation-engine identity and timezone-data version,
 the selected backend actually used, any material time-scale conversion and model identities,
 celestial implementation/model/coordinates/corrections/zodiac, lunar-node and Black Moon model
 choices, house implementation/system/zodiac when requested, and derived implementation/formula
 identities when requested. Tropical versus sidereal is typed.
-Sidereal provenance uses Astra-owned
+Sidereal provenance uses Mirabile-owned
 `AyanamsaConfiguration { id, parameters }`, resolved from the canonical identifier; no provider
-enum leaks into Astra.
+enum leaks into Mirabile.
 
 `DeterministicBackend` satisfies both celestial and house capabilities in one implementation. It
 is test/demo-only and not astronomical authority. Its honest capability surface is tropical,
 geocentric celestial output with no corrections, its checked-in point catalog, and Equal houses.
 It rejects sidereal, topocentric, heliocentric, enabled-correction, Placidus, Whole Sign, derived,
 and unknown-point requests rather than echoing unimplemented semantics into provenance. The
-bootstrap chart definitions explicitly select Equal houses for this fixture; Astra's canonical
+bootstrap chart definitions explicitly select Equal houses for this fixture; Mirabile's canonical
 `CalculationSpec` default remains unchanged.
 
 ## Content-addressed invalidation
 
-`CalcKey` hashes exactly the resolved calculation request, Astra calculation-engine identity, and
+`CalcKey` hashes exactly the resolved calculation request, Mirabile calculation-engine identity, and
 the complete selected backend fingerprint. The request already contains resolved time including
 timezone-data identity, numeric location, requested points, coordinate/correction configuration,
 zodiac/ayanamsa semantics, optional house request/system, and derived requests/formulas. The
@@ -138,10 +138,10 @@ non-calculation metadata remain absent.
 
 ## Runtime and worker protocol
 
-`astra-app/src/runtime.rs` defines the application-facing `CalculationRuntime` with
+`mirabile-app/src/runtime.rs` defines the application-facing `CalculationRuntime` with
 `backend_descriptor`, `submit`, and asynchronous `receive`. `InlineCalculationRuntime<B>` executes
 the same serialized request/result contract for native code and tests. The normal WASM constructor
-uses `WorkerCalculationRuntime` from `astra-app/src/web_worker_runtime.rs`.
+uses `WorkerCalculationRuntime` from `mirabile-app/src/web_worker_runtime.rs`.
 
 Trunk builds `apps/web/src/bin/calculation-worker.rs` as the distinct
 `calculation-worker.js`/`calculation-worker_bg.wasm` Web Worker. It owns the linked
@@ -149,7 +149,7 @@ Trunk builds `apps/web/src/bin/calculation-worker.rs` as the distinct
 Leptos/UI execution context. The Worker retains deterministic dispatch for controlled tests. The
 frontend continues to construct and consume only `Application`.
 
-The versioned protocol in `astra-engine/src/worker.rs` is:
+The versioned protocol in `mirabile-engine/src/worker.rs` is:
 
 ```text
 CalculationWorkerRequest
@@ -174,7 +174,7 @@ Backend-native errors never cross the protocol.
 The current protocol is version 3; version 3 adds the selected time pipeline to
 `BackendFingerprint`.
 
-The semantic contract is ordinary serializable Astra data. Although the immediate Worker links
+The semantic contract is ordinary serializable Mirabile data. Although the immediate Worker links
 the XALEN and deterministic backends, neither `CalculationBackend` request/result types nor the
 worker protocol require in-process or WASM linkage. A separately distributed executable or local service
 can implement the same contract.
@@ -211,7 +211,7 @@ latest request fails                       → old Scene + Failed
 
 ## Provider isolation
 
-XALEN is the initial/default real browser implementation. Its adapter maps Astra requests to a
+XALEN is the initial/default real browser implementation. Its adapter maps Mirabile requests to a
 pinned XALEN API and maps results/provenance back; XALEN public types do not define canonical
 resources, `CalculationValue`, the worker protocol, read models, or snapshots. The only contract
 extensions required were provider-neutral time-scale labels and time-pipeline identity.

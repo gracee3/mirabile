@@ -35,78 +35,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
-name = "astra-app"
-version = "0.1.0"
-dependencies = [
- "astra-core",
- "astra-engine",
- "astra-store",
- "async-trait",
- "futures",
- "js-sys",
- "serde_json",
- "thiserror 2.0.20",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
-name = "astra-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "uuid",
-]
-
-[[package]]
-name = "astra-engine"
-version = "0.1.0"
-dependencies = [
- "astra-core",
- "blake3",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "xalen-coords",
- "xalen-ephem",
- "xalen-houses",
- "xalen-time",
-]
-
-[[package]]
-name = "astra-store"
-version = "0.1.0"
-dependencies = [
- "astra-core",
- "async-trait",
- "futures",
- "rexie",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "astra-web"
-version = "0.1.0"
-dependencies = [
- "astra-app",
- "astra-core",
- "astra-engine",
- "astra-store",
- "async-trait",
- "futures",
- "js-sys",
- "leptos",
- "serde_json",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "async-lock"
 version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -995,6 +923,78 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "mirabile-app"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "js-sys",
+ "mirabile-core",
+ "mirabile-engine",
+ "mirabile-store",
+ "serde_json",
+ "thiserror 2.0.20",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "mirabile-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "mirabile-engine"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "mirabile-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "xalen-coords",
+ "xalen-ephem",
+ "xalen-houses",
+ "xalen-time",
+]
+
+[[package]]
+name = "mirabile-store"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "mirabile-core",
+ "rexie",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "mirabile-web"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "js-sys",
+ "leptos",
+ "mirabile-app",
+ "mirabile-core",
+ "mirabile-engine",
+ "mirabile-store",
+ "serde_json",
+ "wasm-bindgen",
+ "web-sys",
+]
 
 [[package]]
 name = "next_tuple"

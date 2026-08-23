@@ -1,5 +1,5 @@
-use astra_app::{FillRole, Scene, StrokeRole};
 use leptos::prelude::*;
+use mirabile_app::{FillRole, Scene, StrokeRole};
 
 #[component]
 #[allow(clippy::too_many_lines)]

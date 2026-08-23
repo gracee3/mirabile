@@ -25,7 +25,7 @@ fn main() {
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "browser-contract")))]
 fn main() {
     std::hint::black_box(app::App);
-    println!("astra-web is a WebAssembly CSR application; use Trunk to run it");
+    println!("mirabile-web is a WebAssembly CSR application; use Trunk to run it");
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "browser-contract"))]

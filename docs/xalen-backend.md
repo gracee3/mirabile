@@ -14,16 +14,16 @@ Status: implementation handoff audit, pinned for the first offline analytical ra
   `xalen-houses`, all from the same exact Git revision.
 - `xalen-ephem` is always selected with `default-features = false`.
 - `hip-catalog` and `kernel-autodownload` are not enabled. The separately licensed
-  `xalen-stars-hip-data` crate must be absent from Astra's resolved graph.
+  `xalen-stars-hip-data` crate must be absent from Mirabile's resolved graph.
 - No DE440 kernel, Swiss dependency/data, network acquisition, cloud service,
   interpretation layer, or XALEN Western/Vedic/chart layer participates.
 
 ## Semantics mapping audit
 
-| Astra semantic | Pinned XALEN API | Exact? | Notes and limitations |
+| Mirabile semantic | Pinned XALEN API | Exact? | Notes and limitations |
 | --- | --- | --- | --- |
-| `AstroInstant` produced by `resolve_time` | `xalen_time::JdUTC` | Yes with the provider-neutral `TimeScale::Utc` label | Astra subtracts the asserted civil offset and therefore computes a UTC-clock Julian date. It is not UT1 or TT. |
-| Celestial ephemeris time | `JdUTC::to_tt()` then `Almanac::geocentric_*_tt` | Yes for ordinary post-1972 UTC instants | XALEN applies its embedded IERS leap-second table for UTC to TAI, then the defined TT-TAI offset of 32.184 seconds. The backend passes TT, not relabelled UTC/UT1, to the low-level analytical provider. Pre-1972 UTC is rejected because rubber seconds are not modeled; a civil `23:59:60` label is outside Astra's current civil-time schema. |
+| `AstroInstant` produced by `resolve_time` | `xalen_time::JdUTC` | Yes with the provider-neutral `TimeScale::Utc` label | Mirabile subtracts the asserted civil offset and therefore computes a UTC-clock Julian date. It is not UT1 or TT. |
+| Celestial ephemeris time | `JdUTC::to_tt()` then `Almanac::geocentric_*_tt` | Yes for ordinary post-1972 UTC instants | XALEN applies its embedded IERS leap-second table for UTC to TAI, then the defined TT-TAI offset of 32.184 seconds. The backend passes TT, not relabelled UTC/UT1, to the low-level analytical provider. Pre-1972 UTC is rejected because rubber seconds are not modeled; a civil `23:59:60` label is outside Mirabile's current civil-time schema. |
 | House rotation time | `JdTT::to_ut1(&StephensonMorrisonHohenkerk2016)` | Model-derived | House computation receives UT1 derived iteratively from the same TT using XALEN's SMH2016 Delta-T implementation. The time-conversion implementation and model identities are retained in the pre-execution backend fingerprint, `CalcKey`, and result provenance. |
 | Geocentric coordinates | `Almanac::geocentric_ecliptic_tt` | Yes | Apparent geocentric ecliptic-of-date longitude/latitude. |
 | Right ascension and declination | `Almanac::geocentric_equatorial_tt` | Yes | Apparent ecliptic place rotated by XALEN with the true obliquity of date. |
@@ -32,11 +32,11 @@ Status: implementation handoff audit, pinned for the first offline analytical ra
 | Requested bodies | private `PointId` to `xalen_ephem::Body` match | Exact for advertised IDs | This slice maps `sun`, `moon`, `mercury`, `venus`, `mars`, and `jupiter` only. Unknown/unadvertised IDs fail with `UnsupportedCapability`. |
 | Tropical zodiac | apparent ecliptic-of-date result unchanged | Yes | Supported. |
 | Sidereal/ayanamsa | not called | No in this slice | Typed unsupported. No XALEN ayanamsa enum crosses the adapter boundary. |
-| Aberration/light-time/nutation | XALEN analytical apparent-place pipeline | Exact only for `{aberration: true, light_time: true, nutation: true}` | XALEN's selected API always returns its defined apparent place: IAU 2000B nutation plus body-appropriate aberration/light-time. Other flag combinations are rejected; Astra does not recreate or subtract corrections. |
+| Aberration/light-time/nutation | XALEN analytical apparent-place pipeline | Exact only for `{aberration: true, light_time: true, nutation: true}` | XALEN's selected API always returns its defined apparent place: IAU 2000B nutation plus body-appropriate aberration/light-time. Other flag combinations are rejected; Mirabile does not recreate or subtract corrections. |
 | Equal houses | `xalen_houses::compute_houses` with `HouseSystem::Equal` | Yes to the documented XALEN mean-frame semantics | Uses model-derived UT1, XALEN mean sidereal time, and IAU 2006 mean obliquity. |
 | Placidus houses | `xalen_houses::compute_houses` with `HouseSystem::Placidus` | Yes within the non-polar domain | Requests above XALEN's documented 66.5 degree polar limit are rejected instead of silently accepting its Porphyry fallback. |
-| Ascendant | `HouseCusps::ascendant` | Yes | Converted locally from radians to Astra `Angle`. |
-| Midheaven | `HouseCusps::mc` | Yes | Converted locally from radians to Astra `Angle`. |
+| Ascendant | `HouseCusps::ascendant` | Yes | Converted locally from radians to Mirabile `Angle`. |
+| Midheaven | `HouseCusps::mc` | Yes | Converted locally from radians to Mirabile `Angle`. |
 | Lunar node choice | no point mapping | No in this slice | The request configuration is retained in provenance, but no node point is advertised or returned. |
 | Black Moon choice | no point mapping | No in this slice | The request configuration is retained in provenance, but no apogee point is advertised or returned. |
 | Derived formulas | not called | No | `derived = None`; XALEN Western/Vedic layers are intentionally absent. |
@@ -62,7 +62,7 @@ XALEN API. Accuracy tests instead pin independent numeric references:
   `houses_armc` using the same XALEN RAMC and IAU 2006 mean obliquity, as committed
   in XALEN's `swiss_houses_oracle.rs` at the pinned revision.
 
-The Astra fixture records the source, epoch, location, frame, values, tolerances,
+The Mirabile fixture records the source, epoch, location, frame, values, tolerances,
 and XALEN revision next to the assertions. Angular comparisons are wrap-aware.
 
 The complete fixture is `2000-01-01 12:00:00 UTC`, latitude `28.0 N`, longitude
@@ -77,8 +77,8 @@ longitudes in degrees are Sun `280.3689` (tolerance `0.001`), Moon `223.3238`
 
 ## Runtime boundary
 
-The feature-gated implementation lives inside `astra-engine`. Its private XALEN
-types are converted to Astra-owned request/result types before returning. Normal
+The feature-gated implementation lives inside `mirabile-engine`. Its private XALEN
+types are converted to Mirabile-owned request/result types before returning. Normal
 browser wiring constructs the XALEN descriptor on the UI thread and the XALEN
 backend inside the calculation Worker; the worker protocol, canonical resources,
 `CalculationValue`, analysis, layout, and frontend remain XALEN-free.
@@ -95,11 +95,11 @@ Completion rejects time provenance that differs from the selected fingerprint.
 The browser distribution includes `THIRD_PARTY_NOTICES.md`, the complete XALEN
 Apache-2.0 license, the ERFA BSD-3-Clause notice, and the `vsop87` MIT license.
 Trunk copies these files into every distribution and the browser contract checks
-their presence and exact content. The notice explicitly states that Astra does
+their presence and exact content. The notice explicitly states that Mirabile does
 not bundle XALEN's optional Hipparcos catalog or NC data crate.
 
-`scripts/check-xalen-dependencies.sh` audits the actual `astra-engine` and
-`astra-web` feature trees. XALEN's own `xalen-ephem` manifest necessarily brings
+`scripts/check-xalen-dependencies.sh` audits the actual `mirabile-engine` and
+`mirabile-web` feature trees. XALEN's own `xalen-ephem` manifest necessarily brings
 `xalen-ayanamsa`, `xalen-star-anchors`, and `xalen-stars`; `xalen-stars` is built
 with defaults disabled and the non-commercial `xalen-stars-hip-data` package is
 absent.

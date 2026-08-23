@@ -1,15 +1,15 @@
 use std::{rc::Rc, str::FromStr};
 
+use leptos::{ev, prelude::*};
 #[cfg(test)]
-use astra_app::ProjectionVersion;
+use mirabile_app::ProjectionVersion;
 #[cfg(target_arch = "wasm32")]
-use astra_app::RealApplication;
-use astra_app::{
+use mirabile_app::RealApplication;
+use mirabile_app::{
     Angle, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind, AppReadModel,
     Application, ApplicationStatus, AspectSetDraftMutation, Availability, BindingSourceSummary,
     ChartPersistence, DraftState, InstanceId, ResourceId, ViewComputationState,
 };
-use leptos::{ev, prelude::*};
 use wasm_bindgen::JsCast;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -211,7 +211,7 @@ pub fn App() -> impl IntoView {
             {move || match model.get().status {
                 ApplicationStatus::Initializing => view! {
                     <main class="startup-state" aria-labelledby="startup-title">
-                        <p class="brand-mark">"ASTRA"</p>
+                        <p class="brand-mark">"MIRABILE"</p>
                         <h1 id="startup-title">"Opening your workspace"</h1>
                         <p class="muted" role="status" aria-live="polite">
                             "Initializing the application contract…"
@@ -222,7 +222,7 @@ pub fn App() -> impl IntoView {
                     let retry = dispatcher;
                     view! {
                         <main class="startup-state error-state" aria-labelledby="startup-error-title">
-                            <p class="brand-mark">"ASTRA"</p>
+                            <p class="brand-mark">"MIRABILE"</p>
                             <h1 id="startup-error-title">"The workspace could not open"</h1>
                             <p class="error-message" role="alert">{error.message}</p>
                             <button class="button primary" type="button" on:click=move |_| retry.initialize()>
@@ -254,7 +254,7 @@ fn ReadyShell(
     view! {
         <header class="command-bar">
             <div class="brand-block">
-                <span class="brand-mark">"ASTRA"</span>
+                <span class="brand-mark">"MIRABILE"</span>
                 <span class="adapter-badge">{application_label()}</span>
             </div>
             <nav class="view-tabs" aria-label="Available views">

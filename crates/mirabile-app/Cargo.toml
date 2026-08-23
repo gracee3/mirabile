@@ -1,0 +1,39 @@
+[package]
+name = "mirabile-app"
+description = "Application interface contract and UI projections for Mirabile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+xalen-backend = ["mirabile-engine/xalen-backend"]
+
+[dependencies]
+mirabile-core = { path = "../mirabile-core" }
+mirabile-engine = { path = "../mirabile-engine" }
+mirabile-store = { path = "../mirabile-store" }
+async-trait.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = [
+    "Blob",
+    "BlobPropertyBag",
+    "Document",
+    "ErrorEvent",
+    "Location",
+    "MessageEvent",
+    "Url",
+    "Window",
+    "Worker",
+] }
+
+[lints]
+workspace = true

@@ -2,17 +2,17 @@
 set -euo pipefail
 
 workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-audit_dir="$(mktemp -d -t astra-xalen-audit.XXXXXX)"
+audit_dir="$(mktemp -d -t mirabile-xalen-audit.XXXXXX)"
 trap 'rm -rf "${audit_dir}"' EXIT
 
 cargo tree \
   --manifest-path "${workspace_dir}/Cargo.toml" \
-  -p astra-engine \
+  -p mirabile-engine \
   --features xalen-backend \
   -e features >"${audit_dir}/engine.txt"
 cargo tree \
   --manifest-path "${workspace_dir}/Cargo.toml" \
-  -p astra-web \
+  -p mirabile-web \
   -e features >"${audit_dir}/web.txt"
 
 for forbidden in \

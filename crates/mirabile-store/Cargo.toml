@@ -1,0 +1,28 @@
+[package]
+name = "mirabile-store"
+description = "Persistence boundaries and adapters for Mirabile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+browser-contract = []
+
+[dependencies]
+mirabile-core = { path = "../mirabile-core" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+rexie.workspace = true
+wasm-bindgen.workspace = true
+
+[lints]
+workspace = true

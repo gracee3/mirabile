@@ -58,7 +58,7 @@ Draft recovery in IndexedDB, cross-tab notifications/locks, OPFS caches, cloud s
 `scripts/test-browser.sh` uses the checked-in feature-gated harness, Trunk, Python, and an isolated
 headless Chromium profile. It covers create/get/save/history, two database handles, stale save and
 delete conflicts, tombstone reads, permanent stable IDs, and transaction rollback after a forced
-history-key collision. Passing requires the machine-readable `ASTRA_BROWSER_CONTRACT:PASS` DOM
+history-key collision. Passing requires the machine-readable `MIRABILE_BROWSER_CONTRACT:PASS` DOM
 marker; this is local validation, not hosted CI.
 
 The same harness also runs an isolated real-application database. One `RealApplication` hydrates,
