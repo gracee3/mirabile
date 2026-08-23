@@ -7,12 +7,25 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+xalen-backend = [
+    "dep:xalen-coords",
+    "dep:xalen-ephem",
+    "dep:xalen-houses",
+    "dep:xalen-time",
+]
+
 [dependencies]
 astra-core = { path = "../astra-core" }
 blake3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+xalen-coords = { git = "https://github.com/vedika-io/xalen-ephemeris.git", rev = "cc6edbec1f748ebdc4950ae6198f575c5ada73fa", optional = true }
+xalen-ephem = { git = "https://github.com/vedika-io/xalen-ephemeris.git", rev = "cc6edbec1f748ebdc4950ae6198f575c5ada73fa", default-features = false, optional = true }
+xalen-houses = { git = "https://github.com/vedika-io/xalen-ephemeris.git", rev = "cc6edbec1f748ebdc4950ae6198f575c5ada73fa", optional = true }
+xalen-time = { git = "https://github.com/vedika-io/xalen-ephemeris.git", rev = "cc6edbec1f748ebdc4950ae6198f575c5ada73fa", optional = true }
 
 [lints]
 workspace = true

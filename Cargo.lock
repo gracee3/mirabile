@@ -69,6 +69,10 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "xalen-coords",
+ "xalen-ephem",
+ "xalen-houses",
+ "xalen-time",
 ]
 
 [[package]]
@@ -1766,6 +1770,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vsop87"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37cde47f1fc639613a2a48a6a8685db063693c55ea6b09260b78f95c9e775575"
+
+[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1913,6 +1923,77 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "xalen-ayanamsa"
+version = "0.6.0"
+source = "git+https://github.com/vedika-io/xalen-ephemeris.git?rev=cc6edbec1f748ebdc4950ae6198f575c5ada73fa#cc6edbec1f748ebdc4950ae6198f575c5ada73fa"
+dependencies = [
+ "serde",
+ "xalen-coords",
+ "xalen-star-anchors",
+ "xalen-time",
+]
+
+[[package]]
+name = "xalen-coords"
+version = "0.6.0"
+source = "git+https://github.com/vedika-io/xalen-ephemeris.git?rev=cc6edbec1f748ebdc4950ae6198f575c5ada73fa#cc6edbec1f748ebdc4950ae6198f575c5ada73fa"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
+ "xalen-time",
+]
+
+[[package]]
+name = "xalen-ephem"
+version = "0.6.0"
+source = "git+https://github.com/vedika-io/xalen-ephemeris.git?rev=cc6edbec1f748ebdc4950ae6198f575c5ada73fa#cc6edbec1f748ebdc4950ae6198f575c5ada73fa"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
+ "vsop87",
+ "xalen-ayanamsa",
+ "xalen-coords",
+ "xalen-houses",
+ "xalen-stars",
+ "xalen-time",
+]
+
+[[package]]
+name = "xalen-houses"
+version = "0.6.0"
+source = "git+https://github.com/vedika-io/xalen-ephemeris.git?rev=cc6edbec1f748ebdc4950ae6198f575c5ada73fa#cc6edbec1f748ebdc4950ae6198f575c5ada73fa"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
+ "xalen-coords",
+ "xalen-time",
+]
+
+[[package]]
+name = "xalen-star-anchors"
+version = "0.6.0"
+source = "git+https://github.com/vedika-io/xalen-ephemeris.git?rev=cc6edbec1f748ebdc4950ae6198f575c5ada73fa#cc6edbec1f748ebdc4950ae6198f575c5ada73fa"
+
+[[package]]
+name = "xalen-stars"
+version = "0.6.0"
+source = "git+https://github.com/vedika-io/xalen-ephemeris.git?rev=cc6edbec1f748ebdc4950ae6198f575c5ada73fa#cc6edbec1f748ebdc4950ae6198f575c5ada73fa"
+dependencies = [
+ "serde",
+ "xalen-coords",
+ "xalen-time",
+]
+
+[[package]]
+name = "xalen-time"
+version = "0.6.0"
+source = "git+https://github.com/vedika-io/xalen-ephemeris.git?rev=cc6edbec1f748ebdc4950ae6198f575c5ada73fa#cc6edbec1f748ebdc4950ae6198f575c5ada73fa"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "xxhash-rust"
