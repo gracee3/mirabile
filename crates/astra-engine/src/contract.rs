@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use astra_core::{
     Angle, AngleState, BlackMoonType, CoordinateSystem, CorrectionSpec, FortuneFormula,
-    HouseSystem, LunarNodeType, PointId, PointState, ResolvedTime,
+    HouseSystem, LunarNodeType, PointId, PointState, ResolvedTime, TimeScale,
 };
 use serde::{Deserialize, Serialize};
 
@@ -188,6 +188,25 @@ pub struct AstraCalculationProvenance {
     pub timezone_data_version: String,
 }
 
+/// Stable identity for a model or data table used in time-scale conversion.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TimeModelIdentity {
+    pub id: String,
+    pub version: Option<String>,
+    pub revision: Option<String>,
+}
+
+/// Provider-neutral record of material time-scale work performed by a backend.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TimeScaleConversionProvenance {
+    pub implementation: ImplementationIdentity,
+    pub input_scale: TimeScale,
+    pub celestial_scale: TimeScale,
+    pub house_scale: Option<TimeScale>,
+    pub leap_second_model: Option<TimeModelIdentity>,
+    pub delta_t_model: Option<TimeModelIdentity>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CelestialCalculationProvenance {
     pub implementation: ImplementationIdentity,
@@ -222,6 +241,7 @@ pub struct DerivedCalculationProvenance {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BackendCalculationProvenance {
     pub backend: ImplementationIdentity,
+    pub time: Option<TimeScaleConversionProvenance>,
     pub celestial: CelestialCalculationProvenance,
     pub houses: Option<HouseCalculationProvenance>,
     pub derived: Option<DerivedCalculationProvenance>,
@@ -232,6 +252,7 @@ pub struct BackendCalculationProvenance {
 pub struct CalculationProvenance {
     pub astra: AstraCalculationProvenance,
     pub backend: ImplementationIdentity,
+    pub time: Option<TimeScaleConversionProvenance>,
     pub celestial: CelestialCalculationProvenance,
     pub houses: Option<HouseCalculationProvenance>,
     pub derived: Option<DerivedCalculationProvenance>,

@@ -216,9 +216,24 @@ impl<'de> Deserialize<'de> for AstroInstant {
     }
 }
 
+/// Time scale carried by a resolved astronomical instant.
+///
+/// The scale is explicit so calculation providers cannot reinterpret a Julian
+/// day as UT1 or TT merely because those scales use the same numeric encoding.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeScale {
+    Utc,
+    Tai,
+    Tt,
+    Ut1,
+    Tdb,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ResolvedTime {
     pub instant: AstroInstant,
+    pub scale: TimeScale,
     pub applied_offset: Offset,
     pub timezone_data_version: String,
 }

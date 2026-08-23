@@ -171,6 +171,7 @@ impl CalculationEngine {
                     timezone_data_version: self.timezone_data_version.clone(),
                 },
                 backend: backend_provenance.backend,
+                time: backend_provenance.time,
                 celestial: backend_provenance.celestial,
                 houses: backend_provenance.houses,
                 derived: backend_provenance.derived,
@@ -294,6 +295,16 @@ fn validate_backend_result(
     if descriptor.fingerprint.backend != result.provenance.backend {
         return Err(CalculationError::BackendResultMismatch(
             "backend result identity did not match the selected backend".into(),
+        ));
+    }
+    if result
+        .provenance
+        .time
+        .as_ref()
+        .is_some_and(|time| time.input_scale != request.context.time.scale)
+    {
+        return Err(CalculationError::BackendResultMismatch(
+            "time-conversion provenance input scale did not match the request".into(),
         ));
     }
     let celestial = descriptor.fingerprint.celestial.as_ref().ok_or_else(|| {
@@ -453,6 +464,7 @@ fn resolve_time(
     Ok(ResolvedTime {
         instant: astra_core::AstroInstant::from_julian_day(julian_day)
             .map_err(|_| TimeResolutionError::NonFiniteInstant)?,
+        scale: astra_core::TimeScale::Utc,
         applied_offset: offset,
         timezone_data_version: timezone_data_version.into(),
     })

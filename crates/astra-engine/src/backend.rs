@@ -292,6 +292,7 @@ impl CalculationBackend for DeterministicBackend {
             derived: DerivedPointsResult::default(),
             provenance: BackendCalculationProvenance {
                 backend: fingerprint.backend,
+                time: None,
                 celestial: CelestialCalculationProvenance {
                     implementation: celestial_fingerprint.implementation,
                     model: celestial_fingerprint.model,
