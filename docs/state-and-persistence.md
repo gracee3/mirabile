@@ -1,5 +1,17 @@
 # State and persistence
 
+## Pre-MVP compatibility policy
+
+Until the first explicitly declared Mirabile MVP schema freeze, persisted schemas are development
+formats and may change incompatibly. Migration is appropriate when it is cheap and useful to
+current development, but compatibility with every development format is not guaranteed. Old data
+must fail clearly when incompatible; resetting development IndexedDB data is acceptable. The
+current `SchemaVersion::V1` therefore describes a development encoding, not a permanent public
+compatibility promise.
+
+The future public compatibility contract begins only with an explicit schema-freeze decision. A
+generic migration framework will not be built merely to preserve pre-MVP design choices.
+
 ## Authority classes
 
 | Class | Representation now | Persistence rule |

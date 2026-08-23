@@ -5,7 +5,7 @@
 - Base: `63f081b3c9b0becf5238bdbe2cf3b6964bf09f85` (`origin/main`)
 - Branch: `goal/mirabile-consolidation`
 - Worktree: `/home/emmy/worktrees/mirabile-consolidation`
-- Current phase: 2 - active documentation and architecture decision baseline
+- Current phase: 3 - authority/lifetime model and WorkspaceDocument/WorkspaceSession
 - Delivery: unmerged goal branch; push only after the complete validation phase
 
 ## Frozen architecture
@@ -35,12 +35,15 @@
 - Phase 1 renamed all five packages and four crate directories, all Rust imports and Mirabile-owned provenance types/fields, repository metadata, the default IndexedDB identity, calculation/cache identities, Worker/browser markers, scripts, UI text, notices wrapper prose, and checked-in metadata.
 - The Worker protocol remains V1 because the serialized contract did not change. Mirabile-owned cache keys intentionally change through the renamed engine/backend identities.
 - Residual name audit after phase 1: only the two classified historical references in this document remain (`astra` as the old IndexedDB name and `/home/emmy/astra` as the actual primary checkout path). Third-party XALEN names and opaque UUIDs were unchanged.
+- Phase 2 replaced the foundation-era README narrative with the real local-first Application, IndexedDB, Worker, provider-neutral contract, pinned XALEN default, current limitations, and local-only validation story. The original implementation plan is explicitly historical.
+- Eight accepted ADRs now cover record/definition separation, revisioned resources, binding modes, application/read-model authority, document/session lifetimes, calculation isolation, XALEN/Swiss distribution boundaries, and pre-MVP compatibility.
 
 ## Validation status
 
 - Baseline identity/worktree checks: passed.
 - Phase 1: `cargo fmt --all -- --check`, `cargo test --workspace` (99 tests), strict workspace Clippy, `mirabile-web` WASM check, XALEN dependency guard, browser IndexedDB/Worker contract, and `git diff --check` passed.
-- Phase-focused checks: phase 2 onward pending.
+- Phase 2: documentation link targets inspected; `cargo fmt --all -- --check`, `cargo test -p mirabile-app` (27 tests), and `git diff --check` passed.
+- Phase-focused checks: phase 3 onward pending.
 - Full local verification: pending.
 
 ## Deferred work

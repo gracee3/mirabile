@@ -1,4 +1,8 @@
-# Architecture foundation implementation plan
+# Historical: architecture foundation implementation plan
+
+> Status: historical implementation record. This document describes the original foundation
+> milestone and later annotations; it is not Mirabile's current product or architecture roadmap.
+> See the active README, architecture documents, decision records, and consolidation goal status.
 
 This plan was written after inspecting the clean README-only repository on 2026-08-22. The
 available toolchain is Rust/Cargo 1.97.1 and Trunk 0.21.14. The browser WASM target is now installed
