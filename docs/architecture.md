@@ -97,9 +97,10 @@ model with optional version, revision, and data fingerprint. It does not assume 
 validation reference is not reported as the underlying model.
 
 `CalculationProvenance` records the Astra calculation-engine identity and timezone-data version,
-the selected backend actually used, celestial implementation/model/coordinates/corrections/zodiac,
-lunar-node and Black Moon model choices, house implementation/system/zodiac when requested, and
-derived implementation/formula identities when requested. Tropical versus sidereal is typed.
+the selected backend actually used, any material time-scale conversion and model identities,
+celestial implementation/model/coordinates/corrections/zodiac, lunar-node and Black Moon model
+choices, house implementation/system/zodiac when requested, and derived implementation/formula
+identities when requested. Tropical versus sidereal is typed.
 Sidereal provenance uses Astra-owned
 `AyanamsaConfiguration { id, parameters }`, resolved from the canonical identifier; no provider
 enum leaks into Astra.
@@ -139,7 +140,8 @@ uses `WorkerCalculationRuntime` from `astra-app/src/web_worker_runtime.rs`.
 
 Trunk builds `apps/web/src/bin/calculation-worker.rs` as the distinct
 `calculation-worker.js`/`calculation-worker_bg.wasm` Web Worker. It owns the linked
-`DeterministicBackend`; calculation therefore runs outside the Leptos/UI execution context. The
+`XalenBackend` selected by normal browser construction; calculation therefore runs outside the
+Leptos/UI execution context. The Worker retains deterministic dispatch for controlled tests. The
 frontend continues to construct and consume only `Application`.
 
 The versioned protocol in `astra-engine/src/worker.rs` is:
@@ -166,8 +168,8 @@ mismatch, and internal execution failure. Unsupported protocol requests are reje
 Backend-native errors never cross the protocol.
 
 The semantic contract is ordinary serializable Astra data. Although the immediate Worker links
-the deterministic backend, neither `CalculationBackend` request/result types nor the worker
-protocol require in-process or WASM linkage. A separately distributed executable or local service
+the XALEN and deterministic backends, neither `CalculationBackend` request/result types nor the
+worker protocol require in-process or WASM linkage. A separately distributed executable or local service
 can implement the same contract.
 
 ## Latest-wins application semantics

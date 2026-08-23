@@ -31,7 +31,7 @@ Displayed points and aspected points are separate bindings, so visible points do
 
 ## Time and location
 
-`TemporalAssertion` retains civil date/time, calendar, timezone assertion, and optional ambiguity choice. `ResolvedTime` is a derived calculation value and includes the applied offset and timezone-data version. Years use astronomical numbering: year 0 is 1 BCE, year -1 is 2 BCE.
+`TemporalAssertion` retains civil date/time, calendar, timezone assertion, and optional ambiguity choice. `ResolvedTime` is a derived calculation value and includes an explicit astronomical time-scale label, the applied offset, and timezone-data version. The current resolver produces a UTC-clock Julian day; backends must perform and record any TT or UT1 conversion instead of relabelling it. Years use astronomical numbering: year 0 is 1 BCE, year -1 is 2 BCE.
 
 `CivilDate` construction enforces calendar-independent structure, so February 29 is representable.
 `TemporalAssertion` applies proleptic-Gregorian century rules or the Julian every-four-years rule.
