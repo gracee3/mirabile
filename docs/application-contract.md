@@ -79,12 +79,13 @@ repository, or mock work. Repeated snapshots without a transition return the sam
 
 `wait_for_update(after)` returns only a projection whose version is strictly newer than `after`.
 It may return immediately if that newer projection already exists; otherwise the implementation
-awaits a meaningful authoritative transition. `RealApplication` completes one queued deterministic
-computation or repository save without a timer. Its version notification is shared observation,
-not a single-consumer message: all waiters after version N can observe N+1 or another version newer
-than N. If no work is queued, a waiter remains registered for the next authoritative transition
-rather than polling or fabricating a version. The runtime notification primitive is deliberately
-outside the contract, and no authoritative event stream is introduced.
+awaits a meaningful authoritative transition. `RealApplication` receives one calculation-runtime
+result or completes one queued repository/cache transition without a timer. Its version
+notification is shared observation, not a single-consumer message: all waiters after version N can
+observe N+1 or another version newer than N. If no work is pending, a waiter remains registered for
+the next authoritative transition rather than polling or fabricating a version. The runtime
+notification primitive is deliberately outside the contract, and no authoritative event stream is
+introduced.
 
 The frontend pending lifecycle is:
 
@@ -120,9 +121,12 @@ or failed view without becoming a shell-level error.
 | some | `Failed(error)` | Keep displaying the last good Scene and surface the scoped error. |
 | none | `Failed(error)` | Surface that the view has never computed successfully. |
 
-The real implementation returns accepted intermediate states from `dispatch` and deterministically
-completes queued work through `wait_for_update`. A calculation failure changes only the computation
-state and notice; it never clears the last successful `Scene`.
+The real implementation returns accepted intermediate states from `dispatch` and completes
+runtime/repository work through `wait_for_update`. A calculation failure changes only the
+computation state and notice; it never clears the last successful `Scene`. A newer calculation
+intent is accepted while the view is already `Refreshing`; it replaces that view's expected typed
+request ID and CalcKey. Stale success and failure results make no authoritative transition and do
+not advance `ProjectionVersion`.
 
 ## Workspace selection policy
 
@@ -193,11 +197,12 @@ engine crates.
 
 ## RealApplication construction and hydration
 
-`RealApplication<R, P>` lives in `crates/astra-app/src/real_application.rs`. `R` is a cloneable
-`ResourceRepository`, and `P` is an `EphemerisProvider`. Native tests inject a shared
-`MemoryRepository`; the WASM constructor uses `IndexedDbRepositorySource`, which lazily opens one
+`RealApplication<R, C>` lives in `crates/astra-app/src/real_application.rs`. `R` is a cloneable
+`ResourceRepository`, and `C` implements the application-facing `CalculationRuntime`. Native code
+uses `InlineCalculationRuntime<DeterministicBackend>` or a controlled runtime. The WASM constructor
+uses `WorkerCalculationRuntime` plus `IndexedDbRepositorySource`, which lazily opens one
 `IndexedDbRepository` during initialization and retains its cloneable `Rc<Rexie>` handle for the
-application lifetime. The application, not the web shell, owns repository acquisition.
+application lifetime. The application, not the web shell, owns repository or worker orchestration.
 
 Initialization idempotently ensures seven deterministic bootstrap resources: two ChartRecords,
 two ChartDefinitions, Standard and Tight AspectSets, and one Workspace. It lists current canonical
@@ -212,8 +217,16 @@ theme, wheel template, and view document are honest inline values with no fabric
 resolver calls the core `resolve_binding` implementation for Follow, Pinned, and Inline; pinned
 history is hydrated before synchronous projection and computation.
 
-Pending work is an internal queue. Deterministic computation currently executes synchronously
-inside the awaited pending transition, while optimistic resource saves await the retained
-repository. `snapshot()` never drives that queue. This seam can move calculation behind a Web
-Worker later without changing intents, read models, or wait semantics. The provider remains
-`DeterministicEphemeris`; this is a real persistence/orchestration application, not real astronomy.
+Calculation requests are submitted through `CalculationRuntime` as soon as the authoritative
+intent is prepared. Native inline and controlled runtimes use the exact versioned worker protocol.
+Normal WASM operation communicates with the Trunk-built Web Worker and linked
+`DeterministicBackend`; backend calculation therefore executes outside the Leptos/UI context.
+Optimistic resource saves still await the retained repository. `snapshot()` never receives runtime
+results or drives pending work. The deterministic backend is a demo/test implementation, not real
+astronomy.
+
+Each view tracks its current expected `(CalculationRequestId, CalcKey)`. A runtime result is
+accepted only when both match that view and its protocol version is current. Accepted success is
+cached, analyzed, and laid out; accepted failure retains the last good Scene. Stale results are
+discarded without cache insertion, view mutation, notice replacement, or ProjectionVersion
+advance. Cancellation remains an optional optimization.

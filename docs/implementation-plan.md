@@ -11,16 +11,20 @@ and included in local verification.
 5. Prove the architecture in `astra-web`: a source chart flows through calculation, analysis, layout, and SVG; an AspectSet draft previews immediately and saves or cancels without mutating canonical state prematurely.
 6. Encode the handoff's acceptance behaviors as native Rust tests, then run format, unit tests, clippy, native workspace checks, and the Trunk/WASM build where the installed target permits.
 
-Out of scope for this milestone: production astronomy, historical timezone resolution, a real calculation worker, temporal-query execution, sync transport, encryption, OPFS assets, import bundles, multi-tab leadership, and professional visual polish. Their boundaries are documented now and must remain additive.
+Out of scope for the original foundation milestone: production astronomy, historical timezone
+resolution, temporal-query execution, sync transport, encryption, OPFS assets, import bundles,
+multi-tab leadership, and professional visual polish. Their boundaries are documented and must
+remain additive.
 
 ## Outcome
 
 The planned vertical slice is implemented. Native tests exercise domain invariants, resource binding/precedence, draft isolation, revision conflicts/history, portable JSON, calculation and analysis invalidation, presentation-only invalidation, workspace/library separation, and cache reconstruction. The web app persists the demonstration AspectSet and its revisions in IndexedDB; other canonical resource types use the same repository contract but do not yet have UI workflows.
 
-`CalcRequest`/`CalcResult` establish the worker protocol, but calculation still runs synchronously
-inside `RealApplication` pending work. Query expressions, derivation recipes, composite views,
-sync transport, vaults, OPFS, and temporal execution remain honest skeletons or documented
-boundaries rather than implemented features.
+The later calculation-runtime slice replaced `CalcRequest`/`CalcResult` with a versioned typed
+protocol carrying only `ResolvedCalculationRequest`. Normal WASM now runs deterministic backend
+calculation in a real Web Worker; native tests use the same contract inline. Query expressions,
+derivation recipes, composite views, sync transport, vaults, OPFS, and temporal execution remain
+honest skeletons or documented boundaries rather than implemented features.
 
 ## P0 architecture hardening
 
@@ -32,9 +36,8 @@ makes browser startup fail closed while retaining one IndexedDB handle.
 
 Native tests cover semantic invalidation boundaries, canonical validation, Gregorian/Julian and
 Julian Day fixtures, cache/context reuse, and memory-repository tombstones. The feature-gated local
-browser contract covers the matching IndexedDB behavior and transaction rollback. Real astronomy,
-a calculation Web Worker, migrations, general atomic multi-resource chart creation, and hosted CI
-remain out of scope.
+browser contract covers matching IndexedDB behavior and transaction rollback. Migrations, general
+atomic multi-resource chart creation, hosted CI, and real astronomy remain out of scope.
 
 ## Real application integration
 
@@ -45,7 +48,8 @@ projection, capabilities, draft Save/Cancel/conflict, ProjectionVersion, and non
 notifications. The normal WASM shell constructs this implementation over IndexedDB; native web
 tests keep the deterministic mock.
 
-Native tests prove MemoryRepository reload and cache reuse with an explicit provider invocation
-counter. The Chromium contract proves the same persisted chart/AspectSet lifecycle across two real
-application instances and one isolated IndexedDB database. The implementation is still a
-deterministic/demo astronomical provider and an in-thread pending executor.
+Native tests prove MemoryRepository reload, cache reuse, typed protocol round trips, and per-view
+latest-wins behavior under controlled out-of-order completion. The Chromium contract proves both a
+real Web Worker calculation and the persisted chart/AspectSet lifecycle across two application
+instances in one isolated IndexedDB database. The linked backend remains deterministic/demo-only;
+XALEN and Swiss Ephemeris are not integrated.
