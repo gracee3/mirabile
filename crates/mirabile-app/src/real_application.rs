@@ -12,8 +12,8 @@ use mirabile_core::{
     AnalysisProfile, AspectSet, CalculationSpec, CanonicalResource, ChartDefinition, ChartRecord,
     ChartSource, Command, ConfigurationStack, EffectiveConfiguration, InstanceId, PointSet,
     ResolutionLayer, Resolved, ResourceBinding, ResourceEnvelope, ResourceId, Revision, Theme,
-    Timestamp, ViewDocument, ViewInstance, ViewInstanceId, WheelTemplate, Workspace,
-    WorkspaceChart, resolve_binding,
+    Timestamp, ViewDocument, ViewInstance, ViewInstanceId, WheelTemplate, WorkspaceDocument,
+    WorkspaceDocumentChart, resolve_binding,
 };
 use mirabile_engine::{
     AspectAnalyzer, CalcKey, CalculationEngine, CalculationOutcome, CalculationRequestId,
@@ -33,7 +33,7 @@ use crate::{
     ChartSlotAssignment, CommandCapability, DraftState, InlineCalculationRuntime,
     InspectorReadModel, LibraryChartSummary, LibraryReadModel, OpenChartSummary, ProjectionVersion,
     ResourceBindingSummary, ResourceEditorReadModel, ViewComputationState, ViewReadModel,
-    ViewSummary, WorkspaceReadModel, bootstrap_ids, bootstrap_resources,
+    ViewSummary, WorkspaceReadModel, WorkspaceSession, bootstrap_ids, bootstrap_resources,
     workspace_commands::apply_workspace_command,
 };
 #[cfg(feature = "xalen-backend")]
@@ -267,6 +267,7 @@ where
             Ok(hydrated) => {
                 let mut state = self.state.borrow_mut();
                 state.catalog = hydrated.catalog;
+                state.session = Some(WorkspaceSession::from_saved(&hydrated.workspace));
                 state.workspace = Some(hydrated.workspace);
                 state.next_timestamp = hydrated.next_timestamp;
                 state.status = ApplicationStatus::Ready;
@@ -320,8 +321,13 @@ where
             | AppIntent::SetActiveView { .. }
             | AppIntent::AssignChartSlot { .. }
             | AppIntent::SetWorkspaceAspectSet { .. } => {
-                self.dispatch_workspace_intent(intent).await?;
+                self.dispatch_workspace_intent(&intent)?;
             }
+            AppIntent::SaveWorkspace => self.save_workspace().await?,
+            AppIntent::SetTemporaryPointHidden { point_id, hidden } => {
+                self.set_temporary_point_hidden(point_id, hidden)?;
+            }
+            AppIntent::PromoteTemporaryDisplay => self.promote_temporary_display()?,
             AppIntent::BeginAspectSetEdit { resource_id } => {
                 self.begin_aspect_set_edit(resource_id)?;
             }
@@ -489,44 +495,31 @@ where
         Ok(())
     }
 
-    async fn dispatch_workspace_intent(&self, intent: AppIntent) -> AppResult<()> {
-        let (expected_revision, next, refresh, clear_editor, notice) = {
-            let state = self.state.borrow();
-            let envelope = state.workspace.as_ref().ok_or_else(|| {
-                AppError::new(AppErrorKind::Unavailable, "No hydrated workspace is active")
-            })?;
-            let workspace_id = envelope.id;
-            let mut workspace = envelope.payload.clone();
-            let (command, refresh, clear_editor, notice) =
-                state.command_for_intent(workspace_id, &workspace, &intent)?;
-            let view_documents = state.resolve_view_documents(&workspace)?;
-            apply_workspace_command(workspace_id, &mut workspace, &command, &view_documents)
-                .map_err(|error| AppError::new(AppErrorKind::InvalidIntent, error.to_string()))?;
-            let next = envelope
-                .next_with_payload(workspace, Timestamp::from_unix_millis(state.next_timestamp))
-                .map_err(|error| {
-                    AppError::new(
-                        AppErrorKind::InvalidIntent,
-                        format!("Workspace mutation was invalid: {error}"),
-                    )
-                })?;
-            (envelope.revision, next, refresh, clear_editor, notice)
-        };
-
-        self.repository
-            .save(
-                expected_revision,
-                CanonicalResource::Workspace(next.clone()),
-            )
-            .await
-            .map_err(|error| repository_app_error("Could not persist the workspace", &error))?;
-
+    fn dispatch_workspace_intent(&self, intent: &AppIntent) -> AppResult<()> {
         let mut state = self.state.borrow_mut();
-        state.next_timestamp = state.next_timestamp.saturating_add(1);
-        state
-            .catalog
-            .insert_current(CanonicalResource::Workspace(next.clone()));
-        state.workspace = Some(next);
+        let workspace_id = state
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.id)
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::Unavailable,
+                    "The active session has no saved WorkspaceDocument backing",
+                )
+            })?;
+        let document = state
+            .session
+            .as_ref()
+            .map(|session| session.document.clone())
+            .ok_or_else(|| {
+                AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+            })?;
+        let (command, refresh, clear_editor, notice) =
+            state.command_for_intent(workspace_id, &document, intent)?;
+        let view_documents = state.resolve_view_documents(&document)?;
+        let session = state.session.as_mut().expect("session was checked");
+        apply_workspace_command(workspace_id, session, &command, &view_documents)
+            .map_err(|error| AppError::new(AppErrorKind::InvalidIntent, error.to_string()))?;
         if clear_editor {
             state.editor = None;
         }
@@ -535,6 +528,128 @@ where
             self.submit_active_view_refresh(&mut state)?;
         }
         state.notice = Some(info(notice));
+        state.advance()
+    }
+
+    async fn save_workspace(&self) -> AppResult<()> {
+        let (expected_revision, next) = {
+            let state = self.state.borrow();
+            let envelope = state.workspace.as_ref().ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::Unavailable,
+                    "The active session has no saved WorkspaceDocument backing",
+                )
+            })?;
+            let session = state.session.as_ref().ok_or_else(|| {
+                AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+            })?;
+            if !session.document_dirty {
+                return Err(AppError::new(
+                    AppErrorKind::InvalidIntent,
+                    "The WorkspaceDocument has no changes to save",
+                ));
+            }
+            let next = envelope
+                .next_with_payload(
+                    session.document.clone(),
+                    Timestamp::from_unix_millis(state.next_timestamp),
+                )
+                .map_err(|error| {
+                    AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        format!("WorkspaceDocument draft was invalid: {error}"),
+                    )
+                })?;
+            (envelope.revision, next)
+        };
+
+        self.repository
+            .save(
+                expected_revision,
+                CanonicalResource::WorkspaceDocument(next.clone()),
+            )
+            .await
+            .map_err(|error| {
+                repository_app_error("Could not save the WorkspaceDocument", &error)
+            })?;
+
+        let mut state = self.state.borrow_mut();
+        state.next_timestamp = state.next_timestamp.saturating_add(1);
+        state
+            .catalog
+            .insert_current(CanonicalResource::WorkspaceDocument(next.clone()));
+        state.workspace = Some(next.clone());
+        state
+            .session
+            .as_mut()
+            .expect("ready application has a session")
+            .mark_saved(next.id, next.revision);
+        state.notice = Some(success("Workspace saved as a new canonical revision"));
+        state.advance()
+    }
+
+    fn set_temporary_point_hidden(
+        &self,
+        point_id: mirabile_core::PointId,
+        hidden: bool,
+    ) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let session = state.session.as_mut().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })?;
+        let view_id = session
+            .active_view
+            .ok_or_else(|| AppError::new(AppErrorKind::Unavailable, "There is no active view"))?;
+        let overrides = session.temporary_view_overrides.entry(view_id).or_default();
+        if hidden && !overrides.hidden_points.contains(&point_id) {
+            overrides.hidden_points.push(point_id);
+        } else if !hidden {
+            overrides.hidden_points.retain(|point| point != &point_id);
+        }
+        if overrides == &mirabile_core::ViewOverrides::default() {
+            session.temporary_view_overrides.remove(&view_id);
+        }
+        self.submit_active_view_refresh(&mut state)?;
+        state.notice = Some(info(
+            "Temporary display override changed for this session without dirtying the workspace",
+        ));
+        state.advance()
+    }
+
+    fn promote_temporary_display(&self) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let session = state.session.as_mut().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })?;
+        let view_id = session
+            .active_view
+            .ok_or_else(|| AppError::new(AppErrorKind::Unavailable, "There is no active view"))?;
+        let overrides = session
+            .temporary_view_overrides
+            .remove(&view_id)
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::InvalidIntent,
+                    "The active view has no temporary display override to promote",
+                )
+            })?;
+        let view = session
+            .document
+            .views
+            .iter_mut()
+            .find(|view| view.id == view_id)
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::NotFound,
+                    format!("View {view_id} was not found"),
+                )
+            })?;
+        view.overrides = overrides;
+        session.mark_document_dirty();
+        self.submit_active_view_refresh(&mut state)?;
+        state.notice = Some(info(
+            "Temporary display override promoted into the durable workspace projection; save the workspace to persist it",
+        ));
         state.advance()
     }
 
@@ -701,8 +816,9 @@ where
     fn refresh_active_view(&self) -> AppResult<()> {
         let mut state = self.state.borrow_mut();
         let Some(view_id) = state
-            .workspace()
-            .and_then(|workspace| workspace.active_view)
+            .session
+            .as_ref()
+            .and_then(|session| session.active_view)
         else {
             return Err(AppError::new(
                 AppErrorKind::Unavailable,
@@ -1008,8 +1124,9 @@ where
 
     fn submit_active_view_refresh(&self, state: &mut RealState) -> AppResult<()> {
         let Some(view_id) = state
-            .workspace()
-            .and_then(|workspace| workspace.active_view)
+            .session
+            .as_ref()
+            .and_then(|session| session.active_view)
         else {
             return Ok(());
         };
@@ -1088,12 +1205,15 @@ where
         view_id: ViewInstanceId,
     ) -> AppResult<(PreparedCalculation, ViewCalculationPlan)> {
         let workspace = state
-            .workspace
+            .session
             .as_ref()
             .ok_or_else(|| {
-                AppError::new(AppErrorKind::ViewComputation, "No workspace is hydrated")
+                AppError::new(
+                    AppErrorKind::ViewComputation,
+                    "No workspace session is active",
+                )
             })?
-            .payload
+            .document
             .clone();
         let view = workspace
             .views
@@ -1131,15 +1251,7 @@ where
                     format!("Assigned chart {chart_instance} is not open"),
                 )
             })?;
-        let definition_id = match workspace_chart {
-            WorkspaceChart::Saved { definition, .. } => *definition,
-            WorkspaceChart::Ephemeral { .. } => {
-                return Err(AppError::new(
-                    AppErrorKind::ViewComputation,
-                    "Ephemeral chart calculation is not implemented in this integration slice",
-                ));
-            }
-        };
+        let definition_id = workspace_chart.definition;
         let definition = state
             .catalog
             .chart_definition(definition_id)
@@ -1214,7 +1326,8 @@ struct RealState {
     version: ProjectionVersion,
     status: ApplicationStatus,
     catalog: Catalog,
-    workspace: Option<ResourceEnvelope<Workspace>>,
+    workspace: Option<ResourceEnvelope<WorkspaceDocument>>,
+    session: Option<WorkspaceSession>,
     views: BTreeMap<ViewInstanceId, ViewRuntime>,
     editor: Option<AspectSetEditor>,
     cache: ComputationCache,
@@ -1233,6 +1346,7 @@ impl Default for RealState {
             status: ApplicationStatus::Initializing,
             catalog: Catalog::default(),
             workspace: None,
+            session: None,
             views: BTreeMap::new(),
             editor: None,
             cache: ComputationCache::default(),
@@ -1247,8 +1361,14 @@ impl Default for RealState {
 }
 
 impl RealState {
-    fn workspace(&self) -> Option<&Workspace> {
-        self.workspace.as_ref().map(|workspace| &workspace.payload)
+    fn workspace(&self) -> Option<&WorkspaceDocument> {
+        self.session.as_ref().map(|session| &session.document)
+    }
+
+    fn session(&self) -> AppResult<&WorkspaceSession> {
+        self.session.as_ref().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })
     }
 
     fn advance(&mut self) -> AppResult<()> {
@@ -1301,13 +1421,20 @@ impl RealState {
         let mut displayed_points =
             resolve_typed_binding(&workspace.profile.displayed_points, &self.catalog)
                 .map_err(view_resolution_error)?;
-        if !view.overrides.hidden_points.is_empty() {
+        let temporary_hidden = self
+            .session
+            .as_ref()
+            .and_then(|session| session.temporary_view_overrides.get(&view.id))
+            .map(|overrides| overrides.hidden_points.as_slice())
+            .unwrap_or_default();
+        if !view.overrides.hidden_points.is_empty() || !temporary_hidden.is_empty() {
             displayed_points
                 .value
                 .points
                 .retain(|selector| match selector {
                     mirabile_core::PointSelector::Point(point) => {
                         !view.overrides.hidden_points.contains(point)
+                            && !temporary_hidden.contains(point)
                     }
                     mirabile_core::PointSelector::Category(_) => true,
                 });
@@ -1349,7 +1476,7 @@ impl RealState {
 
     fn resolve_view_documents(
         &self,
-        workspace: &Workspace,
+        workspace: &WorkspaceDocument,
     ) -> AppResult<BTreeMap<ViewInstanceId, ViewDocument>> {
         workspace
             .views
@@ -1374,7 +1501,7 @@ impl RealState {
     fn command_for_intent(
         &self,
         workspace_id: ResourceId,
-        workspace: &Workspace,
+        workspace: &WorkspaceDocument,
         intent: &AppIntent,
     ) -> AppResult<(Command, bool, bool, &'static str)> {
         match intent {
@@ -1390,7 +1517,7 @@ impl RealState {
                     },
                     false,
                     false,
-                    "Chart opened and activated; selection was preserved",
+                    "Chart opened in the working document and activated; save the workspace to persist membership",
                 ))
             }
             AppIntent::CloseChart { instance_id } => Ok((
@@ -1400,7 +1527,7 @@ impl RealState {
                 },
                 true,
                 false,
-                "Chart closed; selection and chart slots were repaired by workspace policy",
+                "Chart closed in the working document; selection and slots were repaired and the workspace is dirty",
             )),
             AppIntent::ActivateChart { instance_id } => Ok((
                 Command::SetActiveChart {
@@ -1476,7 +1603,7 @@ impl RealState {
                     },
                     true,
                     false,
-                    "Chart slot assignment persisted; the view is refreshing",
+                    "Chart slot assignment changed in the working document; save the workspace to persist it",
                 ))
             }
             AppIntent::SetWorkspaceAspectSet { resource_id } => {
@@ -1490,13 +1617,16 @@ impl RealState {
                     },
                     true,
                     true,
-                    "Workspace Aspect Set binding changed; analysis is refreshing",
+                    "Workspace Aspect Set binding changed; the workspace is dirty and analysis is refreshing",
                 ))
             }
             AppIntent::BeginAspectSetEdit { .. }
             | AppIntent::UpdateAspectSetDraft(_)
             | AppIntent::SaveDraft
             | AppIntent::CancelDraft
+            | AppIntent::SaveWorkspace
+            | AppIntent::SetTemporaryPointHidden { .. }
+            | AppIntent::PromoteTemporaryDisplay
             | AppIntent::RefreshActiveView => Err(AppError::new(
                 AppErrorKind::InvalidIntent,
                 "The intent is not a workspace persistence command",
@@ -1519,13 +1649,14 @@ impl RealState {
                 "Ready application has no workspace",
             )
         })?;
+        let session = self.session()?;
         let library_charts = self.catalog.library_charts()?;
         let open_charts = workspace
             .chart_instances
             .iter()
             .map(|chart| self.catalog.open_chart_summary(chart))
             .collect::<AppResult<Vec<_>>>()?;
-        let active_chart = workspace.active_chart.and_then(|active_id| {
+        let active_chart = session.active_chart.and_then(|active_id| {
             open_charts
                 .iter()
                 .find(|chart| chart.instance_id == active_id)
@@ -1546,7 +1677,7 @@ impl RealState {
                 })
             })
             .collect::<AppResult<Vec<_>>>()?;
-        let active_view = workspace
+        let active_view = session
             .active_view
             .map(|view_id| self.view_read_model(view_id))
             .transpose()?;
@@ -1576,7 +1707,7 @@ impl RealState {
             binding_summary("Theme", &workspace.profile.theme, &self.catalog)?,
             binding_summary("Wheel template", &workspace.profile.wheel, &self.catalog)?,
         ];
-        if let Some(view) = workspace
+        if let Some(view) = session
             .active_view
             .and_then(|id| workspace.views.iter().find(|view| view.id == id))
         {
@@ -1596,10 +1727,16 @@ impl RealState {
             },
             workspace: WorkspaceReadModel {
                 charts: open_charts,
-                active_chart: workspace.active_chart,
-                selected_charts: workspace.selected_charts.clone(),
+                active_chart: session.active_chart,
+                selected_charts: session.selected_charts.clone(),
                 views: view_summaries,
-                active_view: workspace.active_view,
+                active_view: session.active_view,
+                document_id: self.workspace.as_ref().map(|document| document.id),
+                document_revision: self.workspace.as_ref().map(|document| document.revision),
+                document_dirty: session.document_dirty,
+                has_temporary_display_override: session
+                    .active_view
+                    .is_some_and(|view_id| session.temporary_view_overrides.contains_key(&view_id)),
             },
             active_view,
             inspector: InspectorReadModel {
@@ -1689,14 +1826,42 @@ impl RealState {
             disabled("The active Aspect Set is inline and has no canonical resource to edit")
         };
         let refresh = self
-            .workspace()
-            .and_then(|workspace| workspace.active_view)
+            .session
+            .as_ref()
+            .and_then(|session| session.active_view)
             .and_then(|id| self.views.get(&id))
             .map_or_else(|| disabled("No active view"), |_| Availability::Enabled);
+        let save_workspace = self.session.as_ref().map_or_else(
+            || disabled("No workspace session"),
+            |session| {
+                if session.document_dirty && self.workspace.is_some() {
+                    Availability::Enabled
+                } else if self.workspace.is_none() {
+                    disabled("This session has no saved WorkspaceDocument backing")
+                } else {
+                    disabled("The workspace has no durable changes")
+                }
+            },
+        );
+        let promote_display = self.session.as_ref().map_or_else(
+            || disabled("No workspace session"),
+            |session| {
+                if session
+                    .active_view
+                    .is_some_and(|view_id| session.temporary_view_overrides.contains_key(&view_id))
+                {
+                    Availability::Enabled
+                } else {
+                    disabled("The active view has no temporary display override")
+                }
+            },
+        );
         vec![
             capability(AppAction::BeginAspectSetEdit, begin),
             capability(AppAction::SaveDraft, save),
             capability(AppAction::CancelDraft, cancel),
+            capability(AppAction::SaveWorkspace, save_workspace),
+            capability(AppAction::PromoteWorkspaceDisplay, promote_display),
             capability(AppAction::RefreshView, refresh),
         ]
     }
@@ -1704,7 +1869,7 @@ impl RealState {
 
 struct HydratedState {
     catalog: Catalog,
-    workspace: ResourceEnvelope<Workspace>,
+    workspace: ResourceEnvelope<WorkspaceDocument>,
     next_timestamp: i64,
 }
 
@@ -1742,9 +1907,9 @@ impl Catalog {
         }
     }
 
-    fn workspace(&self, id: ResourceId) -> Option<&ResourceEnvelope<Workspace>> {
+    fn workspace(&self, id: ResourceId) -> Option<&ResourceEnvelope<WorkspaceDocument>> {
         match self.current.get(&id) {
-            Some(CanonicalResource::Workspace(value)) => Some(value),
+            Some(CanonicalResource::WorkspaceDocument(value)) => Some(value),
             _ => None,
         }
     }
@@ -1752,7 +1917,7 @@ impl Catalog {
     fn pinned_references(&self) -> Vec<(ResourceId, Revision)> {
         let mut references = Vec::new();
         for resource in self.current.values() {
-            let CanonicalResource::Workspace(workspace) = resource else {
+            let CanonicalResource::WorkspaceDocument(workspace) = resource else {
                 continue;
             };
             push_pin(&workspace.payload.profile.displayed_points, &mut references);
@@ -1794,43 +1959,24 @@ impl Catalog {
             .collect()
     }
 
-    fn open_chart_summary(&self, chart: &WorkspaceChart) -> AppResult<OpenChartSummary> {
-        match chart {
-            WorkspaceChart::Saved {
-                instance_id,
-                definition,
-            } => {
-                let definition_envelope = self
-                    .chart_definition(*definition)
-                    .ok_or_else(|| not_found("ChartDefinition", *definition))?;
-                let subtitle = match definition_envelope.payload.source {
-                    ChartSource::Radix { record } => self
-                        .chart_record(record)
-                        .map_or_else(|| "Missing source record".into(), chart_subtitle),
-                    ChartSource::Derived { .. } => "Derived chart".into(),
-                };
-                Ok(OpenChartSummary {
-                    instance_id: *instance_id,
-                    title: definition_envelope.title.clone(),
-                    subtitle,
-                    persistence: ChartPersistence::Saved {
-                        definition_id: *definition,
-                    },
-                })
-            }
-            WorkspaceChart::Ephemeral {
-                instance_id,
-                definition,
-            } => Ok(OpenChartSummary {
-                instance_id: *instance_id,
-                title: "Unsaved chart".into(),
-                subtitle: match definition.source {
-                    ChartSource::Radix { .. } => "Ephemeral radix definition".into(),
-                    ChartSource::Derived { .. } => "Ephemeral derived definition".into(),
-                },
-                persistence: ChartPersistence::Ephemeral,
-            }),
-        }
+    fn open_chart_summary(&self, chart: &WorkspaceDocumentChart) -> AppResult<OpenChartSummary> {
+        let definition_envelope = self
+            .chart_definition(chart.definition)
+            .ok_or_else(|| not_found("ChartDefinition", chart.definition))?;
+        let subtitle = match definition_envelope.payload.source {
+            ChartSource::Radix { record } => self
+                .chart_record(record)
+                .map_or_else(|| "Missing source record".into(), chart_subtitle),
+            ChartSource::Derived { .. } => "Derived chart".into(),
+        };
+        Ok(OpenChartSummary {
+            instance_id: chart.instance_id,
+            title: definition_envelope.title.clone(),
+            subtitle,
+            persistence: ChartPersistence::Saved {
+                definition_id: chart.definition,
+            },
+        })
     }
 
     fn aspect_set_summaries(&self) -> AppResult<Vec<AspectSetSummary>> {
@@ -2073,7 +2219,7 @@ fn resource_modified_at(resource: &CanonicalResource) -> i64 {
         CanonicalResource::ViewDocument(value) => value.modified_at.unix_millis(),
         CanonicalResource::Theme(value) => value.modified_at.unix_millis(),
         CanonicalResource::QueryDefinition(value) => value.modified_at.unix_millis(),
-        CanonicalResource::Workspace(value) => value.modified_at.unix_millis(),
+        CanonicalResource::WorkspaceDocument(value) => value.modified_at.unix_millis(),
     }
 }
 
@@ -2488,11 +2634,12 @@ mod tests {
         }
 
         let workspace_id = bootstrap_ids().workspace;
-        let CanonicalResource::Workspace(workspace) = block_on(repository.get(workspace_id))
-            .expect("workspace read succeeds")
-            .expect("workspace exists")
+        let CanonicalResource::WorkspaceDocument(workspace) =
+            block_on(repository.get(workspace_id))
+                .expect("workspace read succeeds")
+                .expect("workspace exists")
         else {
-            panic!("bootstrap resource is a Workspace");
+            panic!("bootstrap resource is a WorkspaceDocument");
         };
         let ResourceBinding::Inline { value: document } = &workspace.payload.views[0].document
         else {
@@ -2531,9 +2678,12 @@ mod tests {
         payload.views[0].document = document_binding;
         let next = workspace
             .next_with_payload(payload, Timestamp::from_unix_millis(32))
-            .expect("Workspace binding revision is valid");
-        block_on(repository.save(workspace.revision, CanonicalResource::Workspace(next)))
-            .expect("Workspace binding persists");
+            .expect("WorkspaceDocument binding revision is valid");
+        block_on(repository.save(
+            workspace.revision,
+            CanonicalResource::WorkspaceDocument(next),
+        ))
+        .expect("WorkspaceDocument binding persists");
         repository
     }
 
@@ -2686,7 +2836,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::too_many_lines)]
-    fn every_workspace_intent_persists_documented_semantics() {
+    fn workspace_dirty_save_and_session_navigation_semantics() {
         let repository = MemoryRepository::default();
         let application = RealApplication::with_repository(repository.clone());
         let initial = ready(&application);
@@ -2736,6 +2886,11 @@ mod tests {
             selected.workspace.selected_charts,
             vec![ids.chart_instance_a]
         );
+        let before_save = block_on(repository.get(ids.workspace))
+            .expect("workspace read")
+            .expect("workspace exists");
+        assert_eq!(before_save.revision(), Revision::INITIAL);
+        assert!(selected.workspace.document_dirty);
 
         let activated = block_on(application.dispatch(AppIntent::ActivateChart {
             instance_id: ids.chart_instance_a,
@@ -2802,6 +2957,15 @@ mod tests {
                 .chart,
             Some(chart_b)
         );
+        assert!(closed.workspace.document_dirty);
+
+        let saved = block_on(application.dispatch(AppIntent::SaveWorkspace))
+            .expect("workspace save succeeds");
+        assert!(!saved.workspace.document_dirty);
+        assert_eq!(
+            saved.workspace.document_revision.map(Revision::get),
+            Some(2)
+        );
 
         let reloaded = RealApplication::with_repository(repository);
         let restored = ready(&reloaded);
@@ -2811,6 +2975,48 @@ mod tests {
             Some(ids.aspect_set_tight)
         );
         assert_eq!(restored.workspace.charts.len(), 1);
+    }
+
+    #[test]
+    fn temporary_display_override_requires_explicit_promotion_and_workspace_save() {
+        let repository = MemoryRepository::default();
+        let application = RealApplication::with_repository(repository.clone());
+        let initial = ready(&application);
+        let ids = bootstrap_ids();
+        assert!(!initial.workspace.document_dirty);
+        let sun = PointId::new("sun").expect("point ID");
+
+        let temporary = block_on(application.dispatch(AppIntent::SetTemporaryPointHidden {
+            point_id: sun.clone(),
+            hidden: true,
+        }))
+        .expect("temporary override succeeds");
+        assert!(!temporary.workspace.document_dirty);
+        assert!(temporary.workspace.has_temporary_display_override);
+        block_on(application.wait_for_update(temporary.version))
+            .expect("temporary preview settles");
+        let canonical = block_on(repository.get(ids.workspace))
+            .expect("workspace read")
+            .expect("workspace exists");
+        assert_eq!(canonical.revision(), Revision::INITIAL);
+
+        let promoted = block_on(application.dispatch(AppIntent::PromoteTemporaryDisplay))
+            .expect("promotion succeeds");
+        assert!(promoted.workspace.document_dirty);
+        assert!(!promoted.workspace.has_temporary_display_override);
+        block_on(application.wait_for_update(promoted.version)).expect("promoted preview settles");
+
+        let saved = block_on(application.dispatch(AppIntent::SaveWorkspace))
+            .expect("workspace save succeeds");
+        assert!(!saved.workspace.document_dirty);
+        let canonical = block_on(repository.get(ids.workspace))
+            .expect("workspace read")
+            .expect("workspace exists");
+        let CanonicalResource::WorkspaceDocument(document) = canonical else {
+            panic!("workspace document")
+        };
+        assert_eq!(document.revision.get(), 2);
+        assert_eq!(document.payload.views[0].overrides.hidden_points, vec![sun]);
     }
 
     #[test]
@@ -3442,7 +3648,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_repository_reload_restores_workspace_and_saved_aspect_revision() {
+    fn memory_repository_reload_restores_saved_document_not_session_navigation() {
         let repository = MemoryRepository::default();
         let first = RealApplication::with_repository(repository.clone());
         ready(&first);
@@ -3451,7 +3657,7 @@ mod tests {
             definition_id: ids.chart_definition_b,
         }))
         .expect("chart B opens");
-        let chart_b = opened.workspace.active_chart.expect("chart B active");
+        assert!(opened.workspace.active_chart.is_some());
         block_on(first.dispatch(AppIntent::BeginAspectSetEdit {
             resource_id: ids.aspect_set_standard,
         }))
@@ -3466,11 +3672,13 @@ mod tests {
         block_on(first.wait_for_update(dirty.version)).expect("preview settles");
         let saving = block_on(first.dispatch(AppIntent::SaveDraft)).expect("save starts");
         block_on(first.wait_for_update(saving.version)).expect("save settles");
+        block_on(first.dispatch(AppIntent::SaveWorkspace)).expect("workspace saves explicitly");
         drop(first);
 
         let second = RealApplication::with_repository(repository);
         let restored = ready(&second);
-        assert_eq!(restored.workspace.active_chart, Some(chart_b));
+        assert_eq!(restored.workspace.active_chart, Some(ids.chart_instance_a));
+        assert!(restored.workspace.selected_charts.is_empty());
         assert!(restored.workspace.charts.iter().any(|chart| {
             matches!(
                 chart.persistence,
@@ -3564,11 +3772,12 @@ mod tests {
         ))
         .expect("Aspect Set advances");
 
-        let CanonicalResource::Workspace(workspace_one) = block_on(repository.get(ids.workspace))
-            .expect("repository read succeeds")
-            .expect("Workspace exists")
+        let CanonicalResource::WorkspaceDocument(workspace_one) =
+            block_on(repository.get(ids.workspace))
+                .expect("repository read succeeds")
+                .expect("WorkspaceDocument exists")
         else {
-            panic!("bootstrap resource is a Workspace");
+            panic!("bootstrap resource is a WorkspaceDocument");
         };
         let mut pinned_payload = workspace_one.payload.clone();
         pinned_payload.profile.aspects = ResourceBinding::Pinned {
@@ -3577,12 +3786,12 @@ mod tests {
         };
         let workspace_two = workspace_one
             .next_with_payload(pinned_payload, Timestamp::from_unix_millis(21))
-            .expect("second Workspace revision");
+            .expect("second WorkspaceDocument revision");
         block_on(repository.save(
             workspace_one.revision,
-            CanonicalResource::Workspace(workspace_two),
+            CanonicalResource::WorkspaceDocument(workspace_two),
         ))
-        .expect("Workspace pin saves");
+        .expect("WorkspaceDocument pin saves");
         drop(bootstrap);
 
         let application = RealApplication::with_repository(repository);

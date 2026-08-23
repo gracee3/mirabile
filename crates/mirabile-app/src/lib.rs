@@ -13,6 +13,7 @@ mod runtime;
 #[cfg(target_arch = "wasm32")]
 mod web_worker_runtime;
 mod workspace_commands;
+mod workspace_session;
 
 pub use application::*;
 pub use bootstrap::*;
@@ -22,10 +23,11 @@ pub use real_application::*;
 pub use runtime::*;
 #[cfg(target_arch = "wasm32")]
 pub use web_worker_runtime::*;
+pub use workspace_session::*;
 
 // Stable identity/value types cross the application boundary without frontend-specific aliases.
 pub use mirabile_core::{
-    Angle, AspectId, ChartSlotId, InstanceId, ResourceId, Revision, ViewInstanceId,
+    Angle, AspectId, ChartSlotId, InstanceId, PointId, ResourceId, Revision, ViewInstanceId,
 };
 
 // Scene is the current stable, astrology-free presentation boundary.

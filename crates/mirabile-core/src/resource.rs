@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     AnalysisProfile, Angle, AspectId, ChartDefinition, ChartRecord, DomainValidate,
     DomainValidationError, DomainValidationIssue, PointId, QueryDefinition, ResourceId, Revision,
-    RevisionError, SchemaVersion, Theme, Timestamp, ViewDocument, WheelTemplate, Workspace,
+    RevisionError, SchemaVersion, Theme, Timestamp, ViewDocument, WheelTemplate, WorkspaceDocument,
     validation::{in_range, nonempty, positive},
 };
 
@@ -25,7 +25,7 @@ pub enum ResourceKind {
     ArabicPartsSet,
     FixedStarSet,
     QueryDefinition,
-    Workspace,
+    WorkspaceDocument,
 }
 
 pub trait ResourcePayload: DomainValidate {
@@ -219,7 +219,7 @@ pub enum CanonicalResource {
     ViewDocument(ResourceEnvelope<ViewDocument>),
     Theme(ResourceEnvelope<Theme>),
     QueryDefinition(ResourceEnvelope<QueryDefinition>),
-    Workspace(ResourceEnvelope<Workspace>),
+    WorkspaceDocument(ResourceEnvelope<WorkspaceDocument>),
 }
 
 macro_rules! resource_access {
@@ -234,7 +234,7 @@ macro_rules! resource_access {
             Self::ViewDocument(value) => value.$field,
             Self::Theme(value) => value.$field,
             Self::QueryDefinition(value) => value.$field,
-            Self::Workspace(value) => value.$field,
+            Self::WorkspaceDocument(value) => value.$field,
         }
     };
 }
@@ -263,7 +263,7 @@ impl CanonicalResource {
             Self::ViewDocument(value) => &value.title,
             Self::Theme(value) => &value.title,
             Self::QueryDefinition(value) => &value.title,
-            Self::Workspace(value) => &value.title,
+            Self::WorkspaceDocument(value) => &value.title,
         }
     }
 
@@ -278,7 +278,7 @@ impl CanonicalResource {
             Self::ViewDocument(_) => ResourceKind::ViewDocument,
             Self::Theme(_) => ResourceKind::Theme,
             Self::QueryDefinition(_) => ResourceKind::QueryDefinition,
-            Self::Workspace(_) => ResourceKind::Workspace,
+            Self::WorkspaceDocument(_) => ResourceKind::WorkspaceDocument,
         }
     }
 
@@ -293,7 +293,7 @@ impl CanonicalResource {
             Self::ViewDocument(value) => value.validate(),
             Self::Theme(value) => value.validate(),
             Self::QueryDefinition(value) => value.validate(),
-            Self::Workspace(value) => value.validate(),
+            Self::WorkspaceDocument(value) => value.validate(),
         }
     }
 }
@@ -334,8 +334,8 @@ impl ResourcePayload for QueryDefinition {
     const KIND: ResourceKind = ResourceKind::QueryDefinition;
 }
 
-impl ResourcePayload for Workspace {
-    const KIND: ResourceKind = ResourceKind::Workspace;
+impl ResourcePayload for WorkspaceDocument {
+    const KIND: ResourceKind = ResourceKind::WorkspaceDocument;
 }
 
 impl DomainValidate for PointSet {

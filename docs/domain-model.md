@@ -5,12 +5,18 @@
 - `ChartRecord` preserves the asserted civil time, timezone form, coordinates, provenance, and notes.
 - `ChartDefinition` references a radix record or records a derivation recipe and stores concrete calculation choices.
 - `ResourceEnvelope<T>` supplies stable identity, schema version, revision, metadata, and a typed payload.
-- `Workspace` is an intentional working set distinct from the resource library and can contain saved or ephemeral chart definitions.
+- `WorkspaceDocument` is durable intentional composition: saved chart membership/order,
+  `ViewInstance` values and slot assignments, workspace bindings, and saved display overrides. It
+  references only saved `ChartDefinition` resources.
 - `ResourceBinding<T>` distinguishes following a resource, pinning a revision, and embedding a value.
 - `QueryDefinition` stores a reusable boolean `QueryExpr` tree.
 - `ViewDocument` composes chart slots and view objects; `ViewInstance` binds workspace chart instances to those slots.
 
 `ChartSnapshot`, `ChartAnalysis`, layouts, and scenes are derived engine products. They are never the only representation of a chart.
+
+`WorkspaceSession` is application state above this canonical model. It owns active/selected charts,
+the active view, temporary overrides, and eventually draft charts. Its working document projection
+can become dirty without writing a canonical revision.
 
 Every canonical payload implements `DomainValidate`. Validation failures carry a structured issue
 and a path such as `life_events[0].time.civil_datetime.date`. Envelopes additionally require schema

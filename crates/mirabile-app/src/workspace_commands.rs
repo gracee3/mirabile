@@ -2,14 +2,16 @@ use std::collections::BTreeMap;
 
 use mirabile_core::{
     Command, DomainValidate, InstanceId, ResourceBinding, ResourceId, ViewDocument, ViewInstanceId,
-    Workspace, WorkspaceChart,
+    WorkspaceDocumentChart,
 };
 use thiserror::Error;
+
+use crate::WorkspaceSession;
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn apply_workspace_command(
     workspace_id: ResourceId,
-    workspace: &mut Workspace,
+    session: &mut WorkspaceSession,
     command: &Command,
     view_documents: &BTreeMap<ViewInstanceId, ViewDocument>,
 ) -> Result<(), WorkspaceCommandError> {
@@ -20,65 +22,54 @@ pub(crate) fn apply_workspace_command(
             instance_id,
         } => {
             ensure_workspace(workspace_id, *target)?;
-            if let Some(existing) = workspace
+            if let Some(existing) = session
+                .document
                 .chart_instances
                 .iter()
-                .find_map(|chart| match chart {
-                    WorkspaceChart::Saved {
-                        instance_id,
-                        definition: candidate,
-                    } if candidate == definition => Some(*instance_id),
-                    WorkspaceChart::Saved { .. } | WorkspaceChart::Ephemeral { .. } => None,
-                })
+                .find(|chart| chart.definition == *definition)
+                .map(|chart| chart.instance_id)
             {
-                workspace.active_chart = Some(existing);
+                session.active_chart = Some(existing);
             } else {
-                workspace.chart_instances.push(WorkspaceChart::Saved {
-                    instance_id: *instance_id,
-                    definition: *definition,
-                });
-                workspace.active_chart = Some(*instance_id);
+                session
+                    .document
+                    .chart_instances
+                    .push(WorkspaceDocumentChart {
+                        instance_id: *instance_id,
+                        definition: *definition,
+                    });
+                session.active_chart = Some(*instance_id);
+                session.mark_document_dirty();
             }
-        }
-        Command::OpenEphemeralChart {
-            workspace: target,
-            definition,
-            instance_id,
-        } => {
-            ensure_workspace(workspace_id, *target)?;
-            ensure_instance_missing(workspace, *instance_id)?;
-            workspace.chart_instances.push(WorkspaceChart::Ephemeral {
-                instance_id: *instance_id,
-                definition: definition.clone(),
-            });
-            workspace.active_chart = Some(*instance_id);
         }
         Command::CloseChart {
             workspace: target,
             instance_id,
         } => {
             ensure_workspace(workspace_id, *target)?;
-            let index = workspace
+            let index = session
+                .document
                 .chart_instances
                 .iter()
                 .position(|chart| chart.instance_id() == *instance_id)
                 .ok_or(WorkspaceCommandError::ChartNotOpen(*instance_id))?;
-            let was_active = workspace.active_chart == Some(*instance_id);
-            workspace.chart_instances.remove(index);
-            workspace.selected_charts.retain(|id| id != instance_id);
+            let was_active = session.active_chart == Some(*instance_id);
+            session.document.chart_instances.remove(index);
+            session.selected_charts.retain(|id| id != instance_id);
             if was_active {
-                workspace.active_chart = workspace
+                session.active_chart = session
+                    .document
                     .chart_instances
                     .get(index)
                     .or_else(|| {
                         index
                             .checked_sub(1)
-                            .and_then(|prior| workspace.chart_instances.get(prior))
+                            .and_then(|prior| session.document.chart_instances.get(prior))
                     })
-                    .map(WorkspaceChart::instance_id);
+                    .map(|chart| chart.instance_id);
             }
-            let replacement = workspace.active_chart;
-            for view in &mut workspace.views {
+            let replacement = session.active_chart;
+            for view in &mut session.document.views {
                 let document = view_documents
                     .get(&view.id)
                     .ok_or(WorkspaceCommandError::ViewDocumentNotResolved(view.id))?;
@@ -103,6 +94,7 @@ pub(crate) fn apply_workspace_command(
                     }
                 }
             }
+            session.mark_document_dirty();
         }
         Command::SetActiveChart {
             workspace: target,
@@ -110,9 +102,9 @@ pub(crate) fn apply_workspace_command(
         } => {
             ensure_workspace(workspace_id, *target)?;
             if let Some(instance_id) = instance_id {
-                ensure_chart_open(workspace, *instance_id)?;
+                ensure_chart_open(session, *instance_id)?;
             }
-            workspace.active_chart = *instance_id;
+            session.active_chart = *instance_id;
         }
         Command::SetChartSelection {
             workspace: target,
@@ -120,11 +112,11 @@ pub(crate) fn apply_workspace_command(
             selected,
         } => {
             ensure_workspace(workspace_id, *target)?;
-            ensure_chart_open(workspace, *instance_id)?;
-            if *selected && !workspace.selected_charts.contains(instance_id) {
-                workspace.selected_charts.push(*instance_id);
+            ensure_chart_open(session, *instance_id)?;
+            if *selected && !session.selected_charts.contains(instance_id) {
+                session.selected_charts.push(*instance_id);
             } else if !selected {
-                workspace.selected_charts.retain(|id| id != instance_id);
+                session.selected_charts.retain(|id| id != instance_id);
             }
         }
         Command::SetActiveView {
@@ -133,9 +125,9 @@ pub(crate) fn apply_workspace_command(
         } => {
             ensure_workspace(workspace_id, *target)?;
             if let Some(view) = view {
-                ensure_view_exists(workspace, *view)?;
+                ensure_view_exists(session, *view)?;
             }
-            workspace.active_view = *view;
+            session.active_view = *view;
         }
         Command::AssignChartSlot {
             workspace: target,
@@ -145,9 +137,10 @@ pub(crate) fn apply_workspace_command(
         } => {
             ensure_workspace(workspace_id, *target)?;
             if let Some(chart) = chart {
-                ensure_chart_open(workspace, *chart)?;
+                ensure_chart_open(session, *chart)?;
             }
-            let view = workspace
+            let view = session
+                .document
                 .views
                 .iter_mut()
                 .find(|candidate| candidate.id == *view)
@@ -167,19 +160,22 @@ pub(crate) fn apply_workspace_command(
             } else {
                 view.charts.remove(slot);
             }
+            session.mark_document_dirty();
         }
         Command::SetWorkspaceAspectSet {
             workspace: target,
             aspect_set,
         } => {
             ensure_workspace(workspace_id, *target)?;
-            workspace.profile.aspects = ResourceBinding::Follow { id: *aspect_set };
+            session.document.profile.aspects = ResourceBinding::Follow { id: *aspect_set };
+            session.mark_document_dirty();
         }
         Command::CreateResource { .. } | Command::SaveResourceDraft { .. } => {
             return Err(WorkspaceCommandError::NotWorkspaceCommand);
         }
     }
-    workspace
+    session
+        .document
         .domain_validate()
         .map_err(|error| WorkspaceCommandError::InvalidWorkspace(error.to_string()))
 }
@@ -199,37 +195,21 @@ fn ensure_workspace(
 }
 
 fn ensure_chart_open(
-    workspace: &Workspace,
+    session: &WorkspaceSession,
     instance_id: InstanceId,
 ) -> Result<(), WorkspaceCommandError> {
-    workspace
-        .chart_instances
-        .iter()
-        .any(|chart| chart.instance_id() == instance_id)
+    session
+        .contains_chart(instance_id)
         .then_some(())
         .ok_or(WorkspaceCommandError::ChartNotOpen(instance_id))
 }
 
-fn ensure_instance_missing(
-    workspace: &Workspace,
-    instance_id: InstanceId,
-) -> Result<(), WorkspaceCommandError> {
-    if workspace
-        .chart_instances
-        .iter()
-        .any(|chart| chart.instance_id() == instance_id)
-    {
-        Err(WorkspaceCommandError::DuplicateInstance(instance_id))
-    } else {
-        Ok(())
-    }
-}
-
 fn ensure_view_exists(
-    workspace: &Workspace,
+    session: &WorkspaceSession,
     view_id: ViewInstanceId,
 ) -> Result<(), WorkspaceCommandError> {
-    workspace
+    session
+        .document
         .views
         .iter()
         .any(|view| view.id == view_id)
@@ -246,8 +226,6 @@ pub(crate) enum WorkspaceCommandError {
     },
     #[error("chart instance {0} is not open")]
     ChartNotOpen(InstanceId),
-    #[error("chart instance {0} already exists")]
-    DuplicateInstance(InstanceId),
     #[error("view {0} was not found")]
     ViewNotFound(ViewInstanceId),
     #[error("the ViewDocument for view {0} was not resolved")]
@@ -262,24 +240,32 @@ pub(crate) enum WorkspaceCommandError {
 
 #[cfg(test)]
 mod tests {
-    use mirabile_core::{ChartSlotId, Command, ResourceBinding};
+    use mirabile_core::{ChartSlotId, Command, ResourceBinding, WorkspaceDocument};
 
     use crate::{bootstrap_ids, bootstrap_resources};
 
     use super::*;
 
-    fn workspace_fixture() -> (ResourceId, Workspace) {
+    fn workspace_fixture() -> (ResourceId, WorkspaceSession) {
         let resource = bootstrap_resources()
             .into_iter()
-            .find(|resource| matches!(resource, mirabile_core::CanonicalResource::Workspace(_)))
+            .find(|resource| {
+                matches!(
+                    resource,
+                    mirabile_core::CanonicalResource::WorkspaceDocument(_)
+                )
+            })
             .expect("bootstrap workspace exists");
-        let mirabile_core::CanonicalResource::Workspace(envelope) = resource else {
+        let mirabile_core::CanonicalResource::WorkspaceDocument(envelope) = resource else {
             unreachable!()
         };
-        (envelope.id, envelope.payload)
+        let session = WorkspaceSession::from_saved(&envelope);
+        (envelope.id, session)
     }
 
-    fn inline_view_documents(workspace: &Workspace) -> BTreeMap<ViewInstanceId, ViewDocument> {
+    fn inline_view_documents(
+        workspace: &WorkspaceDocument,
+    ) -> BTreeMap<ViewInstanceId, ViewDocument> {
         workspace
             .views
             .iter()
@@ -294,12 +280,12 @@ mod tests {
 
     #[test]
     fn activation_and_selection_remain_independent() {
-        let (workspace_id, mut workspace) = workspace_fixture();
-        let initial = workspace.active_chart.expect("active chart");
-        let view_documents = inline_view_documents(&workspace);
+        let (workspace_id, mut session) = workspace_fixture();
+        let initial = session.active_chart.expect("active chart");
+        let view_documents = inline_view_documents(&session.document);
         apply_workspace_command(
             workspace_id,
-            &mut workspace,
+            &mut session,
             &Command::SetChartSelection {
                 workspace: workspace_id,
                 instance_id: initial,
@@ -309,19 +295,20 @@ mod tests {
         )
         .expect("selection command succeeds");
 
-        assert_eq!(workspace.active_chart, Some(initial));
-        assert_eq!(workspace.selected_charts, vec![initial]);
+        assert_eq!(session.active_chart, Some(initial));
+        assert_eq!(session.selected_charts, vec![initial]);
+        assert!(!session.document_dirty);
     }
 
     #[test]
     fn close_repairs_required_inline_slot_to_neighbor() {
         let ids = bootstrap_ids();
-        let (workspace_id, mut workspace) = workspace_fixture();
-        let view_documents = inline_view_documents(&workspace);
+        let (workspace_id, mut session) = workspace_fixture();
+        let view_documents = inline_view_documents(&session.document);
         let second = InstanceId::new();
         apply_workspace_command(
             workspace_id,
-            &mut workspace,
+            &mut session,
             &Command::OpenSavedChart {
                 workspace: workspace_id,
                 definition: ids.chart_definition_b,
@@ -332,7 +319,7 @@ mod tests {
         .expect("open command succeeds");
         apply_workspace_command(
             workspace_id,
-            &mut workspace,
+            &mut session,
             &Command::CloseChart {
                 workspace: workspace_id,
                 instance_id: ids.chart_instance_a,
@@ -341,9 +328,10 @@ mod tests {
         )
         .expect("close command succeeds");
 
-        assert_eq!(workspace.active_chart, Some(second));
+        assert_eq!(session.active_chart, Some(second));
+        assert!(session.document_dirty);
         assert_eq!(
-            workspace.views[0]
+            session.document.views[0]
                 .charts
                 .get(&ChartSlotId::new("radix").expect("slot ID")),
             Some(&second)

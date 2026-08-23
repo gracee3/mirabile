@@ -110,6 +110,10 @@ pub struct WorkspaceReadModel {
     pub selected_charts: Vec<InstanceId>,
     pub views: Vec<ViewSummary>,
     pub active_view: Option<ViewInstanceId>,
+    pub document_id: Option<ResourceId>,
+    pub document_revision: Option<Revision>,
+    pub document_dirty: bool,
+    pub has_temporary_display_override: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -252,6 +256,8 @@ pub enum AppAction {
     BeginAspectSetEdit,
     SaveDraft,
     CancelDraft,
+    SaveWorkspace,
+    PromoteWorkspaceDisplay,
     RefreshView,
 }
 

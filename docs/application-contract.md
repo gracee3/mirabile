@@ -9,7 +9,7 @@ than a replacement for either.
 ## Authority and dependency boundary
 
 Read models are authoritative UI projections. Components render them and dispatch `AppIntent`;
-they do not mutate a local `Workspace`, `ViewInstance`, or canonical resource and assume it was
+they do not mutate a local `WorkspaceDocument`, `WorkspaceSession`, `ViewInstance`, or canonical resource and assume it was
 accepted. The initial `dispatch` result is a full projection for correctness. Read models may later
 be queried independently rather than remaining one permanent, database-sized aggregate.
 
@@ -128,10 +128,10 @@ intent is accepted while the view is already `Refreshing`; it replaces that view
 request ID and CalcKey. Stale success and failure results make no authoritative transition and do
 not advance `ProjectionVersion`.
 
-## Workspace selection policy
+## Workspace document and session policy
 
-Active and selected charts are separate contract fields. `RealApplication` applies this policy to
-the canonical revisioned Workspace:
+Active and selected charts are separate contract fields owned by `WorkspaceSession`.
+`RealApplication` applies this policy without creating `WorkspaceDocument` revisions:
 
 - activating a chart does not add or remove selection;
 - selecting or deselecting a chart does not activate it;
@@ -146,11 +146,17 @@ There is deliberately no invariant that the active chart must be selected. Shift
 is deferred. This policy is easy to revise after shared architecture review because the transitions
 live in the application adapter and tests, not DOM handlers.
 
+Saved chart membership/order, view instances and slot assignments, workspace bindings, and durable
+view overrides are the working `WorkspaceDocument` projection. Such changes mark the session dirty.
+Only `AppIntent::SaveWorkspace` writes its next revision. Temporary display overrides stay in the
+session until explicitly promoted; promotion updates the durable projection and marks it dirty.
+
 ## Intents, drafts, and form buffers
 
 `AppIntent` expresses user-level application intentions. It is not the persistence-oriented
 `mirabile_core::Command`; `RealApplication` translates workspace intents into typed core commands,
-applies their semantics in `mirabile-app`, then saves the next Workspace revision. Resource repository
+applies their semantics in `mirabile-app`. Durable mutations mark the `WorkspaceDocument` dirty,
+and explicit Save Workspace writes its next revision. Resource repository
 rules remain in `mirabile-store`.
 
 Draft mutations are typed. This slice uses `AspectSetDraftMutation::{SetOrb, SetEnabled}` with a

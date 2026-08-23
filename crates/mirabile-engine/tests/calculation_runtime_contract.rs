@@ -583,7 +583,7 @@ fn worker_request_success_and_typed_failure_round_trip() {
         "ChartRecord",
         "ChartDefinition",
         "ResourceEnvelope",
-        "Workspace",
+        "WorkspaceDocument",
     ] {
         assert!(!request_json.contains(forbidden));
     }

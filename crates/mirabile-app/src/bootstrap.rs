@@ -8,8 +8,8 @@ use mirabile_core::{
     PageLayout, PointId, PointRole, PointSelector, PointSet, ResourceBinding, ResourceEnvelope,
     ResourceId, RingGeometry, RingSpec, SourceProvenance, SourceType, TemporalAssertion, Theme,
     TimeZoneAssertion, Timestamp, ViewDocument, ViewInstance, ViewInstanceId, ViewObject,
-    ViewOverrides, WheelObject, WheelTemplate, Workspace, WorkspaceChart, WorkspaceProfile,
-    ZodiacDisplaySpec,
+    ViewOverrides, WheelObject, WheelTemplate, WorkspaceDocument, WorkspaceDocumentChart,
+    WorkspaceProfile, ZodiacDisplaySpec,
 };
 
 const CHART_RECORD_A: &str = "11000000-0000-4000-8000-000000000001";
@@ -132,7 +132,7 @@ pub(crate) fn bootstrap_resources() -> Vec<CanonicalResource> {
         CanonicalResource::ChartDefinition(definition_b),
         CanonicalResource::AspectSet(standard),
         CanonicalResource::AspectSet(tight),
-        CanonicalResource::Workspace(workspace),
+        CanonicalResource::WorkspaceDocument(workspace),
     ]
 }
 
@@ -260,7 +260,7 @@ fn aspect_set(conjunction_orb: f64, square_orb: f64) -> AspectSet {
     }
 }
 
-fn workspace(ids: BootstrapIds) -> Workspace {
+fn workspace(ids: BootstrapIds) -> WorkspaceDocument {
     let radix = ChartSlotId::new("radix").expect("bootstrap slot ID is valid");
     let comparison = ChartSlotId::new("comparison").expect("bootstrap slot ID is valid");
     let points = point_set();
@@ -298,15 +298,12 @@ fn workspace(ids: BootstrapIds) -> Workspace {
         overrides: ViewOverrides::default(),
     };
 
-    Workspace {
-        chart_instances: vec![WorkspaceChart::Saved {
+    WorkspaceDocument {
+        chart_instances: vec![WorkspaceDocumentChart {
             instance_id: ids.chart_instance_a,
             definition: ids.chart_definition_a,
         }],
-        active_chart: Some(ids.chart_instance_a),
-        selected_charts: Vec::new(),
         views: vec![view],
-        active_view: Some(ids.view),
         profile: WorkspaceProfile {
             displayed_points: ResourceBinding::Inline {
                 value: points.clone(),
@@ -394,7 +391,7 @@ mod tests {
         for resource in &first {
             resource.validate().expect("bootstrap resource validates");
         }
-        let CanonicalResource::Workspace(workspace) = &first[6] else {
+        let CanonicalResource::WorkspaceDocument(workspace) = &first[6] else {
             panic!("last bootstrap resource is the workspace");
         };
         workspace

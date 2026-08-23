@@ -61,7 +61,7 @@ configuration provenance before creating `CalculationValue`. The value keeps cel
 derived positions separate while exposing an internal combined lookup to existing analysis and
 layout code.
 
-No `ResourceEnvelope`, `ChartRecord`, `ChartDefinition`, `ResourceRevisionRef`, or `Workspace`
+No `ResourceEnvelope`, `ChartRecord`, `ChartDefinition`, `ResourceRevisionRef`, or `WorkspaceDocument`
 crosses the backend/worker boundary. Current resource revisions and display labels remain in
 `SnapshotContext`, which is reconstructed application-side.
 

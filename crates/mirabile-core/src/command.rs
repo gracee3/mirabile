@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    CanonicalResource, ChartDefinition, ChartSlotId, InstanceId, ResourceId, Revision,
-    ViewInstanceId,
-};
+use crate::{CanonicalResource, ChartSlotId, InstanceId, ResourceId, Revision, ViewInstanceId};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
@@ -18,11 +15,6 @@ pub enum Command {
     OpenSavedChart {
         workspace: ResourceId,
         definition: ResourceId,
-        instance_id: InstanceId,
-    },
-    OpenEphemeralChart {
-        workspace: ResourceId,
-        definition: Box<ChartDefinition>,
         instance_id: InstanceId,
     },
     CloseChart {

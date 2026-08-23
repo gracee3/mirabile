@@ -1,4 +1,4 @@
-use crate::{Angle, AspectId, ChartSlotId, InstanceId, ResourceId, ViewInstanceId};
+use crate::{Angle, AspectId, ChartSlotId, InstanceId, PointId, ResourceId, ViewInstanceId};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppIntent {
@@ -28,6 +28,15 @@ pub enum AppIntent {
     SetWorkspaceAspectSet {
         resource_id: ResourceId,
     },
+    /// Persists the session's dirty durable projection as the next `WorkspaceDocument` revision.
+    SaveWorkspace,
+    /// Applies a session-only point visibility override to the active view.
+    SetTemporaryPointHidden {
+        point_id: PointId,
+        hidden: bool,
+    },
+    /// Copies the active view's temporary override into the durable document and marks it dirty.
+    PromoteTemporaryDisplay,
     BeginAspectSetEdit {
         resource_id: ResourceId,
     },

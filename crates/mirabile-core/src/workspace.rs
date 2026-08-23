@@ -1,43 +1,31 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AnalysisProfile, AspectSet, ChartDefinition, DomainValidate, DomainValidationError,
-    DomainValidationIssue, InstanceId, PanelId, PointSet, ResourceBinding, ResourceId, Theme,
-    ViewInstance, ViewInstanceId, WheelTemplate,
+    AnalysisProfile, AspectSet, DomainValidate, DomainValidationError, DomainValidationIssue,
+    InstanceId, PanelId, PointSet, ResourceBinding, ResourceId, Theme, ViewInstance, WheelTemplate,
 };
 
+/// Durable, portable workspace composition.
+///
+/// Active/selected charts, the active view, drafts, and temporary overrides belong to an
+/// application-owned workspace session instead of this canonical resource.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct Workspace {
-    pub chart_instances: Vec<WorkspaceChart>,
-    pub active_chart: Option<InstanceId>,
-    pub selected_charts: Vec<InstanceId>,
+pub struct WorkspaceDocument {
+    pub chart_instances: Vec<WorkspaceDocumentChart>,
     pub views: Vec<ViewInstance>,
-    pub active_view: Option<ViewInstanceId>,
     pub profile: WorkspaceProfile,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "source", rename_all = "snake_case")]
-pub enum WorkspaceChart {
-    Saved {
-        instance_id: InstanceId,
-        definition: ResourceId,
-    },
-    Ephemeral {
-        instance_id: InstanceId,
-        definition: Box<ChartDefinition>,
-    },
+pub struct WorkspaceDocumentChart {
+    pub instance_id: InstanceId,
+    /// Stable identity of a saved canonical `ChartDefinition`.
+    pub definition: ResourceId,
 }
 
-impl WorkspaceChart {
+impl WorkspaceDocumentChart {
     pub const fn instance_id(&self) -> InstanceId {
-        match self {
-            Self::Saved { instance_id, .. } | Self::Ephemeral { instance_id, .. } => *instance_id,
-        }
-    }
-
-    pub const fn is_saved(&self) -> bool {
-        matches!(self, Self::Saved { .. })
+        self.instance_id
     }
 }
 
@@ -60,12 +48,12 @@ pub struct WorkspaceUiState {
     pub scroll_positions: Vec<(PanelId, f64)>,
 }
 
-impl DomainValidate for Workspace {
+impl DomainValidate for WorkspaceDocument {
     fn domain_validate(&self) -> Result<(), DomainValidationError> {
         let mut instance_ids = self
             .chart_instances
             .iter()
-            .map(WorkspaceChart::instance_id)
+            .map(WorkspaceDocumentChart::instance_id)
             .collect::<Vec<_>>();
         instance_ids.sort_unstable();
         if instance_ids.windows(2).any(|pair| pair[0] == pair[1]) {
@@ -74,40 +62,6 @@ impl DomainValidate for Workspace {
                 DomainValidationIssue::Duplicate,
             ));
         }
-        for (index, chart) in self.chart_instances.iter().enumerate() {
-            if let WorkspaceChart::Ephemeral { definition, .. } = chart {
-                definition.domain_validate().map_err(|error| {
-                    error.prepend(&format!("chart_instances[{index}].definition"))
-                })?;
-            }
-        }
-        if self
-            .active_chart
-            .is_some_and(|id| instance_ids.binary_search(&id).is_err())
-        {
-            return Err(DomainValidationError::new(
-                "active_chart",
-                DomainValidationIssue::InvalidReference,
-            ));
-        }
-        let mut selected = self.selected_charts.clone();
-        selected.sort_unstable();
-        if selected.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(DomainValidationError::new(
-                "selected_charts",
-                DomainValidationIssue::Duplicate,
-            ));
-        }
-        if selected
-            .iter()
-            .any(|id| instance_ids.binary_search(id).is_err())
-        {
-            return Err(DomainValidationError::new(
-                "selected_charts",
-                DomainValidationIssue::InvalidReference,
-            ));
-        }
-
         let mut view_ids = self.views.iter().map(|view| view.id).collect::<Vec<_>>();
         view_ids.sort_unstable();
         if view_ids.windows(2).any(|pair| pair[0] == pair[1]) {
@@ -116,41 +70,11 @@ impl DomainValidate for Workspace {
                 DomainValidationIssue::Duplicate,
             ));
         }
-        if self
-            .active_view
-            .is_some_and(|id| view_ids.binary_search(&id).is_err())
-        {
-            return Err(DomainValidationError::new(
-                "active_view",
-                DomainValidationIssue::InvalidReference,
-            ));
-        }
         for (index, view) in self.views.iter().enumerate() {
-            if view
-                .charts
-                .values()
-                .any(|id| instance_ids.binary_search(id).is_err())
-            {
-                return Err(DomainValidationError::new(
-                    format!("views[{index}].charts"),
-                    DomainValidationIssue::InvalidReference,
-                ));
-            }
             if let ResourceBinding::Inline { value } = &view.document {
                 value
                     .domain_validate()
                     .map_err(|error| error.prepend(&format!("views[{index}].document")))?;
-                if view.charts.keys().any(|slot| {
-                    !value
-                        .chart_slots
-                        .iter()
-                        .any(|candidate| candidate.id == *slot)
-                }) {
-                    return Err(DomainValidationError::new(
-                        format!("views[{index}].charts"),
-                        DomainValidationIssue::InvalidReference,
-                    ));
-                }
             }
         }
         self.profile.domain_validate()
@@ -185,8 +109,8 @@ fn validate_binding<T: DomainValidate>(
 mod tests {
     use super::*;
     use crate::{
-        AnalysisProfile, AspectFieldSpec, CalculationSpec, ChartSource, HouseDisplaySpec,
-        LabelSpec, PointSet, RingSpec, ZodiacDisplaySpec,
+        AnalysisProfile, AspectFieldSpec, HouseDisplaySpec, LabelSpec, PointSet, RingSpec,
+        ZodiacDisplaySpec,
     };
 
     fn profile() -> WorkspaceProfile {
@@ -236,25 +160,20 @@ mod tests {
     }
 
     #[test]
-    fn ephemeral_chart_does_not_require_library_resource() {
-        let chart = WorkspaceChart::Ephemeral {
+    fn document_contains_only_saved_chart_references_and_no_interaction_state() {
+        let chart = WorkspaceDocumentChart {
             instance_id: InstanceId::new(),
-            definition: Box::new(ChartDefinition {
-                source: ChartSource::Radix {
-                    record: ResourceId::new(),
-                },
-                calculation: CalculationSpec::default(),
-            }),
+            definition: ResourceId::new(),
         };
-        let workspace = Workspace {
-            active_chart: Some(chart.instance_id()),
-            selected_charts: vec![chart.instance_id()],
+        let workspace = WorkspaceDocument {
             chart_instances: vec![chart],
             views: Vec::new(),
-            active_view: None,
             profile: profile(),
         };
 
-        assert!(!workspace.chart_instances[0].is_saved());
+        let json = serde_json::to_value(workspace).expect("document serializes");
+        assert!(json.get("active_chart").is_none());
+        assert!(json.get("selected_charts").is_none());
+        assert!(json.get("active_view").is_none());
     }
 }

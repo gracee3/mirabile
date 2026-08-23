@@ -1,13 +1,12 @@
 use mirabile_core::{
     AnalysisProfile, Angle, AspectClass, AspectDefinition, AspectFieldSpec, AspectId, AspectSet,
-    CalculationSpec, CalendarSpec, ChartDefinition, ChartRecord, ChartSlot, ChartSlotId,
-    ChartSource, CivilDate, CivilDateTime, CivilTime, CompositeMethod, DerivationSpec,
-    DomainValidate, EventKind, HouseDisplaySpec, InstanceId, LabelSpec, Latitude, LifeEvent,
-    LocationAssertion, Longitude, ObjectFrame, OrbPolicy, PointSelector, PointSet, QueryDefinition,
-    QueryExpr, ResourceBinding, ResourceEnvelope, ResourceId, RingGeometry, RingSpec,
-    SourceProvenance, SourceType, TemporalAssertion, Theme, TimeZoneAssertion, Timestamp,
-    ViewDocument, ViewObject, WheelObject, WheelTemplate, Workspace, WorkspaceChart,
-    WorkspaceProfile, ZodiacDisplaySpec,
+    CalendarSpec, ChartRecord, ChartSlot, ChartSlotId, CivilDate, CivilDateTime, CivilTime,
+    CompositeMethod, DerivationSpec, DomainValidate, EventKind, HouseDisplaySpec, InstanceId,
+    LabelSpec, Latitude, LifeEvent, LocationAssertion, Longitude, ObjectFrame, OrbPolicy,
+    PointSelector, PointSet, QueryDefinition, QueryExpr, ResourceBinding, ResourceEnvelope,
+    ResourceId, RingGeometry, RingSpec, SourceProvenance, SourceType, TemporalAssertion, Theme,
+    TimeZoneAssertion, Timestamp, ViewDocument, ViewObject, WheelObject, WheelTemplate,
+    WorkspaceDocument, WorkspaceDocumentChart, WorkspaceProfile, ZodiacDisplaySpec,
 };
 
 fn assertion(year: i32, calendar: CalendarSpec) -> TemporalAssertion {
@@ -198,21 +197,18 @@ fn views_queries_and_workspaces_validate_references_and_structure() {
     assert!(query.domain_validate().is_err());
 
     let instance_id = InstanceId::new();
-    let definition = ChartDefinition {
-        source: ChartSource::Radix {
-            record: ResourceId::new(),
-        },
-        calculation: CalculationSpec::default(),
-    };
-    let workspace = Workspace {
-        chart_instances: vec![WorkspaceChart::Ephemeral {
-            instance_id,
-            definition: Box::new(definition),
-        }],
-        active_chart: Some(InstanceId::new()),
-        selected_charts: vec![instance_id],
+    let workspace = WorkspaceDocument {
+        chart_instances: vec![
+            WorkspaceDocumentChart {
+                instance_id,
+                definition: ResourceId::new(),
+            },
+            WorkspaceDocumentChart {
+                instance_id,
+                definition: ResourceId::new(),
+            },
+        ],
         views: Vec::new(),
-        active_view: None,
         profile: profile(),
     };
     assert!(workspace.domain_validate().is_err());

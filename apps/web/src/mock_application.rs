@@ -36,6 +36,7 @@ const ASPECT_SET_IDS: [&str; 3] = [
     "40000000-0000-4000-8000-000000000002",
     "40000000-0000-4000-8000-000000000003",
 ];
+const WORKSPACE_ID: &str = "50000000-0000-4000-8000-000000000001";
 
 #[derive(Clone)]
 pub struct MockApplication {
@@ -153,6 +154,7 @@ struct MockState {
     views: Vec<MockView>,
     active_view: ViewInstanceId,
     active_aspect_set: ResourceId,
+    workspace: MockWorkspaceState,
     editor: Option<EditorFixture>,
     pending: Option<PendingWork>,
     notice: Option<AppNotice>,
@@ -181,6 +183,12 @@ struct MockView {
     scene: Option<Scene>,
     computation: ViewComputationState,
     slots: Vec<ChartSlotAssignment>,
+}
+
+struct MockWorkspaceState {
+    revision: Revision,
+    dirty: bool,
+    temporary_display_override: bool,
 }
 
 enum PendingWork {
@@ -294,6 +302,11 @@ impl MockState {
             views: mock_views,
             active_view: views[1],
             active_aspect_set: aspect_sets[0],
+            workspace: MockWorkspaceState {
+                revision: Revision::INITIAL,
+                dirty: false,
+                temporary_display_override: false,
+            },
             editor: None,
             pending: None,
             notice: None,
@@ -359,6 +372,10 @@ impl MockState {
                     })
                     .collect(),
                 active_view: Some(self.active_view),
+                document_id: Some(parse_resource(WORKSPACE_ID)),
+                document_revision: Some(self.workspace.revision),
+                document_dirty: self.workspace.dirty,
+                has_temporary_display_override: self.workspace.temporary_display_override,
             },
             active_view: Some(ViewReadModel {
                 view_id: active_view.view_id,
@@ -446,6 +463,22 @@ impl MockState {
             capability(AppAction::BeginAspectSetEdit, Availability::Enabled),
             capability(AppAction::SaveDraft, save),
             capability(AppAction::CancelDraft, cancel),
+            capability(
+                AppAction::SaveWorkspace,
+                if self.workspace.dirty {
+                    Availability::Enabled
+                } else {
+                    disabled("The workspace has no durable changes")
+                },
+            ),
+            capability(
+                AppAction::PromoteWorkspaceDisplay,
+                if self.workspace.temporary_display_override {
+                    Availability::Enabled
+                } else {
+                    disabled("The active view has no temporary display override")
+                },
+            ),
             capability(AppAction::RefreshView, refresh),
         ]
     }
@@ -454,8 +487,16 @@ impl MockState {
     fn apply(&mut self, intent: AppIntent) -> AppResult<()> {
         self.notice = None;
         match intent {
-            AppIntent::OpenChart { definition_id } => self.open_chart(definition_id),
-            AppIntent::CloseChart { instance_id } => self.close_chart(instance_id),
+            AppIntent::OpenChart { definition_id } => {
+                self.open_chart(definition_id)?;
+                self.workspace.dirty = true;
+                Ok(())
+            }
+            AppIntent::CloseChart { instance_id } => {
+                self.close_chart(instance_id)?;
+                self.workspace.dirty = true;
+                Ok(())
+            }
             AppIntent::ActivateChart { instance_id } => {
                 self.ensure_open(instance_id)?;
                 self.active_chart = Some(instance_id);
@@ -508,15 +549,53 @@ impl MockState {
                     ));
                 }
                 assignment.chart = chart;
+                self.workspace.dirty = true;
                 self.notice = Some(info("Chart slot assignment updated"));
                 Ok(())
             }
             AppIntent::SetWorkspaceAspectSet { resource_id } => {
                 self.aspect_fixture(resource_id)?;
                 self.active_aspect_set = resource_id;
+                self.workspace.dirty = true;
                 self.editor = None;
                 self.queue_refresh(Ok(()));
                 self.notice = Some(info("Aspect Set changed; refreshing analysis"));
+                Ok(())
+            }
+            AppIntent::SaveWorkspace => {
+                if !self.workspace.dirty {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "The workspace has no durable changes",
+                    ));
+                }
+                self.workspace.revision = self.workspace.revision.next().map_err(|error| {
+                    AppError::new(
+                        AppErrorKind::Unavailable,
+                        format!("Workspace revision overflowed: {error}"),
+                    )
+                })?;
+                self.workspace.dirty = false;
+                self.notice = Some(success("Workspace saved"));
+                Ok(())
+            }
+            AppIntent::SetTemporaryPointHidden { .. } => {
+                self.workspace.temporary_display_override = true;
+                self.notice = Some(info(
+                    "Temporary display override changed without dirtying the workspace",
+                ));
+                Ok(())
+            }
+            AppIntent::PromoteTemporaryDisplay => {
+                if !self.workspace.temporary_display_override {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "There is no temporary display override to promote",
+                    ));
+                }
+                self.workspace.temporary_display_override = false;
+                self.workspace.dirty = true;
+                self.notice = Some(info("Display override promoted into the workspace"));
                 Ok(())
             }
             AppIntent::BeginAspectSetEdit { resource_id } => {

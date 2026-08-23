@@ -258,14 +258,27 @@ async fn run_real_application_reload() -> Result<(), String> {
         }),
         "Aspect Set revision two was not committed by the first RealApplication",
     )?;
+    let workspace_saved = first
+        .dispatch(AppIntent::SaveWorkspace)
+        .await
+        .map_err(message)?;
+    ensure(
+        !workspace_saved.workspace.document_dirty
+            && workspace_saved
+                .workspace
+                .document_revision
+                .map(Revision::get)
+                == Some(2),
+        "dirty WorkspaceDocument was not explicitly saved as revision two",
+    )?;
     drop(first);
 
     let second_runtime = WorkerCalculationRuntime::xalen();
     let second = RealApplication::indexed_db_with_runtime(&database_name, second_runtime.clone());
     let restored = settle_initialization(&second).await?;
     ensure(
-        restored.workspace.active_chart == Some(chart_b),
-        "the second RealApplication did not restore Chart B as active",
+        restored.workspace.active_chart == Some(ids.chart_instance_a),
+        "the second RealApplication did not create fresh session navigation from the saved document",
     )?;
     ensure(
         restored.workspace.charts.iter().any(|chart| {
@@ -276,7 +289,7 @@ async fn run_real_application_reload() -> Result<(), String> {
                         if definition_id == ids.chart_definition_b
                 )
         }),
-        "the second RealApplication did not restore Chart B as open",
+        "the second RealApplication did not restore Chart B in saved document membership",
     )?;
     ensure(
         restored.library.aspect_sets.iter().any(|summary| {

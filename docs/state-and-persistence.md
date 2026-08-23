@@ -12,18 +12,23 @@ compatibility promise.
 The future public compatibility contract begins only with an explicit schema-freeze decision. A
 generic migration framework will not be built merely to preserve pre-MVP design choices.
 
-## Authority classes
+## Authority and lifetime
 
-| Class | Representation now | Persistence rule |
-| --- | --- | --- |
-| Canonical (C) | Typed `CanonicalResource` envelopes | Revisioned repository; portable JSON |
-| Derived (D) | Snapshots, analysis, layouts, scenes, effective values | Recomputed from inputs |
-| Workspace (W) | `Workspace` resource | Portable/revisioned independently of chart library |
-| Ephemeral (E) | Application resource draft and Leptos form buffers | Not committed until an explicit command |
-| Cache (K) | Keyed engine results; memory in milestone | Disposable; no unique user information |
-| Sync (S) | `SyncHead`/`SyncOperation` infrastructure types | Separate store; never serialized into resources |
+Authority and lifetime are independent dimensions:
 
-Device-local `WorkspaceUiState` is not part of a portable `Workspace`.
+| State | Authority | Scope/lifetime | Persistence |
+| --- | --- | --- | --- |
+| `ChartRecord` | Canonical | Library | Revisioned resource |
+| `WorkspaceDocument` | Canonical | Saved workspace | Revisioned resource |
+| active/selected chart and active view | Canonical application state | Session | Not portable |
+| Aspect Set or chart draft | Canonical working intent | Draft | Explicit save only |
+| `CalculationValue`, analysis, layout, `Scene` | Derived | Cache | Disposable |
+| `ProjectionVersion` | Canonical application ordering | Session/runtime | Never persisted |
+| `SyncHead`/`SyncOperation` | Canonical sync metadata | Sync metadata | Separate store |
+
+Canonical means authoritative user/application intent; it does not imply every value is portable.
+Derived state can have cache or runtime lifetime. Device-local `WorkspaceUiState` and future session
+recovery remain outside portable `WorkspaceDocument`.
 
 ## Repository contract
 
@@ -37,16 +42,19 @@ their raw JSON encoding. Only tombstones use an additive tagged storage envelope
 migration or store rename is required.
 
 `RealApplication::initialize()` opens IndexedDB through a lazy repository source, retains the
-cloneable repository handle, idempotently ensures the small canonical bootstrap, hydrates the full
-library and Workspace, and queues the first view calculation. Editor controls cannot accept edits
+cloneable repository handle, idempotently ensures the current explicit demo bundle, hydrates the
+full library and `WorkspaceDocument`, creates a `WorkspaceSession`, and queues the first view calculation. Editor controls cannot accept edits
 until startup reaches `Ready`. An open/hydration failure enters `Error` with initialization context
 and never falls back to implicit session/in-memory persistence.
 
-Open/close/activate/select chart, active-view, slot assignment, and AspectSet-binding changes save
-the next Workspace revision before replacing the authoritative projection. Reload therefore
-restores open charts, active and selected chart IDs, active view, slot assignments, and the
-AspectSet binding. ProjectionVersion and calculation cache remain application-instance-local and
-are never written to IndexedDB.
+Opening/closing saved charts, slot assignment, workspace bindings, and promoted display overrides
+change the session's durable document projection and mark it dirty. They do not write immediately.
+`SaveWorkspace` explicitly saves the next `WorkspaceDocument` revision. Activating/selecting charts,
+changing the active view, and temporary display overrides are session-only and never dirty the
+document. Promotion copies a temporary override into the durable view configuration and marks the
+document dirty. Reload restores only the last explicitly saved document; current navigation and
+unpromoted overrides are intentionally lost. `ProjectionVersion` and calculation cache remain
+application-instance-local and are never written to IndexedDB.
 
 Repository writes accept a fully versioned resource and reject missing, duplicate, skipped, or stale revisions. Sync will later append operations after a successful local transaction; ordinary local writes must not wait on a server.
 
@@ -76,6 +84,6 @@ marker; this is local validation, not hosted CI.
 The same harness also runs an isolated real-application database. One `RealApplication` hydrates,
 opens and activates Chart B, previews and commits Standard AspectSet revision 2, then is dropped. A
 second instance opens the same database and must restore Chart B, the committed AspectSet revision,
-the persisted Workspace, and a newly reconstructed fresh Scene. The unique database name and
+the persisted `WorkspaceDocument`, and a newly reconstructed fresh Scene. The unique database name and
 temporary Chromium profile isolate this lifecycle from normal user data; profile cleanup removes
 the test database after the run.
