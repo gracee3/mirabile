@@ -64,17 +64,21 @@ pub(super) fn configuration_from_window() -> Option<AutomationConfiguration> {
 pub(super) fn install(
     model: leptos::prelude::RwSignal<mirabile_app::AppReadModel>,
     coordinator: crate::dispatcher::WorkbenchCoordinator,
+    database_name: &str,
 ) {
     use std::{cell::Cell, rc::Rc};
 
     use js_sys::{Object, Reflect};
     use leptos::prelude::GetUntracked;
-    use mirabile_app::{ActionSource, AutomationSnapshotV1};
+    use mirabile_app::{ActionSource, Application, AutomationSnapshotV1, RealApplication};
     use wasm_bindgen::{JsValue, closure::Closure};
 
     let Some(window) = web_sys::window() else {
         return;
     };
+    let peer_model = leptos::prelude::RwSignal::new(mirabile_app::AppReadModel::initializing());
+    let peer_application: Rc<dyn Application> = Rc::new(RealApplication::indexed_db(database_name));
+    let peer = crate::dispatcher::WorkbenchCoordinator::new(peer_application, peer_model);
     let bridge = Object::new();
     let _ = Reflect::set(
         &bridge,
@@ -165,6 +169,47 @@ pub(super) fn install(
     });
     set_function(&bridge, "replayMacro", &replay);
     replay.forget();
+
+    let peer_initialize = Closure::<dyn Fn() -> String>::new(move || {
+        peer.initialize();
+        json_ok("peer_initialize")
+    });
+    set_function(&bridge, "peerInitialize", &peer_initialize);
+    peer_initialize.forget();
+
+    let peer_snapshot = Closure::<dyn Fn() -> String>::new(move || {
+        json_envelope(
+            "peer_snapshot",
+            AutomationSnapshotV1::capture(
+                &peer_model.get_untracked(),
+                Vec::new(),
+                peer.read_model(),
+                peer.trace(),
+            ),
+        )
+    });
+    set_function(&bridge, "peerSnapshot", &peer_snapshot);
+    peer_snapshot.forget();
+
+    let peer_settled = Closure::<dyn Fn() -> bool>::new(move || {
+        peer_model.get_untracked().is_settled() && !peer.read_model().running
+    });
+    set_function(&bridge, "peerWaitSettled", &peer_settled);
+    peer_settled.forget();
+
+    let peer_replay = Closure::<dyn Fn(String) -> String>::new(move |json: String| {
+        let document = match mirabile_app::MacroDocumentV1::from_json(&json) {
+            Ok(document) => document,
+            Err(error) => return json_error("peer_macro_replay", &error.to_string()),
+        };
+        if let Err(error) = peer.import_macro(document.clone()) {
+            return json_error("peer_macro_replay", &error.to_string());
+        }
+        peer.replay_macro(document);
+        json_ok("peer_macro_replay")
+    });
+    set_function(&bridge, "peerReplayMacro", &peer_replay);
+    peer_replay.forget();
 
     let _ = Reflect::set(&window, &JsValue::from_str(BRIDGE_NAME), &bridge);
 

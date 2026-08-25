@@ -1,0 +1,31 @@
+{
+  "name": "level-b-semantic",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "load_demo_bundle"}}},
+    {"command": "wait", "timeout": 20},
+    {"command": "replay", "macro": {"schema_version": 1, "name": "Aspect and display", "steps": [
+      {"action": {"action": "begin_new_aspect_set"}},
+      {"action": {"action": "set_aspect_title", "title": "Level B Aspects"}},
+      {"action": {"action": "update_aspect_enabled", "aspect_id": "conjunction", "enabled": false}},
+      {"action": {"action": "update_aspect_orb", "aspect_id": "square", "degrees": 3.5}},
+      {"action": {"action": "save_draft"}, "bind": "$resource1"},
+      {"action": {"action": "set_temporary_point_hidden", "point_id": "sun", "hidden": true}},
+      {"action": {"action": "promote_temporary_display"}},
+      {"action": {"action": "save_workspace"}, "bind": "$resource2"}
+    ]}},
+    {"command": "wait", "timeout": 30},
+    {"command": "snapshot", "expect": {"value.application.settled": true, "value.resource_editor.aspect_set.title": "Level B Aspects", "value.resource_editor.aspect_set.state.state": "clean", "value.resource_editor.aspect_set.aspects.0.enabled": false, "value.resource_editor.aspect_set.aspects.1.maximum_orb": 3.5, "value.workspace.revision": 1, "value.workspace.dirty": false, "value.view.points.4.point_id": "sun", "value.view.points.4.durable_visible": false, "value.view.points.4.temporary_visible": null}},
+    {"command": "replay", "macro": {"schema_version": 1, "name": "Workspace revisions", "steps": [
+      {"action": {"action": "new_workspace"}},
+      {"action": {"action": "resolve_workspace_switch", "resolution": "discard_and_switch"}},
+      {"action": {"action": "rename_workspace", "title": "Level B Workspace"}},
+      {"action": {"action": "save_workspace"}, "bind": "$resource1"},
+      {"action": {"action": "rename_workspace", "title": "Level B Workspace Revised"}},
+      {"action": {"action": "save_workspace"}, "bind": "$resource2"}
+    ]}},
+    {"command": "wait", "timeout": 30},
+    {"command": "snapshot", "expect": {"value.application.settled": true, "value.workspace.title": "Level B Workspace Revised", "value.workspace.revision": 2, "value.workspace.dirty": false, "value.coordinator.macro_state.state": "idle"}},
+    {"command": "trace"}
+  ]
+}

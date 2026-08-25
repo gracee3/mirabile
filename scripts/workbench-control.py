@@ -29,6 +29,9 @@ def bridge_call(client: CDPClient, method: str, *arguments: Any) -> dict[str, An
         "controls",
         "execute",
         "replayMacro",
+        "peerInitialize",
+        "peerReplayMacro",
+        "peerSnapshot",
         "setActionSource",
         "snapshot",
         "trace",
@@ -58,6 +61,10 @@ def bridge_call(client: CDPClient, method: str, *arguments: Any) -> dict[str, An
 
 def bridge_settled(client: CDPClient) -> bool:
     return bool(client.evaluate(f"window.{BRIDGE}?.waitSettled() ?? false"))
+
+
+def peer_settled(client: CDPClient) -> bool:
+    return bool(client.evaluate(f"window.{BRIDGE}?.peerWaitSettled() ?? false"))
 
 
 def controls(client: CDPClient) -> list[dict[str, Any]]:
@@ -149,6 +156,15 @@ def wait_settled(client: CDPClient, timeout: float) -> dict[str, Any]:
     raise CDPError(f"workbench did not settle within {timeout:.1f}s")
 
 
+def wait_peer_settled(client: CDPClient, timeout: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if peer_settled(client):
+            return bridge_call(client, "peerSnapshot")
+        time.sleep(0.05)
+    raise CDPError(f"peer workbench did not settle within {timeout:.1f}s")
+
+
 def load_json(value: str) -> Any:
     path = Path(value)
     text = path.read_text(encoding="utf-8") if path.is_file() else value
@@ -181,6 +197,15 @@ def perform(client: CDPClient, command: str, options: dict[str, Any]) -> Any:
     if command == "replay":
         macro = options["macro"]
         return bridge_call(client, "replayMacro", json.dumps(macro, separators=(",", ":")))
+    if command == "peer_initialize":
+        return bridge_call(client, "peerInitialize")
+    if command == "peer_replay":
+        macro = options["macro"]
+        return bridge_call(client, "peerReplayMacro", json.dumps(macro, separators=(",", ":")))
+    if command == "peer_snapshot":
+        return bridge_call(client, "peerSnapshot")
+    if command == "peer_wait":
+        return wait_peer_settled(client, float(options.get("timeout", 10.0)))
     if command == "wait":
         return wait_settled(client, float(options.get("timeout", 10.0)))
     if command == "dom":

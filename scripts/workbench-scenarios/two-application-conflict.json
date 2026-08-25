@@ -1,0 +1,35 @@
+{
+  "name": "two-application-conflict",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "replay", "macro": {"schema_version": 1, "name": "Create conflict chart", "steps": [
+      {"action": {"action": "begin_new_chart"}, "bind": "$chart1"},
+      {"action": {"action": "set_chart_title", "title": "Conflict Base"}},
+      {"action": {"action": "save_chart_editor"}}
+    ]}},
+    {"command": "wait", "timeout": 20},
+    {"command": "peer_initialize"},
+    {"command": "peer_wait", "timeout": 20},
+    {"command": "replay", "macro": {"schema_version": 1, "name": "Local edit", "steps": [
+      {"action": {"action": "begin_saved_chart_edit", "chart": {"title": "Conflict Base"}}},
+      {"action": {"action": "set_chart_title", "title": "Local Conflict Title"}},
+      {"action": {"action": "set_chart_event_kind", "event_kind": "event"}}
+    ]}},
+    {"command": "wait", "timeout": 20},
+    {"command": "peer_replay", "macro": {"schema_version": 1, "name": "Peer edit", "steps": [
+      {"action": {"action": "open_chart", "chart": {"title": "Conflict Base"}}, "bind": "$chart1"},
+      {"action": {"action": "begin_saved_chart_edit", "chart": {"binding": "$chart1"}}},
+      {"action": {"action": "set_chart_title", "title": "Peer Conflict Title"}},
+      {"action": {"action": "set_chart_event_kind", "event_kind": "ingress"}},
+      {"action": {"action": "save_chart_editor"}}
+    ]}},
+    {"command": "peer_wait", "timeout": 20},
+    {"command": "peer_snapshot", "expect": {"value.chart.title": "Peer Conflict Title", "value.chart.saved": true, "value.application.settled": true}},
+    {"command": "replay", "macro": {"schema_version": 1, "name": "Publish stale local edit", "steps": [
+      {"action": {"action": "save_chart_editor"}}
+    ]}},
+    {"command": "wait", "timeout": 20},
+    {"command": "snapshot", "expect": {"value.application.status": "ready", "value.application.settled": true, "value.chart_editor.state": "conflict", "value.chart_editor.fields.title": "Local Conflict Title", "value.chart_editor.conflicts.0.component": "record", "value.chart_editor.conflicts.1.component": "definition", "value.coordinator.macro_state.state": "idle"}},
+    {"command": "trace"}
+  ]
+}

@@ -535,12 +535,12 @@ pub enum BindingSourceSummary {
     Inline,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ResourceEditorReadModel {
     pub aspect_set: Option<AspectSetDraftReadModel>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AspectSetDraftReadModel {
     pub resource_id: Option<ResourceId>,
     pub title: String,
@@ -548,7 +548,7 @@ pub struct AspectSetDraftReadModel {
     pub aspects: Vec<AspectDraftValue>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AspectDraftValue {
     pub aspect_id: AspectId,
     pub label: String,
@@ -556,7 +556,8 @@ pub struct AspectDraftValue {
     pub maximum_orb: Angle,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
 pub enum DraftState {
     New,
     Creating,

@@ -35,8 +35,8 @@ pub fn App() -> impl IntoView {
     let model = RwSignal::new(AppReadModel::initializing());
     let dispatcher = WorkbenchCoordinator::new(application, model);
     #[cfg(all(target_arch = "wasm32", feature = "workbench-automation"))]
-    if automation_configuration.is_some() {
-        crate::automation_bridge::install(model, dispatcher);
+    if let Some(configuration) = automation_configuration {
+        crate::automation_bridge::install(model, dispatcher, &configuration.database_name);
     }
     let invalid_aspect_buffers = RwSignal::new(BTreeSet::<String>::new());
 
