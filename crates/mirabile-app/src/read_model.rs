@@ -8,6 +8,7 @@ use crate::{
 pub struct AppReadModel {
     pub version: ProjectionVersion,
     pub status: ApplicationStatus,
+    pub activity: ApplicationActivityReadModel,
     pub library: LibraryReadModel,
     pub workspace: WorkspaceReadModel,
     pub active_view: Option<ViewReadModel>,
@@ -22,6 +23,7 @@ impl AppReadModel {
         Self {
             version: ProjectionVersion::INITIAL,
             status: ApplicationStatus::Initializing,
+            activity: ApplicationActivityReadModel::initializing(),
             library: LibraryReadModel::default(),
             workspace: WorkspaceReadModel::default(),
             active_view: None,
@@ -40,6 +42,65 @@ impl AppReadModel {
                 capability.availability.clone()
             })
     }
+
+    /// The sole public predicate for authoritative application settlement.
+    pub const fn is_settled(&self) -> bool {
+        self.activity.settled
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationActivityReadModel {
+    pub settled: bool,
+    pub pending_operations: Vec<PendingOperationReadModel>,
+}
+
+impl ApplicationActivityReadModel {
+    pub fn settled() -> Self {
+        Self {
+            settled: true,
+            pending_operations: Vec::new(),
+        }
+    }
+
+    pub fn pending(pending_operations: Vec<PendingOperationReadModel>) -> Self {
+        Self {
+            settled: false,
+            pending_operations,
+        }
+    }
+
+    fn initializing() -> Self {
+        Self::pending(vec![PendingOperationReadModel::InitializeApplication])
+    }
+}
+
+impl Default for ApplicationActivityReadModel {
+    fn default() -> Self {
+        Self::settled()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PendingOperationReadModel {
+    InitializeApplication,
+    ViewCalculation {
+        view_id: ViewInstanceId,
+        request_id: u64,
+    },
+    ChartCreate {
+        instance_id: InstanceId,
+    },
+    ChartSave {
+        definition_id: ResourceId,
+    },
+    WorkspaceSave {
+        resource_id: Option<ResourceId>,
+    },
+    ResourceSave {
+        resource_id: ResourceId,
+    },
+    DemoLoading,
 }
 
 /// Monotonic identity for authoritative application projections.
@@ -316,10 +377,23 @@ mod tests {
         assert_eq!(model.status, ApplicationStatus::Initializing);
         assert_eq!(model.version, ProjectionVersion::INITIAL);
         assert!(model.active_view.is_none());
+        assert!(!model.is_settled());
+        assert_eq!(
+            model.activity.pending_operations,
+            vec![PendingOperationReadModel::InitializeApplication]
+        );
         assert_eq!(
             model.availability(AppAction::SaveDraft),
             Availability::Hidden
         );
+    }
+
+    #[test]
+    fn settlement_is_owned_by_the_activity_projection() {
+        let mut model = AppReadModel::initializing();
+        model.activity = ApplicationActivityReadModel::settled();
+
+        assert!(model.is_settled());
     }
 
     #[test]

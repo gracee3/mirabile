@@ -259,7 +259,19 @@ where
         loading.active_view.as_ref().map(|view| &view.computation),
         Some(ViewComputationState::Loading)
     ));
-    block_on(application.wait_for_update(loading.version)).expect("initial view settles")
+    settle(application, loading)
+}
+
+fn settle<R, C>(application: &RealApplication<R, C>, mut model: AppReadModel) -> AppReadModel
+where
+    R: ResourceRepository + Clone,
+    C: CalculationRuntime,
+{
+    while !model.is_settled() {
+        model = block_on(application.wait_for_update(model.version))
+            .expect("authoritative application work settles");
+    }
+    model
 }
 
 fn controlled_ready(
@@ -567,8 +579,10 @@ fn fresh_unsaved_session_creates_workspace_revision_one_without_persisting_draft
             .is_enabled(),
         "an unsaved session is first-saveable even before a durable mutation"
     );
-    let saved = block_on(application.dispatch(AppIntent::SaveWorkspace))
-        .expect("first workspace save succeeds");
+    let saving = block_on(application.dispatch(AppIntent::SaveWorkspace))
+        .expect("first workspace save is accepted");
+    assert!(!saving.is_settled());
+    let saved = settle(&application, saving);
     let workspace_id = saved
         .workspace
         .document_id
@@ -658,8 +672,9 @@ fn fresh_unsaved_session_can_open_and_assign_saved_library_chart_before_first_sa
             .any(|slot| slot.required && slot.chart == Some(saved_instance))
     }));
 
-    let saved = block_on(application.dispatch(AppIntent::SaveWorkspace))
-        .expect("unsaved session creates its first WorkspaceDocument");
+    let saving = block_on(application.dispatch(AppIntent::SaveWorkspace))
+        .expect("unsaved session accepts its first WorkspaceDocument save");
+    let saved = settle(&application, saving);
     let workspace_id = saved.workspace.document_id.expect("new workspace identity");
     let CanonicalResource::WorkspaceDocument(document) = block_on(repository.get(workspace_id))
         .expect("workspace read")
@@ -792,8 +807,9 @@ fn draft_slot_overlay_never_enters_saved_workspace_and_reload_restores_durable_a
     }))
     .expect("unrelated durable mutation succeeds while draft overlay is active");
     block_on(application.wait_for_update(dirty.version)).expect("preview settles");
-    block_on(application.dispatch(AppIntent::SaveWorkspace))
-        .expect("workspace saves without serializing the draft overlay");
+    let saving = block_on(application.dispatch(AppIntent::SaveWorkspace))
+        .expect("workspace save is accepted without serializing the draft overlay");
+    settle(&application, saving);
 
     let CanonicalResource::WorkspaceDocument(document) =
         block_on(repository.get(demo_ids().workspace))
@@ -993,8 +1009,10 @@ fn chart_draft_previews_then_atomically_creates_record_and_definition() {
         );
     }
 
-    let saved = block_on(application.dispatch(AppIntent::SaveChartDraft { instance_id }))
-        .expect("chart saves atomically");
+    let saving = block_on(application.dispatch(AppIntent::SaveChartDraft { instance_id }))
+        .expect("atomic chart create is accepted");
+    assert!(!saving.is_settled());
+    let saved = settle(&application, saving);
     let saved_chart = saved
         .workspace
         .charts
@@ -1042,10 +1060,15 @@ fn failed_atomic_chart_save_retains_draft_and_cancel_creates_nothing() {
         .active_chart
         .expect("current transits draft");
 
-    let error = block_on(application.dispatch(AppIntent::SaveChartDraft { instance_id }))
-        .expect_err("injected batch failure surfaces");
-    assert_eq!(error.kind, AppErrorKind::Unavailable);
-    let retained = block_on(application.snapshot()).expect("snapshot succeeds");
+    let saving = block_on(application.dispatch(AppIntent::SaveChartDraft { instance_id }))
+        .expect("failed atomic save is first accepted as observable work");
+    let retained = settle(&application, saving);
+    let notice = retained
+        .notice
+        .as_ref()
+        .expect("failure notice is projected");
+    assert_eq!(notice.kind, AppNoticeKind::Warning);
+    assert!(notice.message.contains("Could not atomically save"));
     assert!(matches!(
         retained
             .workspace
@@ -1222,8 +1245,9 @@ fn workspace_dirty_save_and_session_navigation_semantics() {
     );
     assert!(closed.workspace.document_dirty);
 
-    let saved =
-        block_on(application.dispatch(AppIntent::SaveWorkspace)).expect("workspace save succeeds");
+    let saving =
+        block_on(application.dispatch(AppIntent::SaveWorkspace)).expect("workspace save starts");
+    let saved = settle(&application, saving);
     assert!(!saved.workspace.document_dirty);
     assert_eq!(
         saved.workspace.document_revision.map(Revision::get),
@@ -1268,8 +1292,9 @@ fn temporary_display_override_requires_explicit_promotion_and_workspace_save() {
     assert!(!promoted.workspace.has_temporary_display_override);
     block_on(application.wait_for_update(promoted.version)).expect("promoted preview settles");
 
-    let saved =
-        block_on(application.dispatch(AppIntent::SaveWorkspace)).expect("workspace save succeeds");
+    let saving =
+        block_on(application.dispatch(AppIntent::SaveWorkspace)).expect("workspace save starts");
+    let saved = settle(&application, saving);
     assert!(!saved.workspace.document_dirty);
     let canonical = block_on(repository.get(ids.workspace))
         .expect("workspace read")
@@ -1927,7 +1952,8 @@ fn memory_repository_reload_restores_saved_document_not_session_navigation() {
     block_on(first.wait_for_update(dirty.version)).expect("preview settles");
     let saving = block_on(first.dispatch(AppIntent::SaveDraft)).expect("save starts");
     block_on(first.wait_for_update(saving.version)).expect("save settles");
-    block_on(first.dispatch(AppIntent::SaveWorkspace)).expect("workspace saves explicitly");
+    let saving = block_on(first.dispatch(AppIntent::SaveWorkspace)).expect("workspace save starts");
+    settle(&first, saving);
     drop(first);
 
     let second = demo_application(repository);

@@ -46,7 +46,7 @@ where
         state.advance()
     }
 
-    pub(super) async fn save_chart_draft(&self, instance_id: InstanceId) -> AppResult<()> {
+    pub(super) fn begin_save_chart_draft(&self, instance_id: InstanceId) -> AppResult<()> {
         let (record, definition) = {
             let mut state = self.state.borrow_mut();
             let draft = state
@@ -82,6 +82,24 @@ where
             (record, definition)
         };
 
+        let mut state = self.state.borrow_mut();
+        state.pending.push_back(PendingWork::CreateChart {
+            instance_id,
+            record: Box::new(record),
+            definition: Box::new(definition),
+        });
+        state.notice = Some(info(
+            "Creating the ChartRecord and ChartDefinition as one observable atomic operation",
+        ));
+        state.advance()
+    }
+
+    pub(super) async fn complete_chart_create(
+        &self,
+        instance_id: InstanceId,
+        record: ResourceEnvelope<mirabile_core::ChartRecord>,
+        definition: ResourceEnvelope<ChartDefinition>,
+    ) -> AppResult<()> {
         let result = self
             .repository
             .create_batch(vec![
@@ -90,14 +108,18 @@ where
             ])
             .await;
         if let Err(error) = result {
-            self.state
-                .borrow_mut()
-                .saving_chart_drafts
-                .remove(&instance_id);
-            return Err(repository_app_error(
-                "Could not atomically save the ChartDraft",
-                &error,
-            ));
+            let failure = repository_app_error("Could not atomically save the ChartDraft", &error);
+            let mut state = self.state.borrow_mut();
+            state.saving_chart_drafts.remove(&instance_id);
+            state.notice = Some(AppNotice {
+                kind: if failure.kind == AppErrorKind::Conflict {
+                    AppNoticeKind::Conflict
+                } else {
+                    AppNoticeKind::Warning
+                },
+                message: failure.message,
+            });
+            return state.advance();
         }
 
         let mut state = self.state.borrow_mut();

@@ -25,6 +25,7 @@ impl RealState {
             let mut model = AppReadModel::initializing();
             model.version = self.version;
             model.status = self.status.clone();
+            model.activity = self.activity_read_model();
             model.notice.clone_from(&self.notice);
             return Ok(model);
         }
@@ -112,6 +113,7 @@ impl RealState {
         Ok(AppReadModel {
             version: self.version,
             status: self.status.clone(),
+            activity: self.activity_read_model(),
             library: LibraryReadModel {
                 charts: library_charts,
                 aspect_sets: self.catalog.aspect_set_summaries()?,

@@ -102,7 +102,7 @@ where
         state.advance()
     }
 
-    pub(super) async fn save_workspace(&self) -> AppResult<()> {
+    pub(super) fn begin_save_workspace(&self) -> AppResult<()> {
         let (expected_revision, next) = {
             let state = self.state.borrow();
             let session = state.session.as_ref().ok_or_else(|| {
@@ -159,18 +159,39 @@ where
             }
         };
 
+        let mut state = self.state.borrow_mut();
+        state.pending.push_back(super::PendingWork::SaveWorkspace {
+            expected_revision,
+            next: Box::new(next),
+        });
+        state.notice = Some(info(
+            "Saving the WorkspaceDocument as an observable revision-checked operation",
+        ));
+        state.advance()
+    }
+
+    pub(super) async fn complete_workspace_save(
+        &self,
+        expected_revision: Option<mirabile_core::Revision>,
+        next: ResourceEnvelope<WorkspaceDocument>,
+    ) -> AppResult<()> {
         let resource = CanonicalResource::WorkspaceDocument(next.clone());
-        match expected_revision {
-            Some(expected_revision) => self
-                .repository
-                .save(expected_revision, resource)
-                .await
-                .map_err(|error| {
-                    repository_app_error("Could not save the WorkspaceDocument", &error)
-                })?,
-            None => self.repository.create(resource).await.map_err(|error| {
-                repository_app_error("Could not create the first WorkspaceDocument", &error)
-            })?,
+        let result = match expected_revision {
+            Some(expected_revision) => self.repository.save(expected_revision, resource).await,
+            None => self.repository.create(resource).await,
+        };
+        if let Err(error) = result {
+            let failure = repository_app_error("Could not save the WorkspaceDocument", &error);
+            let mut state = self.state.borrow_mut();
+            state.notice = Some(super::AppNotice {
+                kind: if failure.kind == AppErrorKind::Conflict {
+                    super::AppNoticeKind::Conflict
+                } else {
+                    super::AppNoticeKind::Warning
+                },
+                message: failure.message,
+            });
+            return state.advance();
         }
 
         let mut state = self.state.borrow_mut();

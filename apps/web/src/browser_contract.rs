@@ -223,10 +223,11 @@ async fn run_real_application_reload() -> Result<(), String> {
         .workspace
         .active_chart
         .ok_or_else(|| "Current Transits draft was not active".to_owned())?;
-    let first_workspace_save = fresh
+    let first_workspace_saving = fresh
         .dispatch(AppIntent::SaveWorkspace)
         .await
         .map_err(message)?;
+    let first_workspace_save = settle_pending(&fresh, first_workspace_saving).await?;
     let current_transits_workspace = first_workspace_save
         .workspace
         .document_id
@@ -254,12 +255,13 @@ async fn run_real_application_reload() -> Result<(), String> {
             }),
         "first WorkspaceDocument leaked its Current Transits draft assignment",
     )?;
-    let saved_current_transits = fresh
+    let saving_current_transits = fresh
         .dispatch(AppIntent::SaveChartDraft {
             instance_id: current_transits_instance,
         })
         .await
         .map_err(message)?;
+    let saved_current_transits = settle_pending(&fresh, saving_current_transits).await?;
     ensure(
         saved_current_transits.library.charts.len() == 1
             && saved_current_transits.workspace.charts.iter().any(|chart| {
@@ -287,10 +289,11 @@ async fn run_real_application_reload() -> Result<(), String> {
                 == 1,
         "IndexedDB ChartDraft save did not atomically create one record and one definition",
     )?;
-    let promoted_workspace = fresh
+    let promoting_workspace = fresh
         .dispatch(AppIntent::SaveWorkspace)
         .await
         .map_err(message)?;
+    let promoted_workspace = settle_pending(&fresh, promoting_workspace).await?;
     ensure(
         promoted_workspace
             .workspace
@@ -429,10 +432,11 @@ async fn run_real_application_reload() -> Result<(), String> {
         }),
         "Aspect Set revision two was not committed by the first RealApplication",
     )?;
-    let workspace_saved = first
+    let workspace_saving = first
         .dispatch(AppIntent::SaveWorkspace)
         .await
         .map_err(message)?;
+    let workspace_saved = settle_pending(&first, workspace_saving).await?;
     ensure(
         !workspace_saved.workspace.document_dirty
             && workspace_saved
@@ -504,26 +508,13 @@ async fn settle_pending(
     application: &RealApplication<IndexedDbRepositorySource, WorkerCalculationRuntime>,
     mut model: AppReadModel,
 ) -> Result<AppReadModel, String> {
-    loop {
-        let view_pending = model.active_view.as_ref().is_some_and(|view| {
-            matches!(
-                view.computation,
-                ViewComputationState::Loading | ViewComputationState::Refreshing
-            )
-        });
-        let save_pending = model
-            .resource_editor
-            .aspect_set
-            .as_ref()
-            .is_some_and(|draft| matches!(draft.state, DraftState::Saving { .. }));
-        if !view_pending && !save_pending {
-            return Ok(model);
-        }
+    while !model.is_settled() {
         model = application
             .wait_for_update(model.version)
             .await
             .map_err(message)?;
     }
+    Ok(model)
 }
 
 fn point_resource(title: &str) -> CanonicalResource {

@@ -25,17 +25,7 @@ fn real_application() -> Rc<dyn Application> {
 }
 
 async fn settle(application: &dyn Application, mut model: AppReadModel) -> AppReadModel {
-    while model.active_view.as_ref().is_some_and(|view| {
-        matches!(
-            view.computation,
-            ViewComputationState::Loading | ViewComputationState::Refreshing
-        )
-    }) || model
-        .resource_editor
-        .aspect_set
-        .as_ref()
-        .is_some_and(|draft| matches!(draft.state, mirabile_app::DraftState::Saving { .. }))
-    {
+    while !model.is_settled() {
         let after = model.version;
         model = application
             .wait_for_update(after)

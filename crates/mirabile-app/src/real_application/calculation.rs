@@ -45,6 +45,18 @@ where
                 expected_revision,
                 next,
             }) => self.complete_aspect_set_save(expected_revision, next).await,
+            Some(PendingWork::CreateChart {
+                instance_id,
+                record,
+                definition,
+            }) => {
+                self.complete_chart_create(instance_id, *record, *definition)
+                    .await
+            }
+            Some(PendingWork::SaveWorkspace {
+                expected_revision,
+                next,
+            }) => self.complete_workspace_save(expected_revision, *next).await,
             None if !self.state.borrow().inflight.is_empty() => {
                 // RuntimeInbox and the browser Worker runtime are intentionally
                 // single-consumer queues. Serialize receive calls so concurrent

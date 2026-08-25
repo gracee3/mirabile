@@ -27,15 +27,15 @@ use mirabile_store::{MemoryRepository, RepositoryError, ResourceRepository, Reso
 
 use crate::{
     ActiveChartInspector, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind,
-    AppReadModel, AppResult, Application, ApplicationStatus, AspectDraftValue,
-    AspectSetDraftMutation, AspectSetDraftReadModel, AspectSetSummary, Availability,
-    BindingSourceSummary, CalculationRuntime, CalculationRuntimeError, ChartPersistence,
-    ChartSlotAssignment, CommandCapability, DraftState, InlineCalculationRuntime,
-    InspectorReadModel, LibraryChartSummary, LibraryReadModel, OpenChartSummary, ProjectionVersion,
-    ResourceBindingSummary, ResourceEditorReadModel, StartupCalculationProfile, StartupPolicy,
-    ViewComputationState, ViewReadModel, ViewSummary, WorkspaceDocumentBacking, WorkspaceReadModel,
-    WorkspaceSession, blank_workspace_session, current_transits_session, current_unix_millis,
-    workspace_commands::apply_workspace_command,
+    AppReadModel, AppResult, Application, ApplicationActivityReadModel, ApplicationStatus,
+    AspectDraftValue, AspectSetDraftMutation, AspectSetDraftReadModel, AspectSetSummary,
+    Availability, BindingSourceSummary, CalculationRuntime, CalculationRuntimeError,
+    ChartPersistence, ChartSlotAssignment, CommandCapability, DraftState, InlineCalculationRuntime,
+    InspectorReadModel, LibraryChartSummary, LibraryReadModel, OpenChartSummary,
+    PendingOperationReadModel, ProjectionVersion, ResourceBindingSummary, ResourceEditorReadModel,
+    StartupCalculationProfile, StartupPolicy, ViewComputationState, ViewReadModel, ViewSummary,
+    WorkspaceDocumentBacking, WorkspaceReadModel, WorkspaceSession, blank_workspace_session,
+    current_transits_session, current_unix_millis, workspace_commands::apply_workspace_command,
 };
 #[cfg(feature = "xalen-backend")]
 use mirabile_engine::XalenBackend;
@@ -357,16 +357,10 @@ where
                 "The application must be ready before it can accept intents",
             ));
         }
-        if self
-            .state
-            .borrow()
-            .pending
-            .iter()
-            .any(|pending| matches!(pending, PendingWork::SaveAspectSet { .. }))
-        {
+        if self.state.borrow().has_pending_write() {
             return Err(AppError::new(
                 AppErrorKind::Unavailable,
-                "Wait for the pending Aspect Set save to finish",
+                "Wait for the pending repository operation to finish",
             ));
         }
         if !self.state.borrow().saving_chart_drafts.is_empty() {
@@ -379,7 +373,7 @@ where
         match intent {
             AppIntent::StartChartDraft { draft } => self.start_chart_draft(*draft)?,
             AppIntent::SaveChartDraft { instance_id } => {
-                self.save_chart_draft(instance_id).await?;
+                self.begin_save_chart_draft(instance_id)?;
             }
             AppIntent::CancelChartDraft { instance_id } => {
                 self.cancel_chart_draft(instance_id)?;
@@ -398,7 +392,7 @@ where
                 selected,
             } => self.set_session_chart_selection(instance_id, selected)?,
             AppIntent::SetActiveView { view_id } => self.set_active_session_view(view_id)?,
-            AppIntent::SaveWorkspace => self.save_workspace().await?,
+            AppIntent::SaveWorkspace => self.begin_save_workspace()?,
             AppIntent::SetTemporaryPointHidden { point_id, hidden } => {
                 self.set_temporary_point_hidden(point_id, hidden)?;
             }
@@ -533,6 +527,15 @@ enum PendingWork {
     SaveAspectSet {
         expected_revision: Revision,
         next: ResourceEnvelope<AspectSet>,
+    },
+    CreateChart {
+        instance_id: InstanceId,
+        record: Box<ResourceEnvelope<ChartRecord>>,
+        definition: Box<ResourceEnvelope<ChartDefinition>>,
+    },
+    SaveWorkspace {
+        expected_revision: Option<Revision>,
+        next: Box<ResourceEnvelope<WorkspaceDocument>>,
     },
 }
 

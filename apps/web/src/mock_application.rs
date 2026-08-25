@@ -3,13 +3,14 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc, str::FromStr};
 use async_trait::async_trait;
 use mirabile_app::{
     ActiveChartInspector, Angle, AppAction, AppError, AppErrorKind, AppIntent, AppNotice,
-    AppNoticeKind, AppReadModel, AppResult, Application, ApplicationStatus, AspectDraftValue,
-    AspectId, AspectSetDraftMutation, AspectSetDraftReadModel, AspectSetSummary, Availability,
-    BindingSourceSummary, ChartPersistence, ChartSlotAssignment, ChartSlotId, Circle,
-    CommandCapability, DraftState, FillRole, InspectorReadModel, InstanceId, Label,
-    LibraryChartSummary, LibraryReadModel, Line, OpenChartSummary, ProjectionVersion,
-    ResourceBindingSummary, ResourceEditorReadModel, ResourceId, Revision, Scene, StrokeRole,
-    ViewComputationState, ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel,
+    AppNoticeKind, AppReadModel, AppResult, Application, ApplicationActivityReadModel,
+    ApplicationStatus, AspectDraftValue, AspectId, AspectSetDraftMutation, AspectSetDraftReadModel,
+    AspectSetSummary, Availability, BindingSourceSummary, ChartPersistence, ChartSlotAssignment,
+    ChartSlotId, Circle, CommandCapability, DraftState, FillRole, InspectorReadModel, InstanceId,
+    Label, LibraryChartSummary, LibraryReadModel, Line, OpenChartSummary,
+    PendingOperationReadModel, ProjectionVersion, ResourceBindingSummary, ResourceEditorReadModel,
+    ResourceId, Revision, Scene, StrokeRole, ViewComputationState, ViewInstanceId, ViewReadModel,
+    ViewSummary, WorkspaceReadModel,
 };
 
 const CHART_DEFINITION_IDS: [&str; 5] = [
@@ -324,6 +325,9 @@ impl MockState {
             let mut model = AppReadModel::initializing();
             model.version = self.version;
             model.status = self.status.clone();
+            if matches!(self.status, ApplicationStatus::Error(_)) {
+                model.activity = ApplicationActivityReadModel::settled();
+            }
             model.notice.clone_from(&self.notice);
             return model;
         }
@@ -353,6 +357,7 @@ impl MockState {
         AppReadModel {
             version: self.version,
             status: self.status.clone(),
+            activity: self.activity_read_model(),
             library: LibraryReadModel {
                 charts: self.library_charts.clone(),
                 aspect_sets: self
@@ -414,6 +419,23 @@ impl MockState {
             capabilities: self.capabilities(),
             notice: self.notice.clone(),
         }
+    }
+
+    fn activity_read_model(&self) -> ApplicationActivityReadModel {
+        let operation = self.pending.as_ref().map(|pending| match pending {
+            PendingWork::InitialView | PendingWork::Refresh { .. } => {
+                PendingOperationReadModel::ViewCalculation {
+                    view_id: self.active_view,
+                    request_id: self.version.get().saturating_add(1),
+                }
+            }
+            PendingWork::Save { resource_id, .. } => PendingOperationReadModel::ResourceSave {
+                resource_id: *resource_id,
+            },
+        });
+        operation.map_or_else(ApplicationActivityReadModel::settled, |operation| {
+            ApplicationActivityReadModel::pending(vec![operation])
+        })
     }
 
     fn effective_slots(&self, view: &MockView) -> Vec<ChartSlotAssignment> {

@@ -5,7 +5,7 @@ use leptos::{ev, prelude::*};
 use mirabile_app::ProjectionVersion;
 use mirabile_app::{
     AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind, AppReadModel,
-    Application, ApplicationStatus, DraftState, ViewComputationState,
+    Application, ApplicationActivityReadModel, ApplicationStatus,
 };
 use wasm_bindgen::JsCast;
 
@@ -70,7 +70,7 @@ async fn publish_and_settle(
 ) {
     loop {
         let after = incoming.version;
-        let pending = has_pending_work(&incoming);
+        let pending = !incoming.is_settled();
         publish_projection(model, incoming);
         if !pending {
             return;
@@ -117,24 +117,10 @@ fn publish_if_newer(current: &mut AppReadModel, incoming: AppReadModel) -> bool 
     }
 }
 
-fn has_pending_work(model: &AppReadModel) -> bool {
-    let view_pending = model.active_view.as_ref().is_some_and(|view| {
-        matches!(
-            view.computation,
-            ViewComputationState::Loading | ViewComputationState::Refreshing
-        )
-    });
-    let save_pending = model
-        .resource_editor
-        .aspect_set
-        .as_ref()
-        .is_some_and(|draft| matches!(draft.state, DraftState::Saving { .. }));
-    view_pending || save_pending
-}
-
 fn publish_application_error(model: RwSignal<AppReadModel>, error: AppError) {
     model.update(|current| {
         current.status = ApplicationStatus::Error(error);
+        current.activity = ApplicationActivityReadModel::settled();
         current.notice = None;
     });
 }
