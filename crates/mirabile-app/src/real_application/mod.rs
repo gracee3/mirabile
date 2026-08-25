@@ -434,6 +434,10 @@ where
             AppIntent::BeginAspectSetEdit { resource_id } => {
                 self.begin_aspect_set_edit(resource_id)?;
             }
+            AppIntent::BeginNewAspectSet => self.begin_new_aspect_set()?,
+            AppIntent::DuplicateAspectSet { resource_id } => {
+                self.duplicate_aspect_set(resource_id)?;
+            }
             AppIntent::UpdateAspectSetDraft(mutation) => {
                 self.update_aspect_set_draft(mutation)?;
             }
@@ -558,7 +562,8 @@ struct ViewCalculationPlan {
 }
 
 struct AspectSetEditor {
-    base: ResourceEnvelope<AspectSet>,
+    base: Option<ResourceEnvelope<AspectSet>>,
+    title: String,
     draft: AspectSet,
     state: DraftState,
 }
@@ -566,7 +571,7 @@ struct AspectSetEditor {
 enum PendingWork {
     CompleteCachedView(Box<PendingCachedView>),
     SaveAspectSet {
-        expected_revision: Revision,
+        expected_revision: Option<Revision>,
         next: ResourceEnvelope<AspectSet>,
     },
     CreateChart {
@@ -651,17 +656,27 @@ fn view_title(view: &ViewInstance, catalog: &Catalog) -> AppResult<String> {
 }
 
 fn aspect_editor_read_model(editor: &AspectSetEditor) -> AppResult<AspectSetDraftReadModel> {
-    let conjunction = conjunction(&editor.draft)?;
+    editor.draft.domain_validate().map_err(|error| {
+        AppError::new(
+            AppErrorKind::InvalidIntent,
+            format!("Aspect Set draft was invalid: {error}"),
+        )
+    })?;
     Ok(AspectSetDraftReadModel {
-        resource_id: editor.base.id,
-        title: editor.base.title.clone(),
+        resource_id: editor.base.as_ref().map(|base| base.id),
+        title: editor.title.clone(),
         state: editor.state.clone(),
-        conjunction: AspectDraftValue {
-            aspect_id: conjunction.id.clone(),
-            label: conjunction.name.clone(),
-            enabled: conjunction.enabled,
-            maximum_orb: conjunction.orbs.maximum,
-        },
+        aspects: editor
+            .draft
+            .aspects
+            .iter()
+            .map(|aspect| AspectDraftValue {
+                aspect_id: aspect.id.clone(),
+                label: aspect.name.clone(),
+                enabled: aspect.enabled,
+                maximum_orb: aspect.orbs.maximum,
+            })
+            .collect(),
     })
 }
 
@@ -757,11 +772,12 @@ fn success(message: impl Into<String>) -> AppNotice {
 }
 
 fn restore_dirty_editor(state: &mut RealState, resource_id: ResourceId, base_revision: Revision) {
-    if let Some(editor) = state
-        .editor
-        .as_mut()
-        .filter(|editor| editor.base.id == resource_id)
-    {
+    if let Some(editor) = state.editor.as_mut().filter(|editor| {
+        editor
+            .base
+            .as_ref()
+            .is_some_and(|base| base.id == resource_id)
+    }) {
         editor.state = DraftState::Dirty { base_revision };
     }
 }

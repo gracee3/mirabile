@@ -762,6 +762,8 @@ impl RealState {
             | AppIntent::SaveChartDraft { .. }
             | AppIntent::CancelChartDraft { .. }
             | AppIntent::BeginAspectSetEdit { .. }
+            | AppIntent::BeginNewAspectSet
+            | AppIntent::DuplicateAspectSet { .. }
             | AppIntent::UpdateAspectSetDraft(_)
             | AppIntent::SaveDraft
             | AppIntent::CancelDraft

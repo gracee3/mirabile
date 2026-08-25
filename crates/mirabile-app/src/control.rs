@@ -12,9 +12,12 @@ impl ControlId {
     pub const APPLICATION_REFRESH: Self = Self(Cow::Borrowed("application.refresh"));
     pub const APPLICATION_RETRY: Self = Self(Cow::Borrowed("application.retry"));
     pub const ASPECT_EDIT: Self = Self(Cow::Borrowed("aspect.edit"));
+    pub const ASPECT_DUPLICATE: Self = Self(Cow::Borrowed("aspect.duplicate"));
     pub const ASPECT_ENABLED: Self = Self(Cow::Borrowed("aspect.enabled"));
     pub const ASPECT_MAXIMUM_ORB: Self = Self(Cow::Borrowed("aspect.maximum-orb"));
+    pub const ASPECT_NEW: Self = Self(Cow::Borrowed("aspect.new"));
     pub const ASPECT_RESOURCE: Self = Self(Cow::Borrowed("aspect.resource"));
+    pub const ASPECT_TITLE: Self = Self(Cow::Borrowed("aspect.title"));
     pub const CHART_ACTIVATE: Self = Self(Cow::Borrowed("chart.activate"));
     pub const CHART_CLOSE: Self = Self(Cow::Borrowed("chart.close"));
     pub const CHART_COORDINATES: Self = Self(Cow::Borrowed("chart.coordinates"));

@@ -416,15 +416,15 @@ impl MockState {
             },
             resource_editor: ResourceEditorReadModel {
                 aspect_set: self.editor.as_ref().map(|editor| AspectSetDraftReadModel {
-                    resource_id: editor.resource_id,
+                    resource_id: Some(editor.resource_id),
                     title: editor.title.clone(),
                     state: editor.state.clone(),
-                    conjunction: AspectDraftValue {
+                    aspects: vec![AspectDraftValue {
                         aspect_id: conjunction_id(),
                         label: "Conjunction".into(),
                         enabled: editor.conjunction_enabled,
                         maximum_orb: editor.conjunction_orb,
-                    },
+                    }],
                 }),
             },
             capabilities: self.capabilities(),
@@ -484,7 +484,13 @@ impl MockState {
                 disabled("The draft has no changes"),
                 disabled("The draft has no changes"),
             ),
-            Some(DraftState::Dirty { .. }) => (Availability::Enabled, Availability::Enabled),
+            Some(DraftState::New | DraftState::Dirty { .. }) => {
+                (Availability::Enabled, Availability::Enabled)
+            }
+            Some(DraftState::Creating) => (
+                disabled("The new Aspect Set is currently being created"),
+                disabled("Wait for the create to finish"),
+            ),
             Some(DraftState::Saving { .. }) => (
                 disabled("The draft is currently saving"),
                 disabled("Wait for the save to finish"),
@@ -542,6 +548,14 @@ impl MockState {
                 },
             ),
             capability(AppAction::BeginAspectSetEdit, Availability::Enabled),
+            capability(
+                AppAction::BeginNewAspectSet,
+                disabled("Mock new Aspect Set flow is not implemented"),
+            ),
+            capability(
+                AppAction::DuplicateAspectSet,
+                disabled("Mock duplicate Aspect Set flow is not implemented"),
+            ),
             capability(AppAction::SaveDraft, save),
             capability(AppAction::CancelDraft, cancel),
             capability(
@@ -808,6 +822,12 @@ impl MockState {
                 self.notice = Some(info("Aspect Set draft opened"));
                 Ok(())
             }
+            AppIntent::BeginNewAspectSet | AppIntent::DuplicateAspectSet { .. } => {
+                Err(AppError::new(
+                    AppErrorKind::Unavailable,
+                    "Mock new and duplicate Aspect Set flows are covered in the Real application",
+                ))
+            }
             AppIntent::UpdateAspectSetDraft(mutation) => self.update_draft(mutation),
             AppIntent::SaveDraft => self.begin_save(),
             AppIntent::CancelDraft => self.cancel_draft(),
@@ -948,7 +968,10 @@ impl MockState {
                 "Begin an Aspect Set edit before updating the draft",
             )
         })?;
-        if matches!(editor.state, DraftState::Saving { .. }) {
+        if matches!(
+            editor.state,
+            DraftState::Saving { .. } | DraftState::Creating
+        ) {
             return Err(AppError::new(
                 AppErrorKind::Unavailable,
                 "The draft cannot change while it is saving",
@@ -956,6 +979,7 @@ impl MockState {
         }
         let base_revision = editor.state.base_revision();
         match mutation {
+            AspectSetDraftMutation::SetTitle(title) => editor.title = title,
             AspectSetDraftMutation::SetOrb { aspect_id, maximum } => {
                 if aspect_id != conjunction_id() {
                     return Err(not_found("draft aspect"));
@@ -970,7 +994,9 @@ impl MockState {
             }
         }
         if !matches!(editor.state, DraftState::Conflict { .. }) {
-            editor.state = DraftState::Dirty { base_revision };
+            editor.state = DraftState::Dirty {
+                base_revision: base_revision.expect("mock editor has a saved base"),
+            };
         }
         self.queue_refresh(Ok(()));
         self.notice = Some(info(
@@ -1068,7 +1094,10 @@ impl MockState {
             .as_mut()
             .filter(|editor| editor.resource_id == resource_id)
             .ok_or_else(|| not_found("saving draft"))?;
-        let base_revision = editor.state.base_revision();
+        let base_revision = editor
+            .state
+            .base_revision()
+            .expect("saving mock editor has a base revision");
         editor.state = DraftState::Conflict {
             base_revision,
             remote_revision,
@@ -1630,7 +1659,7 @@ mod tests {
         .expect("typed mutation succeeds");
         let dirty_version = dirty.version;
         let draft = dirty.resource_editor.aspect_set.expect("draft");
-        assert_eq!(draft.conjunction.maximum_orb, changed_orb);
+        assert_eq!(draft.aspects[0].maximum_orb, changed_orb);
         assert!(matches!(draft.state, DraftState::Dirty { .. }));
         block_on(application.wait_for_update(dirty_version)).expect("preview refresh settles");
 
@@ -1642,7 +1671,7 @@ mod tests {
             .aspect_set
             .expect("draft remains projected");
         assert_eq!(
-            canceled_draft.conjunction.maximum_orb,
+            canceled_draft.aspects[0].maximum_orb,
             standard.conjunction_orb
         );
         assert!(matches!(canceled_draft.state, DraftState::Clean { .. }));

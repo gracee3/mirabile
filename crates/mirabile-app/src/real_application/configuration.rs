@@ -61,7 +61,7 @@ impl RealState {
         )
         .map_err(view_resolution_error)?;
         if let Some(editor) = &self.editor
-            && workspace.profile.aspects.id() == Some(editor.base.id)
+            && workspace.profile.aspects.id() == editor.base.as_ref().map(|base| base.id)
         {
             aspect_set = Resolved {
                 value: editor.draft.clone(),

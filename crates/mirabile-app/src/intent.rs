@@ -72,6 +72,10 @@ pub enum AppIntent {
     BeginAspectSetEdit {
         resource_id: ResourceId,
     },
+    BeginNewAspectSet,
+    DuplicateAspectSet {
+        resource_id: ResourceId,
+    },
     UpdateAspectSetDraft(AspectSetDraftMutation),
     SaveDraft,
     CancelDraft,
@@ -80,6 +84,7 @@ pub enum AppIntent {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AspectSetDraftMutation {
+    SetTitle(String),
     SetOrb { aspect_id: AspectId, maximum: Angle },
     SetEnabled { aspect_id: AspectId, enabled: bool },
 }
@@ -133,6 +138,13 @@ impl AppIntent {
             Self::PromoteTemporaryDisplay => "display.promote".into(),
             Self::BeginAspectSetEdit { resource_id } => {
                 format!("aspect.begin-edit[{resource_id}]")
+            }
+            Self::BeginNewAspectSet => "aspect.begin-new".into(),
+            Self::DuplicateAspectSet { resource_id } => {
+                format!("aspect.duplicate[{resource_id}]")
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetTitle(_)) => {
+                "aspect.title.set".into()
             }
             Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetOrb { aspect_id, maximum }) => {
                 format!(

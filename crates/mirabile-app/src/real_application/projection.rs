@@ -290,7 +290,13 @@ impl RealState {
                 disabled("The draft has no changes"),
                 disabled("The draft has no changes"),
             ),
-            Some(DraftState::Dirty { .. }) => (Availability::Enabled, Availability::Enabled),
+            Some(DraftState::New | DraftState::Dirty { .. }) => {
+                (Availability::Enabled, Availability::Enabled)
+            }
+            Some(DraftState::Creating) => (
+                disabled("The new Aspect Set is currently being created"),
+                disabled("Wait for the create to finish"),
+            ),
             Some(DraftState::Saving { .. }) => (
                 disabled("The draft is currently saving"),
                 disabled("Wait for the save to finish"),
@@ -300,12 +306,17 @@ impl RealState {
                 Availability::Enabled,
             ),
         };
-        let begin = if self
-            .editor
-            .as_ref()
-            .is_some_and(|editor| matches!(editor.state, DraftState::Saving { .. }))
-        {
-            disabled("Wait for the current Aspect Set save to finish")
+        let replace_editor = match self.editor.as_ref().map(|editor| &editor.state) {
+            None | Some(DraftState::Clean { .. }) => Availability::Enabled,
+            Some(DraftState::Saving { .. } | DraftState::Creating) => {
+                disabled("Wait for the current Aspect Set operation to finish")
+            }
+            Some(DraftState::New | DraftState::Dirty { .. } | DraftState::Conflict { .. }) => {
+                disabled("Save or cancel the current Aspect Set editor first")
+            }
+        };
+        let begin = if !replace_editor.is_enabled() {
+            replace_editor.clone()
         } else if self
             .workspace()
             .and_then(|workspace| workspace.profile.aspects.id())
@@ -372,6 +383,21 @@ impl RealState {
             capability(AppAction::SaveChartDraft, save_chart_draft),
             capability(AppAction::CancelChartDraft, cancel_chart_draft),
             capability(AppAction::BeginAspectSetEdit, begin),
+            capability(AppAction::BeginNewAspectSet, replace_editor.clone()),
+            capability(
+                AppAction::DuplicateAspectSet,
+                if !replace_editor.is_enabled() {
+                    replace_editor
+                } else if self
+                    .catalog
+                    .aspect_set_summaries()
+                    .is_ok_and(|sets| !sets.is_empty())
+                {
+                    Availability::Enabled
+                } else {
+                    disabled("There is no saved Aspect Set to duplicate")
+                },
+            ),
             capability(AppAction::SaveDraft, save),
             capability(AppAction::CancelDraft, cancel),
             capability(AppAction::SaveWorkspace, save_workspace),

@@ -309,8 +309,7 @@ pub(super) fn execute_command(
     command: CommandId,
     dispatcher: WorkbenchCoordinator,
     model: RwSignal<AppReadModel>,
-    orb_buffer: RwSignal<String>,
-    orb_error: RwSignal<Option<String>>,
+    invalid_aspect_buffers: RwSignal<std::collections::BTreeSet<String>>,
 ) {
     match command {
         CommandId::SaveDraft => {
@@ -318,7 +317,7 @@ pub(super) fn execute_command(
                 .get_untracked()
                 .availability(AppAction::SaveDraft)
                 .is_enabled()
-                && orb_error.get_untracked().is_none()
+                && invalid_aspect_buffers.get_untracked().is_empty()
             {
                 dispatcher.dispatch_from(
                     AppIntent::SaveDraft,
@@ -333,7 +332,7 @@ pub(super) fn execute_command(
                 .availability(AppAction::CancelDraft)
                 .is_enabled()
             {
-                reset_orb_buffer(model, orb_buffer, orb_error);
+                reset_aspect_buffers(invalid_aspect_buffers);
                 dispatcher.dispatch_from(
                     AppIntent::CancelDraft,
                     ActionSource::Human,
@@ -358,22 +357,10 @@ pub(super) fn execute_command(
     }
 }
 
-pub(super) fn reset_orb_buffer(
-    model: RwSignal<AppReadModel>,
-    orb_buffer: RwSignal<String>,
-    orb_error: RwSignal<Option<String>>,
+pub(super) fn reset_aspect_buffers(
+    invalid_aspect_buffers: RwSignal<std::collections::BTreeSet<String>>,
 ) {
-    let snapshot = model.get_untracked();
-    if let Some(resource_id) = snapshot.inspector.active_aspect_set
-        && let Some(summary) = snapshot
-            .library
-            .aspect_sets
-            .iter()
-            .find(|summary| summary.resource_id == resource_id)
-    {
-        orb_buffer.set(format!("{:.1}", summary.conjunction_orb.degrees()));
-    }
-    orb_error.set(None);
+    invalid_aspect_buffers.set(std::collections::BTreeSet::new());
 }
 
 pub(super) fn event_target_is_text_entry(event: &ev::KeyboardEvent) -> bool {

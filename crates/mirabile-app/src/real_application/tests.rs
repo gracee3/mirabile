@@ -313,6 +313,17 @@ fn editor_state(model: &AppReadModel) -> &DraftState {
         .state
 }
 
+fn aspect_row<'a>(
+    draft: &'a crate::AspectSetDraftReadModel,
+    aspect_id: &str,
+) -> &'a crate::AspectDraftValue {
+    draft
+        .aspects
+        .iter()
+        .find(|aspect| aspect.aspect_id.as_str() == aspect_id)
+        .expect("Aspect Set row is projected")
+}
+
 fn ensure_demo<R>(repository: &R)
 where
     R: ResourceRepository + Clone,
@@ -1960,6 +1971,9 @@ fn aspect_preview_cancel_and_save_reuse_calculation_value() {
         },
     )))
     .expect("draft update succeeds");
+    let replacement = block_on(application.dispatch(AppIntent::BeginNewAspectSet))
+        .expect_err("dirty editor cannot be replaced");
+    assert_eq!(replacement.kind, AppErrorKind::Unavailable);
     assert_eq!(calls.get(), 1);
     assert!(matches!(editor_state(&dirty), DraftState::Dirty { .. }));
     assert_eq!(
@@ -1996,6 +2010,11 @@ fn aspect_preview_cancel_and_save_reuse_calculation_value() {
     block_on(application.wait_for_update(canceled.version)).expect("cancel refresh settles");
     assert_eq!(calls.get(), 1);
 
+    block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        AspectSetDraftMutation::SetTitle("Standard Revised".into()),
+    )))
+    .expect("saved title update succeeds");
+
     let dirty = block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
         AspectSetDraftMutation::SetOrb {
             aspect_id: mirabile_core::AspectId::new("conjunction").expect("aspect ID"),
@@ -2008,7 +2027,132 @@ fn aspect_preview_cancel_and_save_reuse_calculation_value() {
     assert!(matches!(editor_state(&saving), DraftState::Saving { .. }));
     let saved = block_on(application.wait_for_update(saving.version)).expect("save settles");
     assert!(matches!(editor_state(&saved), DraftState::Clean { revision } if revision.get() == 2));
+    assert!(
+        saved.library.aspect_sets.iter().any(|summary| {
+            summary.resource_id == standard && summary.title == "Standard Revised"
+        })
+    );
     assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    ready(&application);
+
+    let opened =
+        block_on(application.dispatch(AppIntent::BeginNewAspectSet)).expect("new Aspect Set opens");
+    let draft = opened
+        .resource_editor
+        .aspect_set
+        .as_ref()
+        .expect("new editor is projected");
+    assert!(matches!(draft.state, DraftState::New));
+    assert_eq!(draft.resource_id, None);
+    assert_eq!(
+        draft
+            .aspects
+            .iter()
+            .map(|aspect| aspect.aspect_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["conjunction", "square"]
+    );
+
+    block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        AspectSetDraftMutation::SetTitle("Research Orbs".into()),
+    )))
+    .expect("title changes");
+    block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        AspectSetDraftMutation::SetEnabled {
+            aspect_id: mirabile_core::AspectId::new("conjunction").expect("aspect ID"),
+            enabled: false,
+        },
+    )))
+    .expect("Conjunction changes");
+    block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        AspectSetDraftMutation::SetOrb {
+            aspect_id: mirabile_core::AspectId::new("square").expect("aspect ID"),
+            maximum: angle(4.5),
+        },
+    )))
+    .expect("Square changes");
+    let creating = block_on(application.dispatch(AppIntent::SaveDraft)).expect("create starts");
+    assert!(matches!(editor_state(&creating), DraftState::Creating));
+    let created = settle(&application, creating);
+    let editor = created
+        .resource_editor
+        .aspect_set
+        .as_ref()
+        .expect("created editor remains open");
+    let created_id = editor.resource_id.expect("canonical identity is projected");
+    assert!(
+        matches!(editor.state, DraftState::Clean { revision } if revision == Revision::INITIAL)
+    );
+    assert_eq!(editor.title, "Research Orbs");
+    assert_eq!(aspect_row(editor, "square").maximum_orb, angle(4.5));
+    assert!(!aspect_row(editor, "conjunction").enabled);
+    assert_eq!(created.inspector.active_aspect_set, Some(created_id));
+    assert!(created.workspace.document_dirty);
+
+    let CanonicalResource::AspectSet(created_resource) = block_on(repository.get(created_id))
+        .expect("created resource reads")
+        .expect("created resource exists")
+    else {
+        panic!("created resource is an Aspect Set")
+    };
+    assert_eq!(created_resource.title, "Research Orbs");
+    assert_eq!(created_resource.payload.aspects.len(), 2);
+
+    let standard_id = demo_ids().aspect_set_standard;
+    let CanonicalResource::AspectSet(standard) = block_on(repository.get(standard_id))
+        .expect("source reads")
+        .expect("source exists")
+    else {
+        panic!("source is an Aspect Set")
+    };
+    let duplicated = block_on(application.dispatch(AppIntent::DuplicateAspectSet {
+        resource_id: standard_id,
+    }))
+    .expect("duplicate opens");
+    let duplicate = duplicated
+        .resource_editor
+        .aspect_set
+        .as_ref()
+        .expect("duplicate editor");
+    assert!(matches!(duplicate.state, DraftState::New));
+    assert_eq!(duplicate.title, format!("{} Copy", standard.title));
+    assert_eq!(duplicate.aspects.len(), standard.payload.aspects.len());
+    let creating = block_on(application.dispatch(AppIntent::SaveDraft)).expect("duplicate creates");
+    let duplicated = settle(&application, creating);
+    let duplicate_id = duplicated
+        .resource_editor
+        .aspect_set
+        .as_ref()
+        .and_then(|editor| editor.resource_id)
+        .expect("duplicate canonical identity");
+    assert_ne!(duplicate_id, standard_id);
+    let CanonicalResource::AspectSet(duplicate) = block_on(repository.get(duplicate_id))
+        .expect("duplicate reads")
+        .expect("duplicate exists")
+    else {
+        panic!("duplicate is an Aspect Set")
+    };
+    assert_eq!(duplicate.payload, standard.payload);
+}
+
+#[test]
+fn canceling_a_new_aspect_set_writes_nothing() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    ready(&application);
+    let before =
+        block_on(repository.list(Some(ResourceKind::AspectSet))).expect("Aspect Sets list");
+    block_on(application.dispatch(AppIntent::BeginNewAspectSet)).expect("new editor opens");
+    let canceled = block_on(application.dispatch(AppIntent::CancelDraft)).expect("cancel succeeds");
+    assert!(canceled.resource_editor.aspect_set.is_none());
+    let after = block_on(repository.list(Some(ResourceKind::AspectSet))).expect("Aspect Sets list");
+    assert_eq!(after, before);
 }
 
 #[test]
@@ -2063,7 +2207,7 @@ fn optimistic_conflict_retains_local_draft_and_cancel_adopts_remote() {
         } if *base_revision == Revision::INITIAL && remote_revision.get() == 2
     ));
     let draft = conflict.resource_editor.aspect_set.expect("draft remains");
-    assert_eq!(draft.conjunction.maximum_orb, angle(9.0));
+    assert_eq!(aspect_row(&draft, "conjunction").maximum_orb, angle(9.0));
     assert_eq!(
         conflict
             .library
@@ -2083,7 +2227,10 @@ fn optimistic_conflict_retains_local_draft_and_cancel_adopts_remote() {
         canceled_draft.state,
         DraftState::Clean { revision } if revision.get() == 2
     ));
-    assert_eq!(canceled_draft.conjunction.maximum_orb, angle(5.0));
+    assert_eq!(
+        aspect_row(&canceled_draft, "conjunction").maximum_orb,
+        angle(5.0)
+    );
 }
 
 #[test]
@@ -2130,7 +2277,10 @@ fn conflict_remote_read_failure_settles_dirty_and_allows_cancel_and_retry() {
             .aspect_set
             .as_ref()
             .expect("draft remains")
-            .conjunction
+            .aspects
+            .iter()
+            .find(|aspect| aspect.aspect_id.as_str() == "conjunction")
+            .expect("conjunction row")
             .maximum_orb,
         angle(9.0)
     );
@@ -2211,7 +2361,10 @@ fn generic_repository_save_failure_settles_dirty_and_can_retry() {
             .aspect_set
             .as_ref()
             .expect("draft remains")
-            .conjunction
+            .aspects
+            .iter()
+            .find(|aspect| aspect.aspect_id.as_str() == "conjunction")
+            .expect("conjunction row")
             .maximum_orb,
         angle(8.0)
     );

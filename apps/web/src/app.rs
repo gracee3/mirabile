@@ -1,11 +1,11 @@
-use std::rc::Rc;
+use std::{collections::BTreeSet, rc::Rc};
 
 use leptos::{ev, prelude::*};
 #[cfg(target_arch = "wasm32")]
 use mirabile_app::RealApplication;
 use mirabile_app::{
     ActionSource, AppAction, AppIntent, AppReadModel, Application, ApplicationStatus, Availability,
-    ControlAddress, ControlId, ResourceId,
+    ControlAddress, ControlId,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -37,30 +37,9 @@ pub fn App() -> impl IntoView {
     if automation_configuration.is_some() {
         crate::automation_bridge::install(model, dispatcher);
     }
-    let orb_buffer = RwSignal::new(String::new());
-    let orb_buffer_resource = RwSignal::new(None::<ResourceId>);
-    let orb_error = RwSignal::new(None::<String>);
+    let invalid_aspect_buffers = RwSignal::new(BTreeSet::<String>::new());
 
     dispatcher.initialize();
-
-    Effect::new(move || {
-        let draft = model
-            .get()
-            .resource_editor
-            .aspect_set
-            .map(|draft| (draft.resource_id, draft.conjunction.maximum_orb));
-        match draft {
-            Some((resource_id, maximum_orb))
-                if orb_buffer_resource.get_untracked() != Some(resource_id) =>
-            {
-                orb_buffer.set(format!("{:.1}", maximum_orb.degrees()));
-                orb_buffer_resource.set(Some(resource_id));
-                orb_error.set(None);
-            }
-            None => orb_buffer_resource.set(None),
-            Some(_) => {}
-        }
-    });
 
     let shortcut_dispatcher = dispatcher;
     let shortcut_listener = window_event_listener(ev::keydown, move |event| {
@@ -70,7 +49,7 @@ pub fn App() -> impl IntoView {
             command_for_key(&event.key(), primary_modifier, event.alt_key(), typing)
         {
             event.prevent_default();
-            execute_command(command, shortcut_dispatcher, model, orb_buffer, orb_error);
+            execute_command(command, shortcut_dispatcher, model, invalid_aspect_buffers);
         }
     });
     on_cleanup(move || shortcut_listener.remove());
@@ -110,8 +89,7 @@ pub fn App() -> impl IntoView {
                     <ReadyShell
                         model
                         dispatcher
-                        orb_buffer
-                        orb_error
+                        invalid_aspect_buffers
                     />
                 }.into_any(),
             }}
@@ -123,8 +101,7 @@ pub fn App() -> impl IntoView {
 fn ReadyShell(
     model: RwSignal<AppReadModel>,
     dispatcher: WorkbenchCoordinator,
-    orb_buffer: RwSignal<String>,
-    orb_error: RwSignal<Option<String>>,
+    invalid_aspect_buffers: RwSignal<BTreeSet<String>>,
 ) -> impl IntoView {
     view! {
         <header class="command-bar">
@@ -167,8 +144,7 @@ fn ReadyShell(
             <CommandActions
                 model
                 dispatcher
-                orb_buffer
-                orb_error
+                invalid_aspect_buffers
             />
         </header>
 
@@ -191,7 +167,7 @@ fn ReadyShell(
         <div class="workstation">
             <WorkspaceRail model dispatcher />
             <ViewHost model />
-            <Inspector model dispatcher orb_buffer orb_error />
+            <Inspector model dispatcher invalid_aspect_buffers />
         </div>
     }
 }
@@ -200,8 +176,7 @@ fn ReadyShell(
 fn CommandActions(
     model: RwSignal<AppReadModel>,
     dispatcher: WorkbenchCoordinator,
-    orb_buffer: RwSignal<String>,
-    orb_error: RwSignal<Option<String>>,
+    invalid_aspect_buffers: RwSignal<BTreeSet<String>>,
 ) -> impl IntoView {
     let refresh = dispatcher;
     let save = dispatcher;
@@ -233,9 +208,9 @@ fn CommandActions(
                     [("surface", "toolbar")],
                 ).expect("toolbar save address").to_string()
                 disabled=move || !model.get().availability(AppAction::SaveDraft).is_enabled()
-                    || orb_error.get().is_some()
+                    || !invalid_aspect_buffers.get().is_empty()
                 title=move || command_title(save_meta, &model.get().availability(AppAction::SaveDraft))
-                on:click=move |_| execute_command(CommandId::SaveDraft, save, model, orb_buffer, orb_error)
+                on:click=move |_| execute_command(CommandId::SaveDraft, save, model, invalid_aspect_buffers)
             >
                 <span aria-hidden="true">"⌁"</span>
                 <span class="command-label">{save_meta.label}</span>
@@ -251,7 +226,7 @@ fn CommandActions(
                 ).expect("toolbar cancel address").to_string()
                 disabled=move || !model.get().availability(AppAction::CancelDraft).is_enabled()
                 title=move || command_title(cancel_meta, &model.get().availability(AppAction::CancelDraft))
-                on:click=move |_| execute_command(CommandId::CancelDraft, cancel, model, orb_buffer, orb_error)
+                on:click=move |_| execute_command(CommandId::CancelDraft, cancel, model, invalid_aspect_buffers)
             >
                 <span class="command-label">{cancel_meta.label}</span>
                 <kbd>{cancel_meta.shortcut}</kbd>

@@ -410,6 +410,10 @@ enum WhitelistedAction {
     BeginAspectSetEdit {
         resource_id: mirabile_app::ResourceId,
     },
+    BeginNewAspectSet,
+    DuplicateAspectSet {
+        resource_id: mirabile_app::ResourceId,
+    },
     CancelDraft,
     CloseChart {
         instance_id: mirabile_app::InstanceId,
@@ -442,6 +446,9 @@ enum WhitelistedAction {
     UpdateAspectOrb {
         aspect_id: mirabile_app::AspectId,
         degrees: f64,
+    },
+    SetAspectTitle {
+        title: String,
     },
 }
 
@@ -507,6 +514,10 @@ impl WhitelistedAction {
             Self::BeginAspectSetEdit { resource_id } => {
                 AppIntent::BeginAspectSetEdit { resource_id }
             }
+            Self::BeginNewAspectSet => AppIntent::BeginNewAspectSet,
+            Self::DuplicateAspectSet { resource_id } => {
+                AppIntent::DuplicateAspectSet { resource_id }
+            }
             Self::CancelDraft => AppIntent::CancelDraft,
             Self::CloseChart { instance_id } => AppIntent::CloseChart { instance_id },
             Self::OpenChart { definition_id } => AppIntent::OpenChart { definition_id },
@@ -540,6 +551,9 @@ impl WhitelistedAction {
                     maximum: mirabile_app::Angle::from_degrees(degrees)
                         .map_err(|error| error.to_string())?,
                 })
+            }
+            Self::SetAspectTitle { title } => {
+                AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetTitle(title))
             }
         })
     }

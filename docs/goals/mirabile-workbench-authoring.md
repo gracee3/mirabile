@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 9 - full Aspect Set authoring
+- Current phase: 10 - session display state and chart slots
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -31,7 +31,7 @@
 | 6. New chart authoring | Complete | Typed application-owned editor/defaults; partial-location validation; last-valid preview; native controls; cancel/no-write; atomic create and slot promotion | `./scripts/check.sh` passes 133 Rust tests plus 5 Python tests; native/WASM automation checks; live semantic and actual-control XALEN journeys | Phase 6 commit |
 | 7. Saved chart editing | Complete | Atomic compare-only/write CAS batch; separate Record/Definition bases; saved preview/cancel/save; structured two-component conflicts; shared-record protection | `./scripts/check.sh` passes 139 Rust tests plus 5 Python tests; native/WASM checks; IndexedDB rollback contract; live visible-control saved edit/cancel/save journey | Phase 7 commit |
 | 8. Workspace management | Complete | Workspace summaries/title metadata; typed new/open/rename/save/discard; loss-reasoned Save/Discard/Stay switching; explicit idempotent atomic demo loading | `./scripts/check.sh` passes 145 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control lifecycle | Phase 8 commit |
-| 9. Aspect Set authoring | Pending | Full-row lifecycle editor | Pending | Pending |
+| 9. Aspect Set authoring | Complete | New/duplicate/saved lifecycle; title and every row; canonical create/CAS save; workspace binding; per-row invalid buffers | `./scripts/check.sh` passes 147 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control full-row journey | Phase 9 commit |
 | 10. Session and slots | Pending | Inspectable temporary/durable display and slot state | Pending | Pending |
 | 11. Diagnostics UI | Pending | Dense diagnostics, trace, deliberate JSON export | Pending | Pending |
 | 12. Macros | Pending | Record/import/export/replay with bindings and failures | Pending | Pending |
@@ -81,6 +81,10 @@
 - Explicit workspace discard restores the current saved envelope or a fresh unsaved session. Successful Save-and-switch first publishes the source workspace revision and only then activates the target; repository failure clears the deferred target and leaves the current application usable.
 - Demo loading is never initialization behavior. `LoadDemoBundle` is observable pending work that inspects every stable identity, atomically creates only missing resources, leaves compatible existing heads and histories untouched, is idempotent, and rejects deleted or wrong-kind collisions without partial creation.
 - Native workspace controls expose buffered title editing, new/save/discard, stable qualified Open actions, explicit demo loading, and the three switch resolutions. The live control journey proves demo load, Stay, Discard-and-switch, title revision 1 to 2, Save-and-switch, new-workspace defaults, and discard restoration against isolated IndexedDB, the Worker, and XALEN.
+- Aspect Set editors project every canonical row instead of a Conjunction-only surrogate. New resources use the supported Conjunction/Square authoring vocabulary; duplicate copies every source row exactly while issuing a fresh identity, and addition/deletion remains deliberately outside the contract.
+- `DraftState` distinguishes unsaved New/Creating from saved Clean/Dirty/Saving/Conflict states. Saved title and row changes publish with revision CAS; fresh create uses revision one, then binds the new resource into the working workspace and marks that document dirty. Canceling New writes nothing.
+- Native `aspect.title`, `aspect.enabled[aspect=...]`, and `aspect.maximum-orb[aspect=...]` controls use independent local buffers. A malformed row remains local, is visible as invalid in the control manifest, and disables both editor and toolbar save until corrected; no invalid string crosses the typed application boundary.
+- The visible-control journey edits Square and Conjunction, renames and saves revision two, verifies authoritative values, duplicates the complete set, publishes revision one, and observes settled resource-save and recalculation transitions against isolated IndexedDB, the Worker, and XALEN.
 
 ## Blockers
 

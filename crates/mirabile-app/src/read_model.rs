@@ -487,10 +487,10 @@ pub struct ResourceEditorReadModel {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AspectSetDraftReadModel {
-    pub resource_id: ResourceId,
+    pub resource_id: Option<ResourceId>,
     pub title: String,
     pub state: DraftState,
-    pub conjunction: AspectDraftValue,
+    pub aspects: Vec<AspectDraftValue>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -503,6 +503,8 @@ pub struct AspectDraftValue {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DraftState {
+    New,
+    Creating,
     Clean {
         revision: Revision,
     },
@@ -519,12 +521,13 @@ pub enum DraftState {
 }
 
 impl DraftState {
-    pub const fn base_revision(&self) -> Revision {
+    pub const fn base_revision(&self) -> Option<Revision> {
         match self {
-            Self::Clean { revision } => *revision,
+            Self::New | Self::Creating => None,
+            Self::Clean { revision } => Some(*revision),
             Self::Dirty { base_revision }
             | Self::Saving { base_revision }
-            | Self::Conflict { base_revision, .. } => *base_revision,
+            | Self::Conflict { base_revision, .. } => Some(*base_revision),
         }
     }
 }
@@ -537,6 +540,8 @@ pub enum AppAction {
     SaveChartDraft,
     CancelChartDraft,
     BeginAspectSetEdit,
+    BeginNewAspectSet,
+    DuplicateAspectSet,
     SaveDraft,
     CancelDraft,
     SaveWorkspace,

@@ -1,30 +1,25 @@
-use std::str::FromStr;
+use std::{collections::BTreeSet, str::FromStr};
 
 use leptos::prelude::*;
 use mirabile_app::{
-    ActionSource, Angle, AppAction, AppIntent, AppReadModel, AspectSetDraftMutation, Availability,
-    BindingSourceSummary, ChartPersistence, ControlAddress, ControlId, DraftState, InstanceId,
-    ResourceId,
+    ActionSource, Angle, AppAction, AppIntent, AppReadModel, AspectDraftValue,
+    AspectSetDraftMutation, Availability, BindingSourceSummary, ChartPersistence, ControlAddress,
+    ControlId, DraftState, InstanceId, ResourceId,
 };
 
 use crate::chart_editor::ChartAuthoring;
-use crate::dispatcher::{WorkbenchCoordinator, reset_orb_buffer};
-use crate::workbench_controls::BufferedNumberField;
+use crate::dispatcher::{WorkbenchCoordinator, reset_aspect_buffers};
+use crate::workbench_controls::{BufferedField, BufferedInputKind, BufferedNumberField};
 
 #[component]
 #[allow(clippy::too_many_lines)]
 pub(super) fn Inspector(
     model: RwSignal<AppReadModel>,
     dispatcher: WorkbenchCoordinator,
-    orb_buffer: RwSignal<String>,
-    orb_error: RwSignal<Option<String>>,
+    invalid_aspect_buffers: RwSignal<BTreeSet<String>>,
 ) -> impl IntoView {
     let aspect_dispatcher = dispatcher;
     let edit_dispatcher = dispatcher;
-    let orb_dispatcher = dispatcher;
-    let enabled_dispatcher = dispatcher;
-    let save_dispatcher = dispatcher;
-    let cancel_dispatcher = dispatcher;
 
     view! {
         <aside class="inspector" aria-labelledby="inspector-title">
@@ -129,10 +124,6 @@ pub(super) fn Inspector(
                         on:change=move |event| {
                             let value = event_target_value(&event);
                             if let Ok(resource_id) = ResourceId::from_str(&value) {
-                                if let Some(summary) = model.get().library.aspect_sets.iter().find(|summary| summary.resource_id == resource_id) {
-                                    orb_buffer.set(format_orb(summary.conjunction_orb));
-                                    orb_error.set(None);
-                                }
                                 aspect_dispatcher.dispatch_from(
                                     AppIntent::SetWorkspaceAspectSet { resource_id },
                                     ActionSource::Human,
@@ -183,10 +174,7 @@ pub(super) fn Inspector(
                     on:click=move |_| {
                         let snapshot = model.get_untracked();
                         if let Some(resource_id) = snapshot.inspector.active_aspect_set {
-                            if let Some(summary) = snapshot.library.aspect_sets.iter().find(|summary| summary.resource_id == resource_id) {
-                                orb_buffer.set(format_orb(summary.conjunction_orb));
-                                orb_error.set(None);
-                            }
+                            reset_aspect_buffers(invalid_aspect_buffers);
                             edit_dispatcher.dispatch_from(
                                 AppIntent::BeginAspectSetEdit { resource_id },
                                 ActionSource::Human,
@@ -200,17 +188,74 @@ pub(super) fn Inspector(
                 >
                     "Edit selected Aspect Set"
                 </button>
+
+                <div class="draft-actions">
+                    <button
+                        class="button secondary"
+                        type="button"
+                        data-mirabile-control=ControlId::ASPECT_NEW.to_string()
+                        data-mirabile-address=ControlAddress::new(ControlId::ASPECT_NEW).to_string()
+                        disabled=move || !model.get().availability(AppAction::BeginNewAspectSet).is_enabled()
+                        on:click=move |_| {
+                            reset_aspect_buffers(invalid_aspect_buffers);
+                            dispatcher.dispatch_from(
+                                AppIntent::BeginNewAspectSet,
+                                ActionSource::Human,
+                                Some(ControlAddress::new(ControlId::ASPECT_NEW)),
+                            );
+                        }
+                    >"New"</button>
+                    <button
+                        class="button secondary"
+                        type="button"
+                        data-mirabile-control=ControlId::ASPECT_DUPLICATE.to_string()
+                        data-mirabile-address=ControlAddress::new(ControlId::ASPECT_DUPLICATE).to_string()
+                        disabled=move || !model.get().availability(AppAction::DuplicateAspectSet).is_enabled()
+                        on:click=move |_| {
+                            if let Some(resource_id) = model.get_untracked().inspector.active_aspect_set {
+                                reset_aspect_buffers(invalid_aspect_buffers);
+                                dispatcher.dispatch_from(
+                                    AppIntent::DuplicateAspectSet { resource_id },
+                                    ActionSource::Human,
+                                    ControlAddress::qualified(
+                                        ControlId::ASPECT_DUPLICATE,
+                                        [("resource", resource_id.to_string())],
+                                    ).ok(),
+                                );
+                            }
+                        }
+                    >"Duplicate"</button>
+                </div>
             </section>
 
-            {move || model.get().resource_editor.aspect_set.map(|draft| {
+            <AspectSetEditorPanel model dispatcher invalid_aspect_buffers />
+        </aside>
+    }
+}
+
+#[component]
+#[allow(clippy::too_many_lines)]
+fn AspectSetEditorPanel(
+    model: RwSignal<AppReadModel>,
+    dispatcher: WorkbenchCoordinator,
+    invalid_aspect_buffers: RwSignal<BTreeSet<String>>,
+) -> impl IntoView {
+    let save_dispatcher = dispatcher;
+    let cancel_dispatcher = dispatcher;
+    view! {
+        {move || model.get().resource_editor.aspect_set.map(|draft| {
                 let draft_state = draft_state_label(&draft.state);
                 let conflict = match draft.state {
                     DraftState::Conflict { base_revision, remote_revision } => Some((base_revision, remote_revision)),
-                    DraftState::Clean { .. } | DraftState::Dirty { .. } | DraftState::Saving { .. } => None,
+                    DraftState::New | DraftState::Creating | DraftState::Clean { .. }
+                    | DraftState::Dirty { .. } | DraftState::Saving { .. } => None,
                 };
-                let aspect_id_for_orb = draft.conjunction.aspect_id.clone();
-                let aspect_orb_qualifier = aspect_id_for_orb.as_str().to_owned();
-                let aspect_id_for_enabled = draft.conjunction.aspect_id;
+                let title = draft.title.clone();
+                let title_buffer = RwSignal::new(title.clone());
+                let title_error = RwSignal::new(None::<String>);
+                track_invalid_buffer("title".into(), title_error, invalid_aspect_buffers);
+                let title_dispatcher = dispatcher;
+                let title_pending = matches!(draft.state, DraftState::Saving { .. } | DraftState::Creating);
                 view! {
                     <section class="inspector-section draft-editor" aria-labelledby="draft-editor-title">
                         <div class="draft-heading">
@@ -220,7 +265,10 @@ pub(super) fn Inspector(
                             </div>
                             <span class=format!("draft-state {}", draft_state.to_lowercase())>{draft_state}</span>
                         </div>
-                        <p class="revision-line">{format!("Base revision {}", draft.state.base_revision())}</p>
+                        <p class="revision-line">{draft.state.base_revision().map_or_else(
+                            || "New canonical resource".into(),
+                            |revision| format!("Base revision {revision}"),
+                        )}</p>
 
                         {conflict.map(|(base, remote)| view! {
                             <div class="conflict-message" role="alert">
@@ -229,64 +277,36 @@ pub(super) fn Inspector(
                             </div>
                         })}
 
-                        <BufferedNumberField
-                            address=ControlAddress::qualified(
-                                ControlId::ASPECT_MAXIMUM_ORB,
-                                [("aspect", aspect_orb_qualifier.as_str())],
-                            ).expect("static Aspect control address").to_string()
-                            label="Conjunction maximum orb".to_owned()
+                        <BufferedField
+                            address=ControlAddress::new(ControlId::ASPECT_TITLE).to_string()
+                            label="Title".to_owned()
+                            kind=BufferedInputKind::Text
                             authoritative=Signal::derive(move || model.get().resource_editor.aspect_set
-                                .map_or_else(String::new, |draft| format_orb(draft.conjunction.maximum_orb)))
-                            disabled=Signal::derive(move || model.get().resource_editor.aspect_set
-                                .is_none_or(|draft| matches!(draft.state, DraftState::Saving { .. })))
-                            buffer=orb_buffer
-                            error=orb_error
-                            parser=Callback::new(|text: String| parse_orb(&text).map(format_orb))
-                            on_commit=Callback::new(move |text: String| {
-                                if let Ok(maximum) = parse_orb(&text) {
-                                    orb_dispatcher.dispatch_from(
-                                        AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetOrb {
-                                            aspect_id: aspect_id_for_orb.clone(),
-                                            maximum,
-                                        }),
-                                        mirabile_app::ActionSource::Human,
-                                        ControlAddress::qualified(
-                                            ControlId::ASPECT_MAXIMUM_ORB,
-                                            [("aspect", aspect_id_for_orb.as_str())],
-                                        ).ok(),
-                                    );
-                                }
+                                .map_or_else(String::new, |draft| draft.title))
+                            disabled=Signal::derive(move || title_pending)
+                            buffer=title_buffer
+                            error=title_error
+                            parser=Callback::new(|text: String| {
+                                let title = text.trim();
+                                (!title.is_empty()).then(|| title.to_owned())
+                                    .ok_or_else(|| "Title must not be empty".into())
                             })
-                            help="Enter a semantic value from 0° through 20°. Enter applies; Escape restores the authoritative value.".to_owned()
-                            qualifier_name="aspect".to_owned()
-                            qualifier_value=aspect_orb_qualifier
+                            on_commit=Callback::new(move |title: String| title_dispatcher.dispatch_from(
+                                AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetTitle(title)),
+                                ActionSource::Human,
+                                Some(ControlAddress::new(ControlId::ASPECT_TITLE)),
+                            ))
+                            help="Enter applies; Escape restores the authoritative title.".to_owned()
                         />
 
-                        <label class="check-field">
-                            <input
-                                type="checkbox"
-                                data-mirabile-control=ControlId::ASPECT_ENABLED.to_string()
-                                data-mirabile-aspect=aspect_id_for_enabled.as_str().to_owned()
-                                data-mirabile-address=ControlAddress::qualified(
-                                    ControlId::ASPECT_ENABLED,
-                                    [("aspect", aspect_id_for_enabled.as_str())],
-                                ).expect("aspect enabled address").to_string()
-                                prop:checked=draft.conjunction.enabled
-                                disabled=matches!(draft.state, DraftState::Saving { .. })
-                                on:change=move |event| enabled_dispatcher.dispatch_from(
-                                    AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetEnabled {
-                                            aspect_id: aspect_id_for_enabled.clone(),
-                                            enabled: event_target_checked(&event),
-                                    }),
-                                    ActionSource::Human,
-                                    ControlAddress::qualified(
-                                        ControlId::ASPECT_ENABLED,
-                                        [("aspect", aspect_id_for_enabled.as_str())],
-                                    ).ok(),
-                                )
+                        {draft.aspects.into_iter().map(|aspect| view! {
+                            <AspectEditorRow
+                                model
+                                dispatcher
+                                aspect
+                                invalid_aspect_buffers
                             />
-                            <span>"Conjunction enabled"</span>
-                        </label>
+                        }).collect_view()}
 
                         <div class="draft-actions">
                             <button
@@ -298,6 +318,7 @@ pub(super) fn Inspector(
                                     [("surface", "editor")],
                                 ).expect("editor save address").to_string()
                                 disabled=move || !model.get().availability(AppAction::SaveDraft).is_enabled()
+                                    || !invalid_aspect_buffers.get().is_empty()
                                 title=move || availability_title(&model.get().availability(AppAction::SaveDraft))
                                 on:click=move |_| save_dispatcher.dispatch_from(
                                     AppIntent::SaveDraft,
@@ -316,7 +337,7 @@ pub(super) fn Inspector(
                                 disabled=move || !model.get().availability(AppAction::CancelDraft).is_enabled()
                                 title=move || availability_title(&model.get().availability(AppAction::CancelDraft))
                                 on:click=move |_| {
-                                    reset_orb_buffer(model, orb_buffer, orb_error);
+                                    reset_aspect_buffers(invalid_aspect_buffers);
                                     cancel_dispatcher.dispatch_from(
                                         AppIntent::CancelDraft,
                                         ActionSource::Human,
@@ -328,8 +349,125 @@ pub(super) fn Inspector(
                     </section>
                 }
             })}
-        </aside>
     }
+}
+
+#[component]
+fn AspectEditorRow(
+    model: RwSignal<AppReadModel>,
+    dispatcher: WorkbenchCoordinator,
+    aspect: AspectDraftValue,
+    invalid_aspect_buffers: RwSignal<BTreeSet<String>>,
+) -> impl IntoView {
+    let aspect_id = aspect.aspect_id;
+    let qualifier = aspect_id.as_str().to_owned();
+    let buffer = RwSignal::new(format_orb(aspect.maximum_orb));
+    let error = RwSignal::new(None::<String>);
+    track_invalid_buffer(qualifier.clone(), error, invalid_aspect_buffers);
+    let orb_id = aspect_id.clone();
+    let enabled_id = aspect_id.clone();
+    let orb_dispatcher = dispatcher;
+    let enabled_dispatcher = dispatcher;
+    let orb_qualifier = qualifier.clone();
+    let enabled_qualifier = qualifier.clone();
+    let label = aspect.label;
+    let pending = Signal::derive(move || {
+        model.get().resource_editor.aspect_set.is_none_or(|draft| {
+            matches!(
+                draft.state,
+                DraftState::Saving { .. } | DraftState::Creating
+            )
+        })
+    });
+    let authoritative_id = aspect_id.clone();
+    view! {
+        <div class="aspect-editor-row">
+            <BufferedNumberField
+                address=ControlAddress::qualified(
+                    ControlId::ASPECT_MAXIMUM_ORB,
+                    [("aspect", orb_qualifier.as_str())],
+                ).expect("Aspect control address").to_string()
+                label=format!("{label} maximum orb")
+                authoritative=Signal::derive(move || model.get().resource_editor.aspect_set
+                    .and_then(|draft| draft.aspects.into_iter()
+                        .find(|row| row.aspect_id == authoritative_id))
+                    .map_or_else(String::new, |row| format_orb(row.maximum_orb)))
+                disabled=pending
+                buffer
+                error
+                parser=Callback::new(|text: String| parse_orb(&text).map(format_orb))
+                on_commit=Callback::new(move |text: String| {
+                    if let Ok(maximum) = parse_orb(&text) {
+                        orb_dispatcher.dispatch_from(
+                            AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetOrb {
+                                aspect_id: orb_id.clone(),
+                                maximum,
+                            }),
+                            ActionSource::Human,
+                            ControlAddress::qualified(
+                                ControlId::ASPECT_MAXIMUM_ORB,
+                                [("aspect", orb_id.as_str())],
+                            ).ok(),
+                        );
+                    }
+                })
+                help="Enter a value from 0 through 20 degrees. Enter applies; Escape restores the authoritative value.".to_owned()
+                qualifier_name="aspect".to_owned()
+                qualifier_value=orb_qualifier
+            />
+            <label class="check-field">
+                <input
+                    type="checkbox"
+                    data-mirabile-control=ControlId::ASPECT_ENABLED.to_string()
+                    data-mirabile-aspect=enabled_qualifier.clone()
+                    data-mirabile-address=ControlAddress::qualified(
+                        ControlId::ASPECT_ENABLED,
+                        [("aspect", enabled_qualifier.as_str())],
+                    ).expect("aspect enabled address").to_string()
+                    prop:checked=aspect.enabled
+                    disabled=move || pending.get()
+                    on:change=move |event| enabled_dispatcher.dispatch_from(
+                        AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetEnabled {
+                            aspect_id: enabled_id.clone(),
+                            enabled: event_target_checked(&event),
+                        }),
+                        ActionSource::Human,
+                        ControlAddress::qualified(
+                            ControlId::ASPECT_ENABLED,
+                            [("aspect", enabled_id.as_str())],
+                        ).ok(),
+                    )
+                />
+                <span>{format!("{label} enabled")}</span>
+            </label>
+        </div>
+    }
+}
+
+fn track_invalid_buffer(
+    key: String,
+    error: RwSignal<Option<String>>,
+    invalid_aspect_buffers: RwSignal<BTreeSet<String>>,
+) {
+    let effect_key = key.clone();
+    Effect::new(move || {
+        let is_invalid = error.get().is_some();
+        let was_invalid = invalid_aspect_buffers.get_untracked().contains(&effect_key);
+        if is_invalid != was_invalid {
+            invalid_aspect_buffers.update(|invalid| {
+                if is_invalid {
+                    invalid.insert(effect_key.clone());
+                } else {
+                    invalid.remove(&effect_key);
+                }
+            });
+        }
+    });
+    on_cleanup(move || {
+        invalid_aspect_buffers.update(|invalid| {
+            invalid.remove(&key);
+        });
+    });
 }
 
 fn format_orb(value: Angle) -> String {
@@ -348,6 +486,8 @@ fn parse_orb(text: &str) -> Result<Angle, String> {
 
 fn draft_state_label(state: &DraftState) -> &'static str {
     match state {
+        DraftState::New => "New",
+        DraftState::Creating => "Creating",
         DraftState::Clean { .. } => "Clean",
         DraftState::Dirty { .. } => "Dirty",
         DraftState::Saving { .. } => "Saving",

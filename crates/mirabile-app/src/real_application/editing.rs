@@ -677,16 +677,7 @@ where
 
     pub(super) fn begin_aspect_set_edit(&self, resource_id: ResourceId) -> AppResult<()> {
         let mut state = self.state.borrow_mut();
-        if state
-            .editor
-            .as_ref()
-            .is_some_and(|editor| matches!(editor.state, DraftState::Saving { .. }))
-        {
-            return Err(AppError::new(
-                AppErrorKind::Unavailable,
-                "Wait for the current Aspect Set save to finish",
-            ));
-        }
+        ensure_aspect_editor_can_be_replaced(state.editor.as_ref())?;
         let envelope = state
             .catalog
             .aspect_set(resource_id)
@@ -694,13 +685,49 @@ where
             .ok_or_else(|| not_found("Aspect Set", resource_id))?;
         conjunction(&envelope.payload)?;
         state.editor = Some(AspectSetEditor {
-            base: envelope.clone(),
+            base: Some(envelope.clone()),
+            title: envelope.title.clone(),
             draft: envelope.payload,
             state: DraftState::Clean {
                 revision: envelope.revision,
             },
         });
         state.notice = Some(info("Aspect Set draft opened from the canonical revision"));
+        state.advance()
+    }
+
+    pub(super) fn begin_new_aspect_set(&self) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        ensure_aspect_editor_can_be_replaced(state.editor.as_ref())?;
+        state.editor = Some(AspectSetEditor {
+            base: None,
+            title: "Untitled Aspect Set".into(),
+            draft: authoring_aspect_set(),
+            state: DraftState::New,
+        });
+        state.notice = Some(info(
+            "New Aspect Set opened with the supported Conjunction and Square vocabulary",
+        ));
+        state.advance()
+    }
+
+    pub(super) fn duplicate_aspect_set(&self, resource_id: ResourceId) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        ensure_aspect_editor_can_be_replaced(state.editor.as_ref())?;
+        let source = state
+            .catalog
+            .aspect_set(resource_id)
+            .cloned()
+            .ok_or_else(|| not_found("Aspect Set", resource_id))?;
+        state.editor = Some(AspectSetEditor {
+            base: None,
+            title: format!("{} Copy", source.title),
+            draft: source.payload,
+            state: DraftState::New,
+        });
+        state.notice = Some(info(
+            "Aspect Set duplicated as a new unsaved resource with every row preserved",
+        ));
         state.advance()
     }
 
@@ -715,14 +742,28 @@ where
                 "Begin an Aspect Set edit before updating the draft",
             )
         })?;
-        if matches!(editor.state, DraftState::Saving { .. }) {
+        if matches!(
+            editor.state,
+            DraftState::Saving { .. } | DraftState::Creating
+        ) {
             return Err(AppError::new(
                 AppErrorKind::Unavailable,
                 "The Aspect Set draft cannot change while it is saving",
             ));
         }
         let base_revision = editor.state.base_revision();
-        match mutation {
+        let affects_analysis = match mutation {
+            AspectSetDraftMutation::SetTitle(title) => {
+                let title = title.trim();
+                if title.is_empty() {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "An Aspect Set title must not be empty",
+                    ));
+                }
+                editor.title = title.into();
+                false
+            }
             AspectSetDraftMutation::SetOrb { aspect_id, maximum } => {
                 let aspect = editor
                     .draft
@@ -736,6 +777,7 @@ where
                         )
                     })?;
                 aspect.orbs.maximum = maximum;
+                true
             }
             AspectSetDraftMutation::SetEnabled { aspect_id, enabled } => {
                 let aspect = editor
@@ -750,15 +792,24 @@ where
                         )
                     })?;
                 aspect.enabled = enabled;
+                true
             }
+        };
+        if !matches!(editor.state, DraftState::New | DraftState::Conflict { .. }) {
+            editor.state = DraftState::Dirty {
+                base_revision: base_revision.expect("saved draft has a base revision"),
+            };
         }
-        if !matches!(editor.state, DraftState::Conflict { .. }) {
-            editor.state = DraftState::Dirty { base_revision };
+        if affects_analysis && editor.base.is_some() {
+            self.submit_active_view_refresh(&mut state)?;
+            state.notice = Some(info(
+                "Draft preview accepted; analysis is refreshing with the last good Scene retained",
+            ));
+        } else {
+            state.notice = Some(info(
+                "Aspect Set metadata or an unbound new resource changed without invalidating the current analysis",
+            ));
         }
-        self.submit_active_view_refresh(&mut state)?;
-        state.notice = Some(info(
-            "Draft preview accepted; analysis is refreshing with the last good Scene retained",
-        ));
         state.advance()
     }
 
@@ -771,59 +822,87 @@ where
                 "There is no Aspect Set draft to save",
             )
         })?;
-        let DraftState::Dirty { base_revision } = editor.state else {
-            return Err(AppError::new(
-                AppErrorKind::InvalidIntent,
-                "Only a dirty Aspect Set draft can be saved",
-            ));
-        };
-        let next = editor
-            .base
-            .next_with_payload(editor.draft.clone(), Timestamp::from_unix_millis(timestamp))
-            .map_err(|error| {
-                AppError::new(
+        let (expected_revision, mut next) = match editor.state {
+            DraftState::New => (
+                None,
+                ResourceEnvelope::new(
+                    editor.title.clone(),
+                    editor.draft.clone(),
+                    Timestamp::from_unix_millis(timestamp),
+                ),
+            ),
+            DraftState::Dirty { base_revision } => {
+                let next = editor
+                    .base
+                    .as_ref()
+                    .expect("saved editor has a base")
+                    .next_with_payload(editor.draft.clone(), Timestamp::from_unix_millis(timestamp))
+                    .map_err(|error| {
+                        AppError::new(
+                            AppErrorKind::InvalidIntent,
+                            format!("Aspect Set draft was invalid: {error}"),
+                        )
+                    })?;
+                (Some(base_revision), next)
+            }
+            _ => {
+                return Err(AppError::new(
                     AppErrorKind::InvalidIntent,
-                    format!("Aspect Set draft was invalid: {error}"),
-                )
-            })?;
-        editor.state = DraftState::Saving { base_revision };
+                    "Only a new or dirty Aspect Set draft can be saved",
+                ));
+            }
+        };
+        next.title.clone_from(&editor.title);
+        next.validate().map_err(|error| {
+            AppError::new(
+                AppErrorKind::InvalidIntent,
+                format!("Aspect Set draft was invalid: {error}"),
+            )
+        })?;
+        editor.state = expected_revision.map_or(DraftState::Creating, |base_revision| {
+            DraftState::Saving { base_revision }
+        });
         state.pending.push_back(PendingWork::SaveAspectSet {
-            expected_revision: base_revision,
+            expected_revision,
             next,
         });
         state.notice = Some(info(
-            "Saving the Aspect Set draft with optimistic revision checks",
+            "Publishing the Aspect Set draft with the applicable revision checks",
         ));
         state.advance()
     }
 
     pub(super) fn cancel_draft(&self) -> AppResult<()> {
         let mut state = self.state.borrow_mut();
-        if state
-            .editor
-            .as_ref()
-            .is_some_and(|editor| matches!(editor.state, DraftState::Saving { .. }))
-        {
+        if state.editor.as_ref().is_some_and(|editor| {
+            matches!(
+                editor.state,
+                DraftState::Saving { .. } | DraftState::Creating
+            )
+        }) {
             return Err(AppError::new(
                 AppErrorKind::Unavailable,
                 "Wait for the Aspect Set save to finish before canceling",
             ));
         }
-        let resource_id = state
-            .editor
-            .as_ref()
-            .ok_or_else(|| {
-                AppError::new(AppErrorKind::InvalidIntent, "There is no draft to cancel")
-            })?
-            .base
-            .id;
+        let editor = state.editor.as_ref().ok_or_else(|| {
+            AppError::new(AppErrorKind::InvalidIntent, "There is no draft to cancel")
+        })?;
+        let Some(resource_id) = editor.base.as_ref().map(|base| base.id) else {
+            state.editor = None;
+            state.notice = Some(info(
+                "New Aspect Set canceled without creating a canonical resource",
+            ));
+            return state.advance();
+        };
         let canonical = state
             .catalog
             .aspect_set(resource_id)
             .cloned()
             .ok_or_else(|| not_found("Aspect Set", resource_id))?;
         let editor = state.editor.as_mut().expect("editor was checked");
-        editor.base = canonical.clone();
+        editor.base = Some(canonical.clone());
+        editor.title.clone_from(&canonical.title);
         editor.draft = canonical.payload;
         editor.state = DraftState::Clean {
             revision: canonical.revision,
@@ -837,32 +916,40 @@ where
         ));
         state.advance()
     }
+    #[allow(clippy::too_many_lines)]
     pub(super) async fn complete_aspect_set_save(
         &self,
-        expected_revision: Revision,
+        expected_revision: Option<Revision>,
         next: ResourceEnvelope<AspectSet>,
     ) -> AppResult<()> {
         let resource_id = next.id;
-        match self
-            .repository
-            .save(
-                expected_revision,
-                CanonicalResource::AspectSet(next.clone()),
-            )
-            .await
-        {
+        let result = if let Some(expected_revision) = expected_revision {
+            self.repository
+                .save(
+                    expected_revision,
+                    CanonicalResource::AspectSet(next.clone()),
+                )
+                .await
+        } else {
+            self.repository
+                .create(CanonicalResource::AspectSet(next.clone()))
+                .await
+        };
+        match result {
             Ok(()) => {
                 let mut state = self.state.borrow_mut();
                 state.next_timestamp = state.next_timestamp.saturating_add(1);
                 state
                     .catalog
                     .insert_current(CanonicalResource::AspectSet(next.clone()));
-                if let Some(editor) = state
-                    .editor
-                    .as_mut()
-                    .filter(|editor| editor.base.id == resource_id)
-                {
-                    editor.base = next.clone();
+                if let Some(editor) = state.editor.as_mut().filter(|editor| {
+                    editor
+                        .base
+                        .as_ref()
+                        .is_none_or(|base| base.id == resource_id)
+                }) {
+                    editor.base = Some(next.clone());
+                    editor.title.clone_from(&next.title);
                     editor.draft = next.payload;
                     editor.state = DraftState::Clean {
                         revision: next.revision,
@@ -880,9 +967,40 @@ where
                         ),
                     });
                 }
+                if expected_revision.is_none() {
+                    let session = state.session.as_mut().ok_or_else(|| {
+                        AppError::new(
+                            AppErrorKind::Unavailable,
+                            "No workspace session is active for the new Aspect Set binding",
+                        )
+                    })?;
+                    session.document.profile.aspects =
+                        mirabile_core::ResourceBinding::Follow { id: resource_id };
+                    session.mark_document_dirty();
+                    self.submit_active_view_refresh(&mut state)?;
+                    state.notice = Some(success(format!(
+                        "Aspect Set created as canonical revision {} and bound to the working workspace",
+                        next.revision
+                    )));
+                }
                 state.advance()
             }
             Err(RepositoryError::Conflict { actual, .. }) => {
+                let Some(expected_revision) = expected_revision else {
+                    let mut state = self.state.borrow_mut();
+                    if let Some(editor) =
+                        state.editor.as_mut().filter(|editor| editor.base.is_none())
+                    {
+                        editor.state = DraftState::New;
+                    }
+                    state.notice = Some(AppNotice {
+                        kind: AppNoticeKind::Conflict,
+                        message: format!(
+                            "New Aspect Set identity unexpectedly conflicted with revision {actual}; the unsaved editor was retained"
+                        ),
+                    });
+                    return state.advance();
+                };
                 let remote = self.repository.get(resource_id).await;
                 let mut state = self.state.borrow_mut();
                 match remote {
@@ -890,11 +1008,12 @@ where
                         state
                             .catalog
                             .insert_current(CanonicalResource::AspectSet(remote));
-                        if let Some(editor) = state
-                            .editor
-                            .as_mut()
-                            .filter(|editor| editor.base.id == resource_id)
-                        {
+                        if let Some(editor) = state.editor.as_mut().filter(|editor| {
+                            editor
+                                .base
+                                .as_ref()
+                                .is_some_and(|base| base.id == resource_id)
+                        }) {
                             editor.state = DraftState::Conflict {
                                 base_revision: expected_revision,
                                 remote_revision: actual,
@@ -929,13 +1048,69 @@ where
             }
             Err(error) => {
                 let mut state = self.state.borrow_mut();
-                restore_dirty_editor(&mut state, resource_id, expected_revision);
+                if let Some(expected_revision) = expected_revision {
+                    restore_dirty_editor(&mut state, resource_id, expected_revision);
+                } else if let Some(editor) =
+                    state.editor.as_mut().filter(|editor| editor.base.is_none())
+                {
+                    editor.state = DraftState::New;
+                }
                 state.notice = Some(AppNotice {
                     kind: AppNoticeKind::Warning,
                     message: format!("Aspect Set save failed; the draft was retained: {error}"),
                 });
                 state.advance()
             }
+        }
+    }
+}
+
+fn authoring_aspect_set() -> AspectSet {
+    use mirabile_core::{AspectClass, AspectDefinition, AspectId, OrbPolicy};
+
+    let angle = |degrees| {
+        crate::Angle::from_degrees(degrees).expect("built-in Aspect Set angles are valid")
+    };
+    AspectSet {
+        aspects: vec![
+            AspectDefinition {
+                id: AspectId::new("conjunction").expect("built-in aspect ID is valid"),
+                name: "Conjunction".into(),
+                angle: angle(0.0),
+                enabled: true,
+                orbs: OrbPolicy {
+                    maximum: angle(8.0),
+                    applying_multiplier: 1.0,
+                },
+                classification: AspectClass::Major,
+            },
+            AspectDefinition {
+                id: AspectId::new("square").expect("built-in aspect ID is valid"),
+                name: "Square".into(),
+                angle: angle(90.0),
+                enabled: true,
+                orbs: OrbPolicy {
+                    maximum: angle(6.0),
+                    applying_multiplier: 1.0,
+                },
+                classification: AspectClass::Major,
+            },
+        ],
+    }
+}
+
+fn ensure_aspect_editor_can_be_replaced(editor: Option<&AspectSetEditor>) -> AppResult<()> {
+    match editor.map(|editor| &editor.state) {
+        None | Some(DraftState::Clean { .. }) => Ok(()),
+        Some(DraftState::Saving { .. } | DraftState::Creating) => Err(AppError::new(
+            AppErrorKind::Unavailable,
+            "Wait for the current Aspect Set operation to finish",
+        )),
+        Some(DraftState::New | DraftState::Dirty { .. } | DraftState::Conflict { .. }) => {
+            Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Save or cancel the current Aspect Set editor before opening another resource",
+            ))
         }
     }
 }
