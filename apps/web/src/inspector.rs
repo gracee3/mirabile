@@ -121,6 +121,7 @@ pub(super) fn Inspector(
                     <select
                         id="aspect-set-picker"
                         data-mirabile-control=ControlId::ASPECT_RESOURCE.to_string()
+                        data-mirabile-address=ControlAddress::new(ControlId::ASPECT_RESOURCE).to_string()
                         prop:value=move || model.get().inspector.active_aspect_set.map_or_else(String::new, |id| id.to_string())
                         on:change=move |event| {
                             let value = event_target_value(&event);
@@ -174,6 +175,7 @@ pub(super) fn Inspector(
                     class="button secondary full-width"
                     type="button"
                     data-mirabile-control=ControlId::ASPECT_EDIT.to_string()
+                    data-mirabile-address=ControlId::ASPECT_EDIT.to_string()
                     disabled=move || !model.get().availability(AppAction::BeginAspectSetEdit).is_enabled()
                     on:click=move |_| {
                         let snapshot = model.get_untracked();
@@ -262,6 +264,10 @@ pub(super) fn Inspector(
                                 type="checkbox"
                                 data-mirabile-control=ControlId::ASPECT_ENABLED.to_string()
                                 data-mirabile-aspect=aspect_id_for_enabled.as_str().to_owned()
+                                data-mirabile-address=ControlAddress::qualified(
+                                    ControlId::ASPECT_ENABLED,
+                                    [("aspect", aspect_id_for_enabled.as_str())],
+                                ).expect("aspect enabled address").to_string()
                                 prop:checked=draft.conjunction.enabled
                                 disabled=matches!(draft.state, DraftState::Saving { .. })
                                 on:change=move |event| enabled_dispatcher.dispatch_from(
@@ -284,6 +290,10 @@ pub(super) fn Inspector(
                                 class="button primary"
                                 type="button"
                                 data-mirabile-control=ControlId::DRAFT_SAVE.to_string()
+                                data-mirabile-address=ControlAddress::qualified(
+                                    ControlId::DRAFT_SAVE,
+                                    [("surface", "editor")],
+                                ).expect("editor save address").to_string()
                                 disabled=move || !model.get().availability(AppAction::SaveDraft).is_enabled()
                                 title=move || availability_title(&model.get().availability(AppAction::SaveDraft))
                                 on:click=move |_| save_dispatcher.dispatch_from(
@@ -296,6 +306,10 @@ pub(super) fn Inspector(
                                 class="button secondary"
                                 type="button"
                                 data-mirabile-control=ControlId::DRAFT_CANCEL.to_string()
+                                data-mirabile-address=ControlAddress::qualified(
+                                    ControlId::DRAFT_CANCEL,
+                                    [("surface", "editor")],
+                                ).expect("editor cancel address").to_string()
                                 disabled=move || !model.get().availability(AppAction::CancelDraft).is_enabled()
                                 title=move || availability_title(&model.get().availability(AppAction::CancelDraft))
                                 on:click=move |_| {

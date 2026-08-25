@@ -232,6 +232,7 @@ pub(super) fn BufferedField(
                         node_ref=trigger_ref
                         type="button"
                         class="buffered-value"
+                        data-mirabile-native="value"
                         disabled=move || disabled.get()
                         aria-label="Edit value"
                         on:click=move |_| {
@@ -248,6 +249,7 @@ pub(super) fn BufferedField(
                     <input
                         node_ref=input_ref
                         type=kind.html_type()
+                        data-mirabile-native="value"
                         inputmode=(kind == BufferedInputKind::Number).then_some("decimal")
                         prop:value=move || buffer.get()
                         aria-invalid=move || error.get().is_some().to_string()

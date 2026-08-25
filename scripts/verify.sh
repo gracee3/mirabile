@@ -60,6 +60,10 @@ echo "==> Trunk main application and calculation Worker build"
 
 run "${workspace_dir}/scripts/check-xalen-dependencies.sh"
 run "${workspace_dir}/scripts/test-browser.sh"
+run python3 -m unittest scripts/test_cdp_client.py
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario smoke --mode semantic
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario smoke --mode control
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario artifact-smoke --mode semantic
 
 run git diff --check
 run git diff --cached --check

@@ -2,6 +2,8 @@
 mod app;
 #[cfg(all(test, not(feature = "browser-contract")))]
 mod application_conformance;
+#[cfg(all(not(feature = "browser-contract"), feature = "workbench-automation"))]
+mod automation_bridge;
 #[cfg(all(target_arch = "wasm32", feature = "browser-contract"))]
 mod browser_contract;
 #[cfg(not(feature = "browser-contract"))]

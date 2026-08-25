@@ -992,6 +992,7 @@ dependencies = [
  "mirabile-core",
  "mirabile-engine",
  "mirabile-store",
+ "serde",
  "serde_json",
  "wasm-bindgen",
  "web-sys",

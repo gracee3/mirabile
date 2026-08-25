@@ -20,12 +20,23 @@ use crate::{
 
 #[component]
 pub fn App() -> impl IntoView {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", feature = "workbench-automation"))]
+    let automation_configuration = crate::automation_bridge::configuration_from_window();
+    #[cfg(all(target_arch = "wasm32", feature = "workbench-automation"))]
+    let application: Rc<dyn Application> = automation_configuration.as_ref().map_or_else(
+        || Rc::new(RealApplication::browser_default()) as Rc<dyn Application>,
+        |configuration| Rc::new(RealApplication::indexed_db(&configuration.database_name)),
+    );
+    #[cfg(all(target_arch = "wasm32", not(feature = "workbench-automation")))]
     let application: Rc<dyn Application> = Rc::new(RealApplication::browser_default());
     #[cfg(not(target_arch = "wasm32"))]
     let application: Rc<dyn Application> = Rc::new(MockApplication::new());
     let model = RwSignal::new(AppReadModel::initializing());
     let dispatcher = WorkbenchCoordinator::new(application, model);
+    #[cfg(all(target_arch = "wasm32", feature = "workbench-automation"))]
+    if automation_configuration.is_some() {
+        crate::automation_bridge::install(model, dispatcher);
+    }
     let orb_buffer = RwSignal::new(String::new());
     let orb_buffer_resource = RwSignal::new(None::<ResourceId>);
     let orb_error = RwSignal::new(None::<String>);
@@ -87,6 +98,7 @@ pub fn App() -> impl IntoView {
                                 class="button primary"
                                 type="button"
                                 data-mirabile-control=ControlId::APPLICATION_RETRY.to_string()
+                                data-mirabile-address=ControlAddress::new(ControlId::APPLICATION_RETRY).to_string()
                                 on:click=move |_| retry.initialize()
                             >
                                 "Retry initialization"
@@ -204,6 +216,7 @@ fn CommandActions(
                 class="icon-command"
                 type="button"
                 data-mirabile-control=ControlId::APPLICATION_REFRESH.to_string()
+                data-mirabile-address=ControlAddress::new(ControlId::APPLICATION_REFRESH).to_string()
                 disabled=move || !model.get().availability(AppAction::RefreshView).is_enabled()
                 title=move || command_title(refresh_meta, &model.get().availability(AppAction::RefreshView))
                 on:click=move |_| refresh.dispatch(AppIntent::RefreshActiveView)
@@ -215,6 +228,10 @@ fn CommandActions(
                 class="icon-command primary"
                 type="button"
                 data-mirabile-control=ControlId::DRAFT_SAVE.to_string()
+                data-mirabile-address=ControlAddress::qualified(
+                    ControlId::DRAFT_SAVE,
+                    [("surface", "toolbar")],
+                ).expect("toolbar save address").to_string()
                 disabled=move || !model.get().availability(AppAction::SaveDraft).is_enabled()
                     || orb_error.get().is_some()
                 title=move || command_title(save_meta, &model.get().availability(AppAction::SaveDraft))
@@ -228,6 +245,10 @@ fn CommandActions(
                 class="icon-command"
                 type="button"
                 data-mirabile-control=ControlId::DRAFT_CANCEL.to_string()
+                data-mirabile-address=ControlAddress::qualified(
+                    ControlId::DRAFT_CANCEL,
+                    [("surface", "toolbar")],
+                ).expect("toolbar cancel address").to_string()
                 disabled=move || !model.get().availability(AppAction::CancelDraft).is_enabled()
                 title=move || command_title(cancel_meta, &model.get().availability(AppAction::CancelDraft))
                 on:click=move |_| execute_command(CommandId::CancelDraft, cancel, model, orb_buffer, orb_error)

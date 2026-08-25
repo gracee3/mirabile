@@ -18,11 +18,13 @@ run() {
 
 require_command cargo
 require_command git
+require_command python3
 
 cd "${workspace_dir}"
 run cargo fmt --all -- --check
 run cargo test --workspace
 run cargo clippy --workspace --all-targets -- -D warnings
+run python3 -m unittest scripts/test_cdp_client.py
 run git diff --check
 run git diff --cached --check
 

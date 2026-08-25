@@ -1,0 +1,11 @@
+{
+  "name": "smoke",
+  "steps": [
+    {"command": "wait", "timeout": 20},
+    {"command": "controls"},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "refresh_active_view"}}},
+    {"command": "wait", "timeout": 20},
+    {"command": "snapshot"},
+    {"command": "trace"}
+  ]
+}

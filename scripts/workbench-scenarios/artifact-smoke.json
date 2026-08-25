@@ -1,0 +1,7 @@
+{
+  "name": "artifact-smoke",
+  "steps": [
+    {"command": "wait", "timeout": 20},
+    {"command": "click", "address": "test.expected-failure"}
+  ]
+}
