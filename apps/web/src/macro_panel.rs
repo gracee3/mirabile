@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use mirabile_app::{ControlId, MacroCoordinatorState, MacroDocumentV1};
+use mirabile_app::{ControlId, ControlKind, MacroCoordinatorState, MacroDocumentV1};
 
 use crate::{diagnostics::export_json, dispatcher::WorkbenchCoordinator};
 
@@ -46,6 +46,8 @@ pub(super) fn MacroPanel(dispatcher: WorkbenchCoordinator) -> impl IntoView {
                         data-mirabile-control=ControlId::MACRO_NAME.to_string()
                         data-mirabile-address=ControlId::MACRO_NAME.to_string()
                         data-mirabile-label="Macro name"
+                        data-mirabile-kind=ControlKind::Text.as_str()
+                        data-mirabile-enabled="true"
                         prop:value=move || name.get()
                         on:input=move |event| name.set(event_target_value(&event))
                     />
@@ -55,6 +57,17 @@ pub(super) fn MacroPanel(dispatcher: WorkbenchCoordinator) -> impl IntoView {
                     class="button secondary"
                     data-mirabile-control=ControlId::MACRO_START.to_string()
                     data-mirabile-address=ControlId::MACRO_START.to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled=move || (!matches!(current_state(), MacroCoordinatorState::Recording | MacroCoordinatorState::Replaying { .. })
+                        && !name.get().trim().is_empty()).to_string()
+                    data-mirabile-disabled-reason=move || match current_state() {
+                        MacroCoordinatorState::Recording => Some("Macro recording is already active".to_owned()),
+                        MacroCoordinatorState::Replaying { .. } => Some("Wait for macro replay to finish".to_owned()),
+                        MacroCoordinatorState::Idle | MacroCoordinatorState::Failed { .. } if name.get().trim().is_empty() => {
+                            Some("Enter a macro name before recording".to_owned())
+                        }
+                        MacroCoordinatorState::Idle | MacroCoordinatorState::Failed { .. } => None,
+                    }
                     disabled=move || matches!(current_state(), MacroCoordinatorState::Recording | MacroCoordinatorState::Replaying { .. }) || name.get().trim().is_empty()
                     on:click=move |_| match dispatcher.start_macro_recording(name.get_untracked()) {
                         Ok(()) => status.set(Some("Recording accepted semantic actions".into())),
@@ -66,6 +79,15 @@ pub(super) fn MacroPanel(dispatcher: WorkbenchCoordinator) -> impl IntoView {
                     class="button secondary"
                     data-mirabile-control=ControlId::MACRO_STOP.to_string()
                     data-mirabile-address=ControlId::MACRO_STOP.to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled=move || matches!(current_state(), MacroCoordinatorState::Recording).to_string()
+                    data-mirabile-disabled-reason=move || match current_state() {
+                        MacroCoordinatorState::Recording => None,
+                        MacroCoordinatorState::Replaying { .. } => Some("Wait for macro replay to finish".to_owned()),
+                        MacroCoordinatorState::Idle | MacroCoordinatorState::Failed { .. } => {
+                            Some("Start macro recording before stopping".to_owned())
+                        }
+                    }
                     disabled=move || !matches!(current_state(), MacroCoordinatorState::Recording)
                     on:click=move |_| match dispatcher.stop_macro_recording() {
                         Ok(document) => match serde_json::to_string_pretty(&document) {
@@ -84,6 +106,13 @@ pub(super) fn MacroPanel(dispatcher: WorkbenchCoordinator) -> impl IntoView {
                     class="button secondary"
                     data-mirabile-control=ControlId::MACRO_IMPORT.to_string()
                     data-mirabile-address=ControlId::MACRO_IMPORT.to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled=move || (!json.get().trim().is_empty() && json_error().is_none()).to_string()
+                    data-mirabile-disabled-reason=move || if json.get().trim().is_empty() {
+                        Some("Enter a macro document before importing".to_owned())
+                    } else {
+                        json_error().map(|_| "Correct the invalid macro document before importing".to_owned())
+                    }
                     disabled=move || json.get().trim().is_empty() || json_error().is_some()
                     on:click=move |_| match MacroDocumentV1::from_json(&json.get_untracked())
                         .and_then(|document| dispatcher.import_macro(document))
@@ -97,6 +126,18 @@ pub(super) fn MacroPanel(dispatcher: WorkbenchCoordinator) -> impl IntoView {
                     class="button primary"
                     data-mirabile-control=ControlId::MACRO_REPLAY.to_string()
                     data-mirabile-address=ControlId::MACRO_REPLAY.to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled=move || (!matches!(current_state(), MacroCoordinatorState::Recording | MacroCoordinatorState::Replaying { .. })
+                        && !json.get().trim().is_empty() && json_error().is_none()).to_string()
+                    data-mirabile-disabled-reason=move || match current_state() {
+                        MacroCoordinatorState::Recording => Some("Stop macro recording before replaying".to_owned()),
+                        MacroCoordinatorState::Replaying { .. } => Some("Macro replay is already active".to_owned()),
+                        MacroCoordinatorState::Idle | MacroCoordinatorState::Failed { .. } if json.get().trim().is_empty() => {
+                            Some("Enter a macro document before replaying".to_owned())
+                        }
+                        MacroCoordinatorState::Idle | MacroCoordinatorState::Failed { .. } => json_error()
+                            .map(|_| "Correct the invalid macro document before replaying".to_owned()),
+                    }
                     disabled=move || matches!(current_state(), MacroCoordinatorState::Recording | MacroCoordinatorState::Replaying { .. }) || json.get().trim().is_empty() || json_error().is_some()
                     on:click=move |_| match MacroDocumentV1::from_json(&json.get_untracked()) {
                         Ok(document) => {
@@ -112,6 +153,13 @@ pub(super) fn MacroPanel(dispatcher: WorkbenchCoordinator) -> impl IntoView {
                     class="button secondary"
                     data-mirabile-control=ControlId::MACRO_EXPORT.to_string()
                     data-mirabile-address=ControlId::MACRO_EXPORT.to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled=move || (!json.get().trim().is_empty() && json_error().is_none()).to_string()
+                    data-mirabile-disabled-reason=move || if json.get().trim().is_empty() {
+                        Some("Enter a macro document before exporting".to_owned())
+                    } else {
+                        json_error().map(|_| "Correct the invalid macro document before exporting".to_owned())
+                    }
                     disabled=move || json.get().trim().is_empty() || json_error().is_some()
                     on:click=move |_| match MacroDocumentV1::from_json(&json.get_untracked()) {
                         Ok(document) => export_json("mirabile-macro-v1.json", &document, status),
@@ -123,6 +171,8 @@ pub(super) fn MacroPanel(dispatcher: WorkbenchCoordinator) -> impl IntoView {
                     class="button secondary"
                     data-mirabile-control=ControlId::MACRO_CLEAR.to_string()
                     data-mirabile-address=ControlId::MACRO_CLEAR.to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled="true"
                     on:click=move |_| {
                         dispatcher.clear_macro();
                         json.set(String::new());
@@ -139,6 +189,8 @@ pub(super) fn MacroPanel(dispatcher: WorkbenchCoordinator) -> impl IntoView {
                     data-mirabile-control=ControlId::MACRO_JSON.to_string()
                     data-mirabile-address=ControlId::MACRO_JSON.to_string()
                     data-mirabile-label="Versioned macro JSON"
+                    data-mirabile-kind=ControlKind::Text.as_str()
+                    data-mirabile-enabled="true"
                     data-mirabile-invalid=move || json_error().is_some().to_string()
                     aria-invalid=move || json_error().is_some().then_some("true")
                     prop:value=move || json.get()

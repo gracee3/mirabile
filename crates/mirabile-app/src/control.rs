@@ -238,6 +238,53 @@ pub enum ControlKind {
     Toggle,
 }
 
+impl ControlKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Action => "action",
+            Self::Checkbox => "checkbox",
+            Self::Date => "date",
+            Self::Number => "number",
+            Self::Picker => "picker",
+            Self::Select => "select",
+            Self::Status => "status",
+            Self::Text => "text",
+            Self::Time => "time",
+            Self::Toggle => "toggle",
+        }
+    }
+}
+
+impl fmt::Display for ControlKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_str().fmt(formatter)
+    }
+}
+
+impl FromStr for ControlKind {
+    type Err = UnknownControlKind;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "action" => Ok(Self::Action),
+            "checkbox" => Ok(Self::Checkbox),
+            "date" => Ok(Self::Date),
+            "number" => Ok(Self::Number),
+            "picker" => Ok(Self::Picker),
+            "select" => Ok(Self::Select),
+            "status" => Ok(Self::Status),
+            "text" => Ok(Self::Text),
+            "time" => Ok(Self::Time),
+            "toggle" => Ok(Self::Toggle),
+            _ => Err(UnknownControlKind(value.to_owned())),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("unknown semantic control kind {0}")]
+pub struct UnknownControlKind(String);
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ControlOptionDescriptor {
     pub value: String,
@@ -378,5 +425,28 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn control_kind_strings_are_canonical_and_complete() {
+        let kinds = [
+            ControlKind::Action,
+            ControlKind::Checkbox,
+            ControlKind::Date,
+            ControlKind::Number,
+            ControlKind::Picker,
+            ControlKind::Select,
+            ControlKind::Status,
+            ControlKind::Text,
+            ControlKind::Time,
+            ControlKind::Toggle,
+        ];
+
+        for kind in kinds {
+            assert_eq!(ControlKind::from_str(kind.as_str()), Ok(kind));
+            assert_eq!(kind.to_string(), kind.as_str());
+        }
+        assert!(ControlKind::from_str("radio").is_err());
+        assert!(ControlKind::from_str("Text").is_err());
     }
 }

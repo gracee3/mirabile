@@ -29,7 +29,7 @@
     {"command": "click", "address": "chart.editor-save"},
     {"command": "wait", "timeout": 20},
     {"command": "snapshot", "expect": {"value.application.status": "ready", "value.application.settled": true, "value.chart_editor.state": "conflict", "value.chart_editor.fields.title": "Local Control Conflict", "value.chart_editor.conflicts.0.component": "record", "value.chart_editor.conflicts.1.component": "definition"}},
-    {"command": "get", "address": "chart.title", "expect": {"enabled": true}},
+    {"command": "get", "address": "chart.title", "expect": {"enabled": false, "disabled_reason": "Cancel and reopen the chart to adopt the refreshed component heads"}},
     {"command": "trace"},
     {"command": "screenshot", "path": "target/workbench-e2e-artifacts/two-application-conflict-control/final.png"}
   ]

@@ -4,12 +4,15 @@ use leptos::prelude::*;
 use mirabile_app::{
     ActionSource, Angle, AppAction, AppIntent, AppReadModel, AspectDraftValue,
     AspectSetDraftMutation, Availability, BindingSourceSummary, ChartPersistence, ControlAddress,
-    ControlId, DisplayValueSource, DraftState, InstanceId, ResourceId, SlotAssignmentSource,
+    ControlId, ControlKind, DisplayValueSource, DraftState, InstanceId, ResourceId,
+    SlotAssignmentSource,
 };
 
 use crate::chart_editor::ChartAuthoring;
 use crate::dispatcher::{WorkbenchCoordinator, reset_aspect_buffers};
-use crate::workbench_controls::{BufferedField, BufferedInputKind, BufferedNumberField};
+use crate::workbench_controls::{
+    BufferedField, BufferedInputKind, BufferedNumberField, resource_save_pending,
+};
 
 #[component]
 #[allow(clippy::too_many_lines)]
@@ -75,6 +78,8 @@ pub(super) fn Inspector(
                                             ControlId::DISPLAY_POINT,
                                             [("point", qualifier.as_str())],
                                         ).expect("display point address").to_string()
+                                        data-mirabile-kind=ControlKind::Checkbox.as_str()
+                                        data-mirabile-enabled="true"
                                         prop:checked=point.visible
                                         on:change=move |event| point_dispatcher.dispatch_from(
                                             AppIntent::SetTemporaryPointHidden {
@@ -99,6 +104,8 @@ pub(super) fn Inspector(
                         type="button"
                         data-mirabile-control=ControlId::DISPLAY_PROMOTE.to_string()
                         data-mirabile-address=ControlAddress::new(ControlId::DISPLAY_PROMOTE).to_string()
+                        data-mirabile-kind=ControlKind::Action.as_str()
+                        data-mirabile-enabled=display.promotion.is_enabled().to_string()
                         disabled=!display.promotion.is_enabled()
                         title=availability_title(&display.promotion)
                         on:click=move |_| dispatcher.dispatch_from(
@@ -149,6 +156,8 @@ pub(super) fn Inspector(
                                         data-mirabile-slot=assignment.slot.as_str().to_owned()
                                         data-mirabile-view=view_id.to_string()
                                         data-mirabile-address=address.to_string()
+                                        data-mirabile-kind=ControlKind::Select.as_str()
+                                        data-mirabile-enabled="true"
                                         on:change=move |event| {
                                             let value = event_target_value(&event);
                                             let chart = if value.is_empty() {
@@ -192,6 +201,8 @@ pub(super) fn Inspector(
                         data-mirabile-control=ControlId::ASPECT_RESOURCE.to_string()
                         data-mirabile-address=ControlAddress::new(ControlId::ASPECT_RESOURCE).to_string()
                         data-mirabile-label="Aspect Set resource"
+                        data-mirabile-kind=ControlKind::Picker.as_str()
+                        data-mirabile-enabled="true"
                         prop:value=move || model.get().inspector.active_aspect_set.map_or_else(String::new, |id| id.to_string())
                         on:change=move |event| {
                             let value = event_target_value(&event);
@@ -242,6 +253,10 @@ pub(super) fn Inspector(
                     type="button"
                     data-mirabile-control=ControlId::ASPECT_EDIT.to_string()
                     data-mirabile-address=ControlId::ASPECT_EDIT.to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled=move || model.get().availability(AppAction::BeginAspectSetEdit).is_enabled().to_string()
+                    data-mirabile-disabled-reason=move || model.get().availability(AppAction::BeginAspectSetEdit)
+                        .disabled_reason().map(str::to_owned)
                     disabled=move || !model.get().availability(AppAction::BeginAspectSetEdit).is_enabled()
                     on:click=move |_| {
                         let snapshot = model.get_untracked();
@@ -267,6 +282,10 @@ pub(super) fn Inspector(
                         type="button"
                         data-mirabile-control=ControlId::ASPECT_NEW.to_string()
                         data-mirabile-address=ControlAddress::new(ControlId::ASPECT_NEW).to_string()
+                        data-mirabile-kind=ControlKind::Action.as_str()
+                        data-mirabile-enabled=move || model.get().availability(AppAction::BeginNewAspectSet).is_enabled().to_string()
+                        data-mirabile-disabled-reason=move || model.get().availability(AppAction::BeginNewAspectSet)
+                            .disabled_reason().map(str::to_owned)
                         disabled=move || !model.get().availability(AppAction::BeginNewAspectSet).is_enabled()
                         on:click=move |_| {
                             reset_aspect_buffers(invalid_aspect_buffers);
@@ -282,6 +301,10 @@ pub(super) fn Inspector(
                         type="button"
                         data-mirabile-control=ControlId::ASPECT_DUPLICATE.to_string()
                         data-mirabile-address=ControlAddress::new(ControlId::ASPECT_DUPLICATE).to_string()
+                        data-mirabile-kind=ControlKind::Action.as_str()
+                        data-mirabile-enabled=move || model.get().availability(AppAction::DuplicateAspectSet).is_enabled().to_string()
+                        data-mirabile-disabled-reason=move || model.get().availability(AppAction::DuplicateAspectSet)
+                            .disabled_reason().map(str::to_owned)
                         disabled=move || !model.get().availability(AppAction::DuplicateAspectSet).is_enabled()
                         on:click=move |_| {
                             if let Some(resource_id) = model.get_untracked().inspector.active_aspect_set {
@@ -356,6 +379,8 @@ fn AspectSetEditorPanel(
                             authoritative=Signal::derive(move || model.get().resource_editor.aspect_set
                                 .map_or_else(String::new, |draft| draft.title))
                             disabled=Signal::derive(move || title_pending)
+                            disabled_reason=Signal::derive(move || title_pending
+                                .then(|| "Wait for the Aspect Set save to finish".to_owned()))
                             buffer=title_buffer
                             error=title_error
                             parser=Callback::new(|text: String| {
@@ -389,6 +414,17 @@ fn AspectSetEditorPanel(
                                     ControlId::DRAFT_SAVE,
                                     [("surface", "editor")],
                                 ).expect("editor save address").to_string()
+                                data-mirabile-kind=ControlKind::Action.as_str()
+                                data-mirabile-enabled=move || (model.get().availability(AppAction::SaveDraft).is_enabled()
+                                    && invalid_aspect_buffers.get().is_empty()).to_string()
+                                data-mirabile-disabled-reason=move || {
+                                    if invalid_aspect_buffers.get().is_empty() {
+                                        model.get().availability(AppAction::SaveDraft).disabled_reason().map(str::to_owned)
+                                    } else {
+                                        Some("Correct invalid local values before saving".to_owned())
+                                    }
+                                }
+                                data-mirabile-pending=move || resource_save_pending(&model.get()).to_string()
                                 disabled=move || !model.get().availability(AppAction::SaveDraft).is_enabled()
                                     || !invalid_aspect_buffers.get().is_empty()
                                 title=move || availability_title(&model.get().availability(AppAction::SaveDraft))
@@ -406,6 +442,10 @@ fn AspectSetEditorPanel(
                                     ControlId::DRAFT_CANCEL,
                                     [("surface", "editor")],
                                 ).expect("editor cancel address").to_string()
+                                data-mirabile-kind=ControlKind::Action.as_str()
+                                data-mirabile-enabled=move || model.get().availability(AppAction::CancelDraft).is_enabled().to_string()
+                                data-mirabile-disabled-reason=move || model.get().availability(AppAction::CancelDraft)
+                                    .disabled_reason().map(str::to_owned)
                                 disabled=move || !model.get().availability(AppAction::CancelDraft).is_enabled()
                                 title=move || availability_title(&model.get().availability(AppAction::CancelDraft))
                                 on:click=move |_| {
@@ -465,6 +505,8 @@ fn AspectEditorRow(
                         .find(|row| row.aspect_id == authoritative_id))
                     .map_or_else(String::new, |row| format_orb(row.maximum_orb)))
                 disabled=pending
+                disabled_reason=Signal::derive(move || pending.get()
+                    .then(|| "Wait for the Aspect Set save to finish".to_owned()))
                 buffer
                 error
                 parser=Callback::new(|text: String| parse_orb(&text).map(format_orb))
@@ -496,6 +538,10 @@ fn AspectEditorRow(
                         ControlId::ASPECT_ENABLED,
                         [("aspect", enabled_qualifier.as_str())],
                     ).expect("aspect enabled address").to_string()
+                    data-mirabile-kind=ControlKind::Checkbox.as_str()
+                    data-mirabile-enabled=move || (!pending.get()).to_string()
+                    data-mirabile-disabled-reason=move || pending.get()
+                        .then(|| "Wait for the Aspect Set save to finish".to_owned())
                     prop:checked=aspect.enabled
                     disabled=move || pending.get()
                     on:change=move |event| enabled_dispatcher.dispatch_from(

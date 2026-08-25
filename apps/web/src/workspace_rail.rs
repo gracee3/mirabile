@@ -1,13 +1,15 @@
 use leptos::prelude::*;
 use mirabile_app::{
     ActionSource, AppAction, AppIntent, AppReadModel, ChartPersistence, ControlAddress, ControlId,
-    WorkspaceSwitchAction,
+    ControlKind, WorkspaceSwitchAction,
 };
 
 use crate::{
     dispatcher::WorkbenchCoordinator,
     library::LibraryShelf,
-    workbench_controls::{ActionControl, BufferedTextField},
+    workbench_controls::{
+        ActionControl, BufferedTextField, demo_load_pending, workspace_save_pending,
+    },
 };
 
 #[component]
@@ -38,6 +40,8 @@ pub(super) fn WorkspaceRail(
                     label="Workspace title".into()
                     authoritative=Signal::derive(move || model.get().workspace.title)
                     disabled=Signal::derive(move || model.get().workspace.switch_decision.is_some())
+                    disabled_reason=Signal::derive(move || model.get().workspace.switch_decision.is_some()
+                        .then(|| "Resolve the pending workspace switch first".to_owned()))
                     buffer=title_buffer
                     error=title_error
                     parser=Callback::new(|value: String| {
@@ -57,6 +61,8 @@ pub(super) fn WorkspaceRail(
                         address=ControlAddress::new(ControlId::WORKSPACE_NEW).to_string()
                         label="New workspace".into()
                         disabled=Signal::derive(move || model.get().workspace.switch_decision.is_some())
+                        disabled_reason=Signal::derive(move || model.get().workspace.switch_decision.is_some()
+                            .then(|| "Resolve the pending workspace switch first".to_owned()))
                         on_activate=Callback::new(move |()| dispatcher.dispatch_from(
                             AppIntent::NewWorkspace,
                             ActionSource::Human,
@@ -67,6 +73,9 @@ pub(super) fn WorkspaceRail(
                         address=ControlAddress::new(ControlId::WORKSPACE_SAVE).to_string()
                         label="Save workspace".into()
                         disabled=Signal::derive(move || !model.get().availability(AppAction::SaveWorkspace).is_enabled())
+                        disabled_reason=Signal::derive(move || model.get().availability(AppAction::SaveWorkspace)
+                            .disabled_reason().map(str::to_owned))
+                        pending=Signal::derive(move || workspace_save_pending(&model.get()))
                         on_activate=Callback::new(move |()| dispatcher.dispatch_from(
                             AppIntent::SaveWorkspace,
                             ActionSource::Human,
@@ -77,6 +86,8 @@ pub(super) fn WorkspaceRail(
                         address=ControlAddress::new(ControlId::WORKSPACE_DISCARD).to_string()
                         label="Discard workspace changes".into()
                         disabled=Signal::derive(move || model.get().workspace.switch_decision.is_some())
+                        disabled_reason=Signal::derive(move || model.get().workspace.switch_decision.is_some()
+                            .then(|| "Resolve the pending workspace switch first".to_owned()))
                         on_activate=Callback::new(move |()| dispatcher.dispatch_from(
                             AppIntent::DiscardWorkspaceChanges,
                             ActionSource::Human,
@@ -87,6 +98,9 @@ pub(super) fn WorkspaceRail(
                         address=ControlAddress::new(ControlId::WORKSPACE_LOAD_DEMO).to_string()
                         label="Load demo bundle".into()
                         disabled=Signal::derive(move || !model.get().is_settled())
+                        disabled_reason=Signal::derive(move || (!model.get().is_settled())
+                            .then(|| "Wait for pending application work to finish".to_owned()))
+                        pending=Signal::derive(move || demo_load_pending(&model.get()))
                         on_activate=Callback::new(move |()| dispatcher.dispatch_from(
                             AppIntent::LoadDemoBundle,
                             ActionSource::Human,
@@ -106,6 +120,8 @@ pub(super) fn WorkspaceRail(
                                 address=address.to_string()
                                 label=format!("Open {} · revision {}", workspace.title, workspace.revision)
                                 disabled=Signal::derive(move || model.get().workspace.switch_decision.is_some())
+                                disabled_reason=Signal::derive(move || model.get().workspace.switch_decision.is_some()
+                                    .then(|| "Resolve the pending workspace switch first".to_owned()))
                                 on_activate=Callback::new(move |()| dispatcher.dispatch_from(
                                     AppIntent::OpenWorkspace { resource_id: workspace.resource_id },
                                     ActionSource::Human,
@@ -127,6 +143,8 @@ pub(super) fn WorkspaceRail(
                                     address=ControlAddress::new(ControlId::WORKSPACE_SWITCH_SAVE).to_string()
                                     label="Save and switch".into()
                                     disabled=Signal::derive(move || !save_enabled)
+                                    disabled_reason=Signal::derive(move || (!save_enabled)
+                                        .then(|| "Save and switch is unavailable for this pending decision".to_owned()))
                                     on_activate=Callback::new(move |()| dispatcher.dispatch_from(
                                         AppIntent::ResolveWorkspaceSwitch { action: WorkspaceSwitchAction::SaveAndSwitch },
                                         ActionSource::Human,
@@ -202,6 +220,8 @@ pub(super) fn WorkspaceRail(
                                     data-mirabile-control=ControlId::CHART_SELECT.to_string()
                                     data-mirabile-instance=chart.instance_id.to_string()
                                     data-mirabile-address=select_address.to_string()
+                                    data-mirabile-kind=ControlKind::Checkbox.as_str()
+                                    data-mirabile-enabled="true"
                                     on:change=move |event| select.dispatch_from(
                                         AppIntent::SetChartSelection {
                                             instance_id: chart.instance_id,
@@ -218,6 +238,8 @@ pub(super) fn WorkspaceRail(
                                     data-mirabile-control=ControlId::CHART_ACTIVATE.to_string()
                                     data-mirabile-instance=chart.instance_id.to_string()
                                     data-mirabile-address=activate_address.to_string()
+                                    data-mirabile-kind=ControlKind::Action.as_str()
+                                    data-mirabile-enabled="true"
                                     on:click=move |_| activate.dispatch_from(
                                         AppIntent::ActivateChart { instance_id: chart.instance_id },
                                         ActionSource::Human,
@@ -239,6 +261,8 @@ pub(super) fn WorkspaceRail(
                                     data-mirabile-control=ControlId::CHART_CLOSE.to_string()
                                     data-mirabile-instance=chart.instance_id.to_string()
                                     data-mirabile-address=close_address.to_string()
+                                    data-mirabile-kind=ControlKind::Action.as_str()
+                                    data-mirabile-enabled="true"
                                     on:click=move |_| close.dispatch_from(
                                         AppIntent::CloseChart { instance_id: chart.instance_id },
                                         ActionSource::Human,

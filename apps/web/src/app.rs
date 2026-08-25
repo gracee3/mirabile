@@ -5,7 +5,7 @@ use leptos::{ev, prelude::*};
 use mirabile_app::RealApplication;
 use mirabile_app::{
     ActionSource, AppAction, AppIntent, AppReadModel, Application, ApplicationStatus, Availability,
-    ControlAddress, ControlId,
+    ControlAddress, ControlId, ControlKind,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -16,6 +16,7 @@ use crate::{
     dispatcher::{WorkbenchCoordinator, event_target_is_text_entry, execute_command},
     inspector::Inspector,
     view_host::ViewHost,
+    workbench_controls::resource_save_pending,
     workspace_rail::WorkspaceRail,
 };
 
@@ -79,6 +80,8 @@ pub fn App() -> impl IntoView {
                                 type="button"
                                 data-mirabile-control=ControlId::APPLICATION_RETRY.to_string()
                                 data-mirabile-address=ControlAddress::new(ControlId::APPLICATION_RETRY).to_string()
+                                data-mirabile-kind=ControlKind::Action.as_str()
+                                data-mirabile-enabled="true"
                                 on:click=move |_| retry.initialize()
                             >
                                 "Retry initialization"
@@ -130,6 +133,8 @@ fn ReadyShell(
                                 data-mirabile-control=ControlId::VIEW_ACTIVATE.to_string()
                                 data-mirabile-view=summary.view_id.to_string()
                                 data-mirabile-address=address.to_string()
+                                data-mirabile-kind=ControlKind::Action.as_str()
+                                data-mirabile-enabled="true"
                                 on:click=move |_| dispatch.dispatch_from(
                                     AppIntent::SetActiveView { view_id: summary.view_id },
                                     ActionSource::Human,
@@ -196,6 +201,9 @@ fn CommandActions(
                 type="button"
                 data-mirabile-control=ControlId::APPLICATION_REFRESH.to_string()
                 data-mirabile-address=ControlAddress::new(ControlId::APPLICATION_REFRESH).to_string()
+                data-mirabile-kind=ControlKind::Action.as_str()
+                data-mirabile-enabled=move || model.get().availability(AppAction::RefreshView).is_enabled().to_string()
+                data-mirabile-disabled-reason=move || model.get().availability(AppAction::RefreshView).disabled_reason().map(str::to_owned)
                 disabled=move || !model.get().availability(AppAction::RefreshView).is_enabled()
                 title=move || command_title(refresh_meta, &model.get().availability(AppAction::RefreshView))
                 on:click=move |_| refresh.dispatch(AppIntent::RefreshActiveView)
@@ -211,6 +219,17 @@ fn CommandActions(
                     ControlId::DRAFT_SAVE,
                     [("surface", "toolbar")],
                 ).expect("toolbar save address").to_string()
+                data-mirabile-kind=ControlKind::Action.as_str()
+                data-mirabile-enabled=move || (model.get().availability(AppAction::SaveDraft).is_enabled()
+                    && invalid_aspect_buffers.get().is_empty()).to_string()
+                data-mirabile-disabled-reason=move || {
+                    if invalid_aspect_buffers.get().is_empty() {
+                        model.get().availability(AppAction::SaveDraft).disabled_reason().map(str::to_owned)
+                    } else {
+                        Some("Correct invalid local values before saving".to_owned())
+                    }
+                }
+                data-mirabile-pending=move || resource_save_pending(&model.get()).to_string()
                 disabled=move || !model.get().availability(AppAction::SaveDraft).is_enabled()
                     || !invalid_aspect_buffers.get().is_empty()
                 title=move || command_title(save_meta, &model.get().availability(AppAction::SaveDraft))
@@ -228,6 +247,9 @@ fn CommandActions(
                     ControlId::DRAFT_CANCEL,
                     [("surface", "toolbar")],
                 ).expect("toolbar cancel address").to_string()
+                data-mirabile-kind=ControlKind::Action.as_str()
+                data-mirabile-enabled=move || model.get().availability(AppAction::CancelDraft).is_enabled().to_string()
+                data-mirabile-disabled-reason=move || model.get().availability(AppAction::CancelDraft).disabled_reason().map(str::to_owned)
                 disabled=move || !model.get().availability(AppAction::CancelDraft).is_enabled()
                 title=move || command_title(cancel_meta, &model.get().availability(AppAction::CancelDraft))
                 on:click=move |_| execute_command(CommandId::CancelDraft, cancel, model, invalid_aspect_buffers)

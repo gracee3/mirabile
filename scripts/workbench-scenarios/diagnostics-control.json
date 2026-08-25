@@ -8,8 +8,9 @@
     {"command": "wait", "timeout": 15},
     {"command": "get", "address": "workspace.title", "expect": {"label": "Workspace title", "value": "Diagnostics Workspace"}},
     {"command": "get", "address": "display.point[point=sun]", "expect": {"label": "sun visibility", "value": true}},
+    {"command": "get", "address": "aspect.resource", "expect": {"kind": "picker"}},
     {"command": "get", "address": "macro.name", "expect": {"label": "Macro name", "value": "Recorded macro"}},
-    {"command": "get", "address": "macro.stop", "expect": {"enabled": false, "disabled_reason": "Control is currently unavailable"}},
+    {"command": "get", "address": "macro.stop", "expect": {"kind": "action", "enabled": false, "disabled_reason": "Start macro recording before stopping"}},
     {"command": "snapshot", "expect": {"value.schema_version": 1, "value.application.status": "ready", "value.application.settled": true, "value.workspace.title": "Diagnostics Workspace", "value.coordinator.running": false, "value.recent_trace.1.source": "agent", "value.recent_trace.1.semantic_intent": "workspace.rename", "value.recent_trace.1.outcome.status": "settled"}},
     {"command": "trace", "expect": {"value.1.source": "agent", "value.1.semantic_intent": "workspace.rename", "value.1.outcome.status": "settled"}},
     {"command": "controls"}

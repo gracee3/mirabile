@@ -110,6 +110,7 @@
 - The final desktop cockpit uses the existing shallow CSS grid: workspace/library rail, wheel plus bounded diagnostics/trace/macro dock, and context/authoring inspector remain simultaneously visible at 1600x1000, while the established narrow-screen single-column fallback remains intact. Rail overflow is vertical-only and each dense region owns its scroll boundary.
 - Buffered controls now publish a separate semantic label and authoritative value instead of concatenated presentation text; invalid edit buffers remain separate. Direct display, resource, and macro fields have explicit machine labels, every disabled descriptor receives a reason, and buffered input/edit buttons plus textareas retain visible keyboard focus treatment.
 - The Chromium harness fixes a deterministic desktop viewport for golden screenshots. The live diagnostics journey asserts exact workspace value/label, point and macro labels, and disabled-state reasoning in addition to authoritative snapshot, agent trace, and control enumeration.
+- Semantic manifest correction: control kinds, buffered state, typed pending operations, and disabled reasons now come from explicit Mirabile instrumentation rather than HTML inference.
 
 ## Blockers
 

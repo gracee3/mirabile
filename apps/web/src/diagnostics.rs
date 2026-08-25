@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use mirabile_app::{
-    AppReadModel, ApplicationStatus, AutomationSnapshotV1, ControlId, ExecutionOutcome,
+    AppReadModel, ApplicationStatus, AutomationSnapshotV1, ControlId, ControlKind, ExecutionOutcome,
 };
 
 use crate::dispatcher::WorkbenchCoordinator;
@@ -26,6 +26,10 @@ pub(super) fn Diagnostics(
                         class="button secondary"
                         data-mirabile-control=ControlId::DIAGNOSTICS_EXPORT_SNAPSHOT.to_string()
                         data-mirabile-address=ControlId::DIAGNOSTICS_EXPORT_SNAPSHOT.to_string()
+                        data-mirabile-kind=ControlKind::Action.as_str()
+                        data-mirabile-enabled=cfg!(target_arch = "wasm32").to_string()
+                        data-mirabile-disabled-reason=cfg!(not(target_arch = "wasm32"))
+                            .then_some("Exports require a browser build")
                         disabled=cfg!(not(target_arch = "wasm32"))
                         on:click=move |_| {
                             match crate::control_manifest::capture() {
@@ -53,6 +57,10 @@ pub(super) fn Diagnostics(
                         class="button secondary"
                         data-mirabile-control=ControlId::DIAGNOSTICS_EXPORT_TRACE.to_string()
                         data-mirabile-address=ControlId::DIAGNOSTICS_EXPORT_TRACE.to_string()
+                        data-mirabile-kind=ControlKind::Action.as_str()
+                        data-mirabile-enabled=cfg!(target_arch = "wasm32").to_string()
+                        data-mirabile-disabled-reason=cfg!(not(target_arch = "wasm32"))
+                            .then_some("Exports require a browser build")
                         disabled=cfg!(not(target_arch = "wasm32"))
                         on:click=move |_| export_json(
                             "mirabile-trace.json",

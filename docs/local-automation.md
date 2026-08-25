@@ -25,6 +25,11 @@ attributes. `ControlAddress` is the public lookup key; scripts do not depend on 
 authoritative value, optional invalid local buffer, enabled/disabled reason, options with reasons,
 interaction state, and entity identity.
 
+The manifest describes Mirabile controls, not their underlying HTML. Every instrumented control
+publishes an explicit semantic kind and availability; buffered fields additionally publish their
+authoritative value, exact edit buffer, and edit/lock/validation state. Native tags and input types
+remain implementation details used only to read values and dispatch browser events.
+
 `AutomationSnapshotV1` selects application activity, workspace/chart/view/calculation/editor state,
 actual controls, coordinator/macro state, and recent trace. It excludes full Scene geometry and is
 not a portable-resource or database dump.

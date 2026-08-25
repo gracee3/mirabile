@@ -30,7 +30,6 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
                 |address| ControlAddress::from_str(&address),
             )
             .map_err(|error| error.to_string())?;
-        let tag = element.tag_name();
         let input = element.clone().dyn_into::<web_sys::HtmlInputElement>().ok();
         let select = element
             .clone()
@@ -58,19 +57,11 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
             .flatten()
             .and_then(|textarea| textarea.dyn_into::<web_sys::HtmlTextAreaElement>().ok());
         let effective_textarea = textarea.as_ref().or(nested_textarea.as_ref());
-        let kind = if tag == "BUTTON" {
-            ControlKind::Action
-        } else if effective_select.is_some() {
-            ControlKind::Select
-        } else if effective_input.is_some_and(|input| input.type_() == "checkbox") {
-            ControlKind::Checkbox
-        } else if effective_input.is_some_and(|input| input.type_() == "date") {
-            ControlKind::Date
-        } else if effective_input.is_some_and(|input| input.type_() == "time") {
-            ControlKind::Time
-        } else {
-            ControlKind::Text
-        };
+        let kind = element
+            .get_attribute("data-mirabile-kind")
+            .ok_or_else(|| format!("instrumented control {address} omitted its semantic kind"))?
+            .parse::<ControlKind>()
+            .map_err(|error| format!("instrumented control {address}: {error}"))?;
         let value = if let Some(value) = element.get_attribute("data-mirabile-value") {
             serde_json::Value::String(value)
         } else if let Some(select) = effective_select {
@@ -86,10 +77,7 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
         } else {
             serde_json::Value::String(element.text_content().unwrap_or_default().trim().to_owned())
         };
-        let disabled = element.has_attribute("disabled")
-            || effective_input.is_some_and(web_sys::HtmlInputElement::disabled)
-            || effective_select.is_some_and(web_sys::HtmlSelectElement::disabled)
-            || effective_textarea.is_some_and(web_sys::HtmlTextAreaElement::disabled);
+        let enabled = semantic_bool(&element, "data-mirabile-enabled", true, &address)?;
         let options = effective_select.map_or_else(Vec::new, |select| {
             (0..select.length())
                 .filter_map(|index| select.item(index))
@@ -105,6 +93,10 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
                 })
                 .collect()
         });
+        let locked = semantic_bool(&element, "data-mirabile-locked", false, &address)?;
+        let editing = semantic_bool(&element, "data-mirabile-editing", false, &address)?;
+        let invalid = semantic_bool(&element, "data-mirabile-invalid", false, &address)?;
+        let pending = semantic_bool(&element, "data-mirabile-pending", false, &address)?;
         descriptors.push(ControlDescriptor {
             address,
             kind,
@@ -127,15 +119,15 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
                         })
                 })
                 .flatten(),
-            locked: element.has_attribute("readonly"),
-            editing: element.get_attribute("data-mirabile-editing").as_deref() == Some("true"),
-            invalid: element.get_attribute("data-mirabile-invalid").as_deref() == Some("true")
-                || element.get_attribute("aria-invalid").as_deref() == Some("true"),
-            pending: element.get_attribute("aria-busy").as_deref() == Some("true"),
-            enabled: !disabled,
-            disabled_reason: disabled.then(|| {
+            locked,
+            editing,
+            invalid,
+            pending,
+            enabled,
+            disabled_reason: (!enabled).then(|| {
                 element
-                    .get_attribute("title")
+                    .get_attribute("data-mirabile-disabled-reason")
+                    .or_else(|| element.get_attribute("title"))
                     .or_else(|| effective_input.and_then(|input| input.get_attribute("title")))
                     .or_else(|| effective_select.and_then(|select| select.get_attribute("title")))
                     .unwrap_or_else(|| "Control is currently unavailable".to_owned())
@@ -156,6 +148,23 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
         });
     }
     ControlManifest::new(descriptors).map_err(|error| error.to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn semantic_bool(
+    element: &web_sys::Element,
+    attribute: &str,
+    default: bool,
+    address: &mirabile_app::ControlAddress,
+) -> Result<bool, String> {
+    match element.get_attribute(attribute).as_deref() {
+        None => Ok(default),
+        Some("true") => Ok(true),
+        Some("false") => Ok(false),
+        Some(value) => Err(format!(
+            "instrumented control {address} published invalid {attribute} value {value}"
+        )),
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
