@@ -1,101 +1,267 @@
-use std::rc::Rc;
+use std::{cell::Cell, cell::RefCell, collections::VecDeque, rc::Rc};
 
 use leptos::{ev, prelude::*};
 #[cfg(test)]
 use mirabile_app::ProjectionVersion;
 use mirabile_app::{
-    AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind, AppReadModel,
-    Application, ApplicationActivityReadModel, ApplicationStatus,
+    ActionSource, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind,
+    AppReadModel, Application, ApplicationActivityReadModel, ApplicationStatus, ControlAddress,
+    CoordinatorReadModel, ExecutionOutcome, ExecutionTraceEntry, PendingTransition, TraceHistory,
 };
 use wasm_bindgen::JsCast;
 
 use crate::commands::CommandId;
 
 #[derive(Clone)]
-struct AppDispatcher {
-    application: Rc<dyn Application>,
-    model: RwSignal<AppReadModel>,
+struct QueuedAction {
+    intent: AppIntent,
+    source: ActionSource,
+    origin_control: Option<ControlAddress>,
 }
 
-impl AppDispatcher {
+#[derive(Clone)]
+struct CoordinatorState {
+    application: Rc<dyn Application>,
+    model: RwSignal<AppReadModel>,
+    coordinator: RwSignal<CoordinatorReadModel>,
+    queue: Rc<RefCell<VecDeque<QueuedAction>>>,
+    running: Rc<Cell<bool>>,
+    next_sequence: Rc<Cell<u64>>,
+    trace: Rc<RefCell<TraceHistory>>,
+}
+
+impl CoordinatorState {
     fn initialize(&self) {
-        let application = Rc::clone(&self.application);
-        let model = self.model;
-        leptos::task::spawn_local(async move {
-            match application.initialize().await {
-                Ok(updated) => publish_and_settle(application, model, updated).await,
-                Err(error) => publish_application_error(model, error),
-            }
-        });
-    }
-
-    fn dispatch(&self, intent: AppIntent) {
-        let application = Rc::clone(&self.application);
-        let model = self.model;
-        leptos::task::spawn_local(async move {
-            match application.dispatch(intent).await {
-                Ok(updated) => publish_and_settle(application, model, updated).await,
-                Err(error) => publish_command_error(model, error),
-            }
-        });
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct Dispatcher {
-    stored: StoredValue<AppDispatcher, LocalStorage>,
-}
-
-impl Dispatcher {
-    pub(super) fn new(application: Rc<dyn Application>, model: RwSignal<AppReadModel>) -> Self {
-        Self {
-            stored: StoredValue::new_local(AppDispatcher { application, model }),
-        }
-    }
-
-    pub(super) fn initialize(self) {
-        self.stored.with_value(AppDispatcher::initialize);
-    }
-
-    pub(super) fn dispatch(self, intent: AppIntent) {
-        self.stored
-            .with_value(|dispatcher| dispatcher.dispatch(intent));
-    }
-}
-
-async fn publish_and_settle(
-    application: Rc<dyn Application>,
-    model: RwSignal<AppReadModel>,
-    mut incoming: AppReadModel,
-) {
-    loop {
-        let after = incoming.version;
-        let pending = !incoming.is_settled();
-        publish_projection(model, incoming);
-        if !pending {
+        if self.running.replace(true) {
             return;
         }
+        self.coordinator.update(|state| {
+            state.running = true;
+            state.current_source = Some(ActionSource::System);
+        });
+        let state = self.clone();
+        leptos::task::spawn_local(async move {
+            state.execute_initialization().await;
+            state.drain_queue().await;
+        });
+    }
 
-        match application.wait_for_update(after).await {
-            Ok(updated) if updated.version > after => incoming = updated,
+    fn enqueue(&self, action: QueuedAction) {
+        self.queue.borrow_mut().push_back(action);
+        self.coordinator.update(|state| {
+            state.queued_actions = self.queue.borrow().len();
+        });
+        if !self.running.replace(true) {
+            let state = self.clone();
+            leptos::task::spawn_local(async move {
+                state.drain_queue().await;
+            });
+        }
+    }
+
+    async fn execute_initialization(&self) {
+        let before = self.model.get_untracked().version;
+        let sequence = self.take_sequence();
+        match self.application.initialize().await {
             Ok(updated) => {
-                publish_command_error(
-                    model,
-                    AppError::new(
+                let accepted = updated.version;
+                let (settled, transitions, outcome) = self.settle(updated).await;
+                self.trace.borrow_mut().push(ExecutionTraceEntry {
+                    sequence,
+                    source: ActionSource::System,
+                    origin_control: None,
+                    semantic_intent: "application.initialize".into(),
+                    accepted_projection: Some(accepted),
+                    settled_projection: settled,
+                    pending_transitions: transitions,
+                    outcome,
+                });
+            }
+            Err(error) => {
+                publish_application_error(self.model, error.clone());
+                self.trace.borrow_mut().push(ExecutionTraceEntry {
+                    sequence,
+                    source: ActionSource::System,
+                    origin_control: None,
+                    semantic_intent: "application.initialize".into(),
+                    accepted_projection: None,
+                    settled_projection: before,
+                    pending_transitions: Vec::new(),
+                    outcome: failure_outcome(&error),
+                });
+            }
+        }
+    }
+
+    async fn drain_queue(&self) {
+        loop {
+            let Some(action) = self.queue.borrow_mut().pop_front() else {
+                self.running.set(false);
+                self.coordinator.update(|state| {
+                    state.running = false;
+                    state.queued_actions = 0;
+                    state.current_source = None;
+                    state.highlighted_control = None;
+                });
+                return;
+            };
+            self.coordinator.update(|state| {
+                state.running = true;
+                state.queued_actions = self.queue.borrow().len();
+                state.current_source = Some(action.source);
+                state.highlighted_control.clone_from(&action.origin_control);
+            });
+            self.execute_action(action).await;
+        }
+    }
+
+    async fn execute_action(&self, action: QueuedAction) {
+        let sequence = self.take_sequence();
+        let semantic_intent = action.intent.semantic_summary();
+        let before = self.model.get_untracked().version;
+        let (accepted_projection, settled_projection, pending_transitions, outcome) =
+            match self.application.dispatch(action.intent).await {
+                Ok(updated) => {
+                    let accepted = updated.version;
+                    let (settled, transitions, outcome) = self.settle(updated).await;
+                    (Some(accepted), settled, transitions, outcome)
+                }
+                Err(error) => {
+                    publish_command_error(self.model, error.clone());
+                    (
+                        None,
+                        before,
+                        Vec::new(),
+                        ExecutionOutcome::Rejected {
+                            kind: error_kind(&error),
+                            message: error.message,
+                        },
+                    )
+                }
+            };
+        self.trace.borrow_mut().push(ExecutionTraceEntry {
+            sequence,
+            source: action.source,
+            origin_control: action.origin_control,
+            semantic_intent,
+            accepted_projection,
+            settled_projection,
+            pending_transitions,
+            outcome,
+        });
+    }
+
+    async fn settle(
+        &self,
+        mut incoming: AppReadModel,
+    ) -> (
+        mirabile_app::ProjectionVersion,
+        Vec<PendingTransition>,
+        ExecutionOutcome,
+    ) {
+        let mut transitions = Vec::new();
+        loop {
+            let after = incoming.version;
+            if !incoming.is_settled() {
+                transitions.push(PendingTransition {
+                    projection: incoming.version,
+                    pending_operations: incoming.activity.pending_operations.clone(),
+                });
+            }
+            publish_projection(self.model, incoming);
+            if self.model.get_untracked().is_settled() {
+                return (after, transitions, ExecutionOutcome::Settled);
+            }
+            match self.application.wait_for_update(after).await {
+                Ok(updated) if updated.version > after => incoming = updated,
+                Ok(updated) => {
+                    let error = AppError::new(
                         AppErrorKind::Unavailable,
                         format!(
                             "Application returned projection {} while waiting after {after}",
                             updated.version
                         ),
-                    ),
-                );
-                return;
-            }
-            Err(error) => {
-                publish_command_error(model, error);
-                return;
+                    );
+                    publish_command_error(self.model, error.clone());
+                    return (after, transitions, failure_outcome(&error));
+                }
+                Err(error) => {
+                    publish_command_error(self.model, error.clone());
+                    return (after, transitions, failure_outcome(&error));
+                }
             }
         }
+    }
+
+    fn take_sequence(&self) -> u64 {
+        let sequence = self.next_sequence.get();
+        self.next_sequence.set(sequence.saturating_add(1));
+        sequence
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct WorkbenchCoordinator {
+    stored: StoredValue<CoordinatorState, LocalStorage>,
+}
+
+impl WorkbenchCoordinator {
+    pub(super) fn new(application: Rc<dyn Application>, model: RwSignal<AppReadModel>) -> Self {
+        Self {
+            stored: StoredValue::new_local(CoordinatorState {
+                application,
+                model,
+                coordinator: RwSignal::new(CoordinatorReadModel::default()),
+                queue: Rc::new(RefCell::new(VecDeque::new())),
+                running: Rc::new(Cell::new(false)),
+                next_sequence: Rc::new(Cell::new(1)),
+                trace: Rc::new(RefCell::new(TraceHistory::default())),
+            }),
+        }
+    }
+
+    pub(super) fn initialize(self) {
+        self.stored.with_value(CoordinatorState::initialize);
+    }
+
+    pub(super) fn dispatch(self, intent: AppIntent) {
+        self.dispatch_from(intent, ActionSource::Human, None);
+    }
+
+    pub(super) fn dispatch_from(
+        self,
+        intent: AppIntent,
+        source: ActionSource,
+        origin_control: Option<ControlAddress>,
+    ) {
+        self.stored.with_value(|coordinator| {
+            coordinator.enqueue(QueuedAction {
+                intent,
+                source,
+                origin_control,
+            });
+        });
+    }
+
+    pub(super) fn read_model(self) -> CoordinatorReadModel {
+        self.stored
+            .with_value(|coordinator| coordinator.coordinator.get_untracked())
+    }
+
+    pub(super) fn trace(self) -> Vec<ExecutionTraceEntry> {
+        self.stored
+            .with_value(|coordinator| coordinator.trace.borrow().entries())
+    }
+}
+
+fn error_kind(error: &AppError) -> String {
+    format!("{:?}", error.kind).to_ascii_lowercase()
+}
+
+fn failure_outcome(error: &AppError) -> ExecutionOutcome {
+    ExecutionOutcome::Failed {
+        kind: error_kind(error),
+        message: error.message.clone(),
     }
 }
 
@@ -140,7 +306,7 @@ fn publish_command_error(model: RwSignal<AppReadModel>, error: AppError) {
 
 pub(super) fn execute_command(
     command: CommandId,
-    dispatcher: Dispatcher,
+    dispatcher: WorkbenchCoordinator,
     model: RwSignal<AppReadModel>,
     orb_buffer: RwSignal<String>,
     orb_error: RwSignal<Option<String>>,

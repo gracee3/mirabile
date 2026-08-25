@@ -17,6 +17,7 @@ mirabile-engine = { path = "../mirabile-engine" }
 mirabile-store = { path = "../mirabile-store" }
 async-trait.workspace = true
 futures.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 

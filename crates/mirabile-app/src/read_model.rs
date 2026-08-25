@@ -1,7 +1,10 @@
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
-    Angle, AppError, AspectId, ChartSlotId, InstanceId, ResourceId, Revision, Scene, ViewInstanceId,
+    Angle, AppError, AspectId, CalculationDiagnosticsReadModel, ChartSlotId, InstanceId,
+    ResourceId, Revision, Scene, ViewInstanceId,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -9,6 +12,7 @@ pub struct AppReadModel {
     pub version: ProjectionVersion,
     pub status: ApplicationStatus,
     pub activity: ApplicationActivityReadModel,
+    pub calculation: Option<CalculationDiagnosticsReadModel>,
     pub library: LibraryReadModel,
     pub workspace: WorkspaceReadModel,
     pub active_view: Option<ViewReadModel>,
@@ -24,6 +28,7 @@ impl AppReadModel {
             version: ProjectionVersion::INITIAL,
             status: ApplicationStatus::Initializing,
             activity: ApplicationActivityReadModel::initializing(),
+            calculation: None,
             library: LibraryReadModel::default(),
             workspace: WorkspaceReadModel::default(),
             active_view: None,
@@ -49,7 +54,7 @@ impl AppReadModel {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ApplicationActivityReadModel {
     pub settled: bool,
     pub pending_operations: Vec<PendingOperationReadModel>,
@@ -81,7 +86,8 @@ impl Default for ApplicationActivityReadModel {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "operation", rename_all = "snake_case")]
 pub enum PendingOperationReadModel {
     InitializeApplication,
     ViewCalculation {
@@ -107,7 +113,10 @@ pub enum PendingOperationReadModel {
 ///
 /// This sequence is scoped to an `Application` instance and is independent from canonical
 /// resource [`Revision`]. Zero identifies the frontend's pre-initialization placeholder.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(transparent)]
 pub struct ProjectionVersion(u64);
 
 impl ProjectionVersion {

@@ -934,6 +934,7 @@ dependencies = [
  "mirabile-core",
  "mirabile-engine",
  "mirabile-store",
+ "serde",
  "serde_json",
  "thiserror 2.0.20",
  "wasm-bindgen",

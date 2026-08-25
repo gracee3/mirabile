@@ -1,11 +1,12 @@
 use super::{
     ActiveChartInspector, AppAction, AppError, AppErrorKind, AppReadModel, AppResult,
-    ApplicationStatus, Availability, CalculationRuntime, ChartPersistence, ChartSlotAssignment,
-    CommandCapability, ConfigurationLayer, DraftState, InspectorReadModel, LibraryReadModel,
-    OpenChartSummary, RealApplication, RealState, ResourceEditorReadModel, ResourceRepository,
-    ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel, aspect_editor_read_model,
-    binding_summary, capability, chart_record_subtitle, disabled, resolve_typed_binding,
-    view_title,
+    ApplicationStatus, Availability, CalculationDiagnosticsReadModel, CalculationRuntime,
+    ChartPersistence, ChartSlotAssignment, CommandCapability, ConfigurationLayer, DraftState,
+    ImplementationIdentityReadModel, InspectorReadModel, LibraryReadModel, OpenChartSummary,
+    RealApplication, RealState, ResourceEditorReadModel, ResourceRepository, ViewComputationState,
+    ViewInstanceId, ViewReadModel, ViewSummary, WorkerProtocolVersion, WorkspaceReadModel,
+    aspect_editor_read_model, binding_summary, capability, chart_record_subtitle, disabled,
+    resolve_typed_binding, view_title,
 };
 
 impl<R, C> RealApplication<R, C>
@@ -14,7 +15,49 @@ where
     C: CalculationRuntime,
 {
     pub(super) fn read_model(&self) -> AppResult<AppReadModel> {
-        self.state.borrow().read_model()
+        let state = self.state.borrow();
+        let mut model = state.read_model()?;
+        model.calculation = Some(self.calculation_diagnostics(&state));
+        Ok(model)
+    }
+
+    fn calculation_diagnostics(&self, state: &RealState) -> CalculationDiagnosticsReadModel {
+        let descriptor = self.engine.backend_descriptor();
+        let backend = &descriptor.fingerprint.backend;
+        let engine = self.engine.calculation_engine_identity();
+        let runtime = state
+            .session
+            .as_ref()
+            .and_then(|session| session.active_view)
+            .and_then(|view_id| state.views.get(&view_id));
+        let current = runtime.and_then(|runtime| runtime.expected.as_ref());
+        let latest = current.or_else(|| runtime.and_then(|runtime| runtime.last_expected.as_ref()));
+        CalculationDiagnosticsReadModel {
+            backend: ImplementationIdentityReadModel {
+                id: backend.id.clone(),
+                version: backend.version.clone(),
+                revision: backend.revision.clone(),
+            },
+            engine: ImplementationIdentityReadModel {
+                id: engine.id.clone(),
+                version: engine.version.clone(),
+                revision: engine.revision.clone(),
+            },
+            worker_protocol: u32::from(WorkerProtocolVersion::CURRENT.get()),
+            active_request_id: current.map(|expected| expected.request_id.get()),
+            calc_key: latest.map(|expected| expected.calc_key.to_string()),
+            analysis_key: latest.map(|expected| expected.analysis_key.to_string()),
+            computation: runtime.map(|runtime| {
+                match runtime.computation {
+                    ViewComputationState::Loading => "loading",
+                    ViewComputationState::Fresh => "fresh",
+                    ViewComputationState::Refreshing => "refreshing",
+                    ViewComputationState::Failed(_) => "failed",
+                }
+                .to_owned()
+            }),
+            last_good_scene_present: runtime.is_some_and(|runtime| runtime.scene.is_some()),
+        }
     }
 }
 
@@ -114,6 +157,7 @@ impl RealState {
             version: self.version,
             status: self.status.clone(),
             activity: self.activity_read_model(),
+            calculation: None,
             library: LibraryReadModel {
                 charts: library_charts,
                 aspect_sets: self.catalog.aspect_set_summaries()?,

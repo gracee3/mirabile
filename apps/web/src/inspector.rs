@@ -6,13 +6,13 @@ use mirabile_app::{
     BindingSourceSummary, ChartPersistence, DraftState, InstanceId, ResourceId,
 };
 
-use crate::dispatcher::{Dispatcher, reset_orb_buffer};
+use crate::dispatcher::{WorkbenchCoordinator, reset_orb_buffer};
 
 #[component]
 #[allow(clippy::too_many_lines)]
 pub(super) fn Inspector(
     model: RwSignal<AppReadModel>,
-    dispatcher: Dispatcher,
+    dispatcher: WorkbenchCoordinator,
     orb_buffer: RwSignal<String>,
     orb_error: RwSignal<Option<String>>,
 ) -> impl IntoView {

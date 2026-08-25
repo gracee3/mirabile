@@ -1,0 +1,338 @@
+use std::{borrow::Cow, collections::BTreeMap, fmt, str::FromStr};
+
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+
+use crate::{InstanceId, ResourceId, ViewInstanceId};
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct ControlId(Cow<'static, str>);
+
+impl ControlId {
+    pub const APPLICATION_REFRESH: Self = Self(Cow::Borrowed("application.refresh"));
+    pub const ASPECT_ENABLED: Self = Self(Cow::Borrowed("aspect.enabled"));
+    pub const ASPECT_MAXIMUM_ORB: Self = Self(Cow::Borrowed("aspect.maximum-orb"));
+    pub const ASPECT_RESOURCE: Self = Self(Cow::Borrowed("aspect.resource"));
+    pub const CHART_ACTIVATE: Self = Self(Cow::Borrowed("chart.activate"));
+    pub const CHART_CLOSE: Self = Self(Cow::Borrowed("chart.close"));
+    pub const CHART_OPEN: Self = Self(Cow::Borrowed("chart.open"));
+    pub const DISPLAY_POINT: Self = Self(Cow::Borrowed("display.point"));
+    pub const DRAFT_CANCEL: Self = Self(Cow::Borrowed("draft.cancel"));
+    pub const DRAFT_SAVE: Self = Self(Cow::Borrowed("draft.save"));
+    pub const VIEW_ACTIVATE: Self = Self(Cow::Borrowed("view.activate"));
+    pub const VIEW_SLOT: Self = Self(Cow::Borrowed("view.slot"));
+    pub const WORKSPACE_SAVE: Self = Self(Cow::Borrowed("workspace.save"));
+
+    pub fn new(value: impl Into<String>) -> Result<Self, ControlAddressError> {
+        let value = value.into();
+        validate_control_id(&value)?;
+        Ok(Self(Cow::Owned(value)))
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Display for ControlId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_str().fmt(formatter)
+    }
+}
+
+impl FromStr for ControlId {
+    type Err = ControlAddressError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for ControlId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ControlAddress {
+    pub control: ControlId,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub qualifiers: BTreeMap<String, String>,
+}
+
+impl<'de> Deserialize<'de> for ControlAddress {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawControlAddress {
+            control: ControlId,
+            #[serde(default)]
+            qualifiers: BTreeMap<String, String>,
+        }
+
+        let raw = RawControlAddress::deserialize(deserializer)?;
+        Self::qualified(raw.control, raw.qualifiers).map_err(D::Error::custom)
+    }
+}
+
+impl ControlAddress {
+    pub fn new(control: ControlId) -> Self {
+        Self {
+            control,
+            qualifiers: BTreeMap::new(),
+        }
+    }
+
+    pub fn qualified(
+        control: ControlId,
+        qualifiers: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Result<Self, ControlAddressError> {
+        let mut address = Self::new(control);
+        for (name, value) in qualifiers {
+            address.insert_qualifier(name.into(), value.into())?;
+        }
+        Ok(address)
+    }
+
+    pub fn insert_qualifier(
+        &mut self,
+        name: String,
+        value: String,
+    ) -> Result<(), ControlAddressError> {
+        validate_qualifier_name(&name)?;
+        validate_qualifier_value(&value)?;
+        if self.qualifiers.insert(name.clone(), value).is_some() {
+            return Err(ControlAddressError::DuplicateQualifier(name));
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for ControlAddress {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.control.fmt(formatter)?;
+        if !self.qualifiers.is_empty() {
+            formatter.write_str("[")?;
+            for (index, (name, value)) in self.qualifiers.iter().enumerate() {
+                if index > 0 {
+                    formatter.write_str(",")?;
+                }
+                write!(formatter, "{name}={value}")?;
+            }
+            formatter.write_str("]")?;
+        }
+        Ok(())
+    }
+}
+
+impl FromStr for ControlAddress {
+    type Err = ControlAddressError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (control, qualifiers) = match value.split_once('[') {
+            None => (value, None),
+            Some((control, suffix)) => {
+                let qualifiers = suffix
+                    .strip_suffix(']')
+                    .ok_or(ControlAddressError::MalformedAddress)?;
+                (control, Some(qualifiers))
+            }
+        };
+        if control.contains(']') {
+            return Err(ControlAddressError::MalformedAddress);
+        }
+        let mut address = Self::new(ControlId::from_str(control)?);
+        if let Some(qualifiers) = qualifiers {
+            if qualifiers.is_empty() {
+                return Err(ControlAddressError::MalformedAddress);
+            }
+            for qualifier in qualifiers.split(',') {
+                let (name, value) = qualifier
+                    .split_once('=')
+                    .ok_or(ControlAddressError::MalformedAddress)?;
+                address.insert_qualifier(name.to_owned(), value.to_owned())?;
+            }
+        }
+        Ok(address)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ControlAddressError {
+    #[error("control IDs must contain two or more lowercase dotted segments")]
+    InvalidControlId,
+    #[error("control qualifier names must be lowercase semantic tokens")]
+    InvalidQualifierName,
+    #[error("control qualifier values must be nonempty canonical tokens")]
+    InvalidQualifierValue,
+    #[error("control qualifier {0} was repeated")]
+    DuplicateQualifier(String),
+    #[error("control address {0} was repeated in the manifest")]
+    DuplicateAddress(String),
+    #[error("control address syntax is malformed")]
+    MalformedAddress,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlKind {
+    Action,
+    Checkbox,
+    Date,
+    Number,
+    Picker,
+    Select,
+    Status,
+    Text,
+    Time,
+    Toggle,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ControlOptionDescriptor {
+    pub value: String,
+    pub label: String,
+    pub enabled: bool,
+    pub disabled_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControlEntityIdentity {
+    pub resource_id: Option<ResourceId>,
+    pub instance_id: Option<InstanceId>,
+    pub view_id: Option<ViewInstanceId>,
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ControlDescriptor {
+    pub address: ControlAddress,
+    pub kind: ControlKind,
+    pub label: String,
+    pub value: serde_json::Value,
+    pub local_buffer: Option<String>,
+    pub locked: bool,
+    pub editing: bool,
+    pub invalid: bool,
+    pub pending: bool,
+    pub enabled: bool,
+    pub disabled_reason: Option<String>,
+    pub options: Vec<ControlOptionDescriptor>,
+    pub entity: ControlEntityIdentity,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct ControlManifest {
+    pub controls: Vec<ControlDescriptor>,
+}
+
+impl ControlManifest {
+    pub fn new(controls: Vec<ControlDescriptor>) -> Result<Self, ControlAddressError> {
+        let mut addresses = std::collections::BTreeSet::new();
+        for control in &controls {
+            if !addresses.insert(control.address.clone()) {
+                return Err(ControlAddressError::DuplicateAddress(
+                    control.address.to_string(),
+                ));
+            }
+        }
+        Ok(Self { controls })
+    }
+
+    pub fn get(&self, address: &ControlAddress) -> Option<&ControlDescriptor> {
+        self.controls
+            .iter()
+            .find(|control| &control.address == address)
+    }
+}
+
+fn validate_control_id(value: &str) -> Result<(), ControlAddressError> {
+    let segments = value.split('.').collect::<Vec<_>>();
+    if segments.len() < 2 || segments.iter().any(|segment| !valid_name_segment(segment)) {
+        return Err(ControlAddressError::InvalidControlId);
+    }
+    Ok(())
+}
+
+fn validate_qualifier_name(value: &str) -> Result<(), ControlAddressError> {
+    if valid_name_segment(value) {
+        Ok(())
+    } else {
+        Err(ControlAddressError::InvalidQualifierName)
+    }
+}
+
+fn validate_qualifier_value(value: &str) -> Result<(), ControlAddressError> {
+    if !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"-_.:".contains(&byte)
+        })
+    {
+        Ok(())
+    } else {
+        Err(ControlAddressError::InvalidQualifierValue)
+    }
+}
+
+fn valid_name_segment(value: &str) -> bool {
+    value.len() <= 64
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_ids_reject_noncanonical_dotted_names() {
+        assert_eq!(
+            ControlId::from_str("aspect.maximum-orb").expect("canonical ID"),
+            ControlId::ASPECT_MAXIMUM_ORB
+        );
+        for invalid in ["aspect", "Aspect.orb", "aspect..orb", "aspect.maximum_orb"] {
+            assert!(ControlId::from_str(invalid).is_err(), "accepted {invalid}");
+        }
+    }
+
+    #[test]
+    fn addresses_are_canonical_and_round_trip() {
+        let address = ControlAddress::from_str(
+            "view.slot[slot=primary,view=30000000-0000-4000-8000-000000000001]",
+        )
+        .expect("address");
+        assert_eq!(
+            address.to_string(),
+            "view.slot[slot=primary,view=30000000-0000-4000-8000-000000000001]"
+        );
+        assert_eq!(
+            ControlAddress::from_str(&address.to_string()).expect("round trip"),
+            address
+        );
+        assert!(ControlAddress::from_str("view.slot[slot=primary,slot=outer]").is_err());
+        assert!(ControlAddress::from_str("view.slot[]").is_err());
+    }
+
+    #[test]
+    fn serde_cannot_bypass_control_validation() {
+        assert!(serde_json::from_str::<ControlId>(r#""Aspect.orb""#).is_err());
+        assert!(
+            serde_json::from_str::<ControlAddress>(
+                r#"{"control":"view.slot","qualifiers":{"slot":""}}"#
+            )
+            .is_err()
+        );
+    }
+}

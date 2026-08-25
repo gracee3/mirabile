@@ -62,3 +62,71 @@ pub enum AspectSetDraftMutation {
     SetOrb { aspect_id: AspectId, maximum: Angle },
     SetEnabled { aspect_id: AspectId, enabled: bool },
 }
+
+impl AppIntent {
+    pub fn semantic_summary(&self) -> String {
+        match self {
+            Self::StartChartDraft { .. } => "chart.begin-new".into(),
+            Self::SaveChartDraft { instance_id } => format!("chart.save[{instance_id}]"),
+            Self::CancelChartDraft { instance_id } => format!("chart.cancel[{instance_id}]"),
+            Self::OpenChart { definition_id } => format!("chart.open[{definition_id}]"),
+            Self::CloseChart { instance_id } => format!("chart.close[{instance_id}]"),
+            Self::ActivateChart { instance_id } => format!("chart.activate[{instance_id}]"),
+            Self::SetChartSelection {
+                instance_id,
+                selected,
+            } => format!("chart.select[{instance_id}]={selected}"),
+            Self::SetActiveView { view_id } => format!("view.activate[{view_id}]"),
+            Self::AssignChartSlot {
+                view_id,
+                slot,
+                chart,
+            } => format!(
+                "view.slot[{view_id},{}]={}",
+                slot.as_str(),
+                chart.map_or_else(|| "unassigned".into(), |chart| chart.to_string())
+            ),
+            Self::SetWorkspaceAspectSet { resource_id } => {
+                format!("workspace.aspect-set[{resource_id}]")
+            }
+            Self::SaveWorkspace => "workspace.save".into(),
+            Self::SetTemporaryPointHidden { point_id, hidden } => {
+                format!("display.point[{}].hidden={hidden}", point_id.as_str())
+            }
+            Self::PromoteTemporaryDisplay => "display.promote".into(),
+            Self::BeginAspectSetEdit { resource_id } => {
+                format!("aspect.begin-edit[{resource_id}]")
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetOrb { aspect_id, maximum }) => {
+                format!(
+                    "aspect.maximum-orb[{}]={}",
+                    aspect_id.as_str(),
+                    maximum.degrees()
+                )
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetEnabled {
+                aspect_id,
+                enabled,
+            }) => format!("aspect.enabled[{}]={enabled}", aspect_id.as_str()),
+            Self::SaveDraft => "draft.save".into(),
+            Self::CancelDraft => "draft.cancel".into(),
+            Self::RefreshActiveView => "application.refresh".into(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_summaries_contain_no_presentation_selectors() {
+        let summary = AppIntent::SetTemporaryPointHidden {
+            point_id: PointId::new("sun").expect("point"),
+            hidden: true,
+        }
+        .semantic_summary();
+        assert_eq!(summary, "display.point[sun].hidden=true");
+        assert!(!summary.contains('#'));
+    }
+}

@@ -16,10 +16,11 @@ use mirabile_core::{
     ViewInstanceId, WheelTemplate, WorkspaceDocument, WorkspaceDocumentChart, resolve_binding,
 };
 use mirabile_engine::{
-    AspectAnalyzer, CalcKey, CalculationEngine, CalculationOutcome, CalculationRequestId,
-    CalculationWorkerFailure, CalculationWorkerFailureCategory, CalculationWorkerRequest,
-    CalculationWorkerResult, ComputationCache, DeterministicBackend, ImplementationIdentity,
-    PreparedCalculation, Scene, SnapshotContext, WorkerProtocolVersion, layout_wheel, render_key,
+    AnalysisKey, AspectAnalyzer, CalcKey, CalculationEngine, CalculationOutcome,
+    CalculationRequestId, CalculationWorkerFailure, CalculationWorkerFailureCategory,
+    CalculationWorkerRequest, CalculationWorkerResult, ComputationCache, DeterministicBackend,
+    ImplementationIdentity, PreparedCalculation, Scene, SnapshotContext, WorkerProtocolVersion,
+    layout_wheel, render_key,
 };
 #[cfg(target_arch = "wasm32")]
 use mirabile_store::ResourceTombstone;
@@ -29,13 +30,14 @@ use crate::{
     ActiveChartInspector, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind,
     AppReadModel, AppResult, Application, ApplicationActivityReadModel, ApplicationStatus,
     AspectDraftValue, AspectSetDraftMutation, AspectSetDraftReadModel, AspectSetSummary,
-    Availability, BindingSourceSummary, CalculationRuntime, CalculationRuntimeError,
-    ChartPersistence, ChartSlotAssignment, CommandCapability, DraftState, InlineCalculationRuntime,
-    InspectorReadModel, LibraryChartSummary, LibraryReadModel, OpenChartSummary,
-    PendingOperationReadModel, ProjectionVersion, ResourceBindingSummary, ResourceEditorReadModel,
-    StartupCalculationProfile, StartupPolicy, ViewComputationState, ViewReadModel, ViewSummary,
-    WorkspaceDocumentBacking, WorkspaceReadModel, WorkspaceSession, blank_workspace_session,
-    current_transits_session, current_unix_millis, workspace_commands::apply_workspace_command,
+    Availability, BindingSourceSummary, CalculationDiagnosticsReadModel, CalculationRuntime,
+    CalculationRuntimeError, ChartPersistence, ChartSlotAssignment, CommandCapability, DraftState,
+    ImplementationIdentityReadModel, InlineCalculationRuntime, InspectorReadModel,
+    LibraryChartSummary, LibraryReadModel, OpenChartSummary, PendingOperationReadModel,
+    ProjectionVersion, ResourceBindingSummary, ResourceEditorReadModel, StartupCalculationProfile,
+    StartupPolicy, ViewComputationState, ViewReadModel, ViewSummary, WorkspaceDocumentBacking,
+    WorkspaceReadModel, WorkspaceSession, blank_workspace_session, current_transits_session,
+    current_unix_millis, workspace_commands::apply_workspace_command,
 };
 #[cfg(feature = "xalen-backend")]
 use mirabile_engine::XalenBackend;
@@ -419,7 +421,8 @@ where
             let receiver = {
                 let mut state = self.state.borrow_mut();
                 if state.version > after {
-                    return state.read_model();
+                    drop(state);
+                    return self.read_model();
                 }
                 if state.version < after {
                     return Err(AppError::new(
@@ -483,6 +486,7 @@ struct ViewRuntime {
     scene: Option<Scene>,
     computation: ViewComputationState,
     expected: Option<ExpectedCalculation>,
+    last_expected: Option<ExpectedCalculation>,
 }
 
 impl Default for ViewRuntime {
@@ -491,6 +495,7 @@ impl Default for ViewRuntime {
             scene: None,
             computation: ViewComputationState::Loading,
             expected: None,
+            last_expected: None,
         }
     }
 }
@@ -499,6 +504,7 @@ impl Default for ViewRuntime {
 struct ExpectedCalculation {
     request_id: CalculationRequestId,
     calc_key: CalcKey,
+    analysis_key: AnalysisKey,
 }
 
 struct PendingViewCalculation {

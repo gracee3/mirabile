@@ -1,12 +1,13 @@
 use super::{
-    AppError, AppErrorKind, AppNotice, AppNoticeKind, AppResult, AspectAnalyzer, CalculationEngine,
-    CalculationOutcome, CalculationRuntime, CalculationRuntimeError, CalculationWorkerRequest,
-    CalculationWorkerResult, ChartSource, ConfigurationLayer, ExpectedCalculation,
-    PendingCachedView, PendingViewCalculation, PendingWork, PreparedCalculation, ProjectionVersion,
-    RealApplication, RealState, ResourceRepository, Scene, SnapshotContext, ViewCalculationPlan,
-    ViewComputationState, ViewInstanceId, WorkerProtocolVersion, info, layout_wheel,
-    not_found_for_view, render_key, resolve_typed_binding, success, view_computation_error,
-    view_resolution_error, worker_failure_error,
+    AnalysisKey, AppError, AppErrorKind, AppNotice, AppNoticeKind, AppResult, AspectAnalyzer,
+    CalculationEngine, CalculationOutcome, CalculationRuntime, CalculationRuntimeError,
+    CalculationWorkerRequest, CalculationWorkerResult, ChartSource, ConfigurationLayer,
+    ExpectedCalculation, PendingCachedView, PendingViewCalculation, PendingWork,
+    PreparedCalculation, ProjectionVersion, RealApplication, RealState, ResourceRepository, Scene,
+    SnapshotContext, ViewCalculationPlan, ViewComputationState, ViewInstanceId,
+    WorkerProtocolVersion, info, layout_wheel, not_found_for_view, render_key,
+    resolve_typed_binding, success, view_computation_error, view_resolution_error,
+    worker_failure_error,
 };
 
 impl<R, C> RealApplication<R, C>
@@ -270,6 +271,13 @@ where
         let expected = ExpectedCalculation {
             request_id,
             calc_key: prepared.calc_key.clone(),
+            analysis_key: AnalysisKey::derive(
+                std::slice::from_ref(&prepared.calc_key),
+                &plan.aspected_points,
+                &plan.aspect_set,
+                &plan.analysis,
+            )
+            .map_err(view_computation_error)?,
         };
         let cached = state.cache.calculation(&prepared.calc_key).cloned();
         if let Some(calculation) = cached {
@@ -318,7 +326,8 @@ where
             );
         }
         let runtime = state.views.entry(view_id).or_default();
-        runtime.expected = Some(expected);
+        runtime.expected = Some(expected.clone());
+        runtime.last_expected = Some(expected);
         runtime.computation = if runtime.scene.is_some() {
             ViewComputationState::Refreshing
         } else {

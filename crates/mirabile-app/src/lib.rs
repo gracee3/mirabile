@@ -5,7 +5,9 @@
 //! orchestration, persistence, and derived computation.
 
 mod application;
+mod automation;
 mod chart_draft;
+mod control;
 mod demo;
 mod intent;
 mod read_model;
@@ -18,7 +20,9 @@ mod workspace_commands;
 mod workspace_session;
 
 pub use application::*;
+pub use automation::*;
 pub use chart_draft::*;
+pub use control::*;
 pub use demo::*;
 pub use intent::*;
 pub use read_model::*;

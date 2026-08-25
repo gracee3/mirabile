@@ -11,7 +11,7 @@ use mirabile_app::{
 use crate::mock_application::MockApplication;
 use crate::{
     commands::{CommandId, command_for_key, metadata},
-    dispatcher::{Dispatcher, event_target_is_text_entry, execute_command},
+    dispatcher::{WorkbenchCoordinator, event_target_is_text_entry, execute_command},
     inspector::Inspector,
     view_host::ViewHost,
     workspace_rail::WorkspaceRail,
@@ -24,7 +24,7 @@ pub fn App() -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     let application: Rc<dyn Application> = Rc::new(MockApplication::new());
     let model = RwSignal::new(AppReadModel::initializing());
-    let dispatcher = Dispatcher::new(application, model);
+    let dispatcher = WorkbenchCoordinator::new(application, model);
     let orb_buffer = RwSignal::new(String::new());
     let orb_buffer_resource = RwSignal::new(None::<ResourceId>);
     let orb_error = RwSignal::new(None::<String>);
@@ -104,7 +104,7 @@ pub fn App() -> impl IntoView {
 #[component]
 fn ReadyShell(
     model: RwSignal<AppReadModel>,
-    dispatcher: Dispatcher,
+    dispatcher: WorkbenchCoordinator,
     orb_buffer: RwSignal<String>,
     orb_error: RwSignal<Option<String>>,
 ) -> impl IntoView {
@@ -144,7 +144,16 @@ fn ReadyShell(
             />
         </header>
 
-        <div class="status-strip" aria-live="polite" aria-atomic="true">
+        <div
+            class="status-strip"
+            aria-live="polite"
+            aria-atomic="true"
+            data-coordinator-running=move || dispatcher.read_model().running.to_string()
+            data-trace-count=move || {
+                model.track();
+                dispatcher.trace().len().to_string()
+            }
+        >
             {move || model.get().notice.map_or_else(
                 || "Application ready".to_owned(),
                 |notice| notice.message,
@@ -162,7 +171,7 @@ fn ReadyShell(
 #[component]
 fn CommandActions(
     model: RwSignal<AppReadModel>,
-    dispatcher: Dispatcher,
+    dispatcher: WorkbenchCoordinator,
     orb_buffer: RwSignal<String>,
     orb_error: RwSignal<Option<String>>,
 ) -> impl IntoView {

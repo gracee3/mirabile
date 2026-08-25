@@ -527,15 +527,32 @@ fn initialization_is_versioned_and_snapshot_is_immediate() {
     let immediate = block_on(first.snapshot()).expect("snapshot succeeds");
     assert_eq!(immediate, loading);
     assert!(matches!(
-        immediate.active_view.map(|view| view.computation),
+        immediate.active_view.as_ref().map(|view| &view.computation),
         Some(ViewComputationState::Loading)
     ));
+    let loading_diagnostics = immediate
+        .calculation
+        .as_ref()
+        .expect("provider-neutral diagnostics are projected");
+    assert_eq!(loading_diagnostics.backend.id, DeterministicBackend::ID);
+    assert_eq!(loading_diagnostics.worker_protocol, 3);
+    assert!(loading_diagnostics.active_request_id.is_some());
+    assert!(loading_diagnostics.calc_key.is_some());
+    assert!(loading_diagnostics.analysis_key.is_some());
+    assert!(!loading_diagnostics.last_good_scene_present);
     let fresh = block_on(first.wait_for_update(loading.version)).expect("view settles");
     assert_eq!(fresh.version, ProjectionVersion::new(2));
     assert!(matches!(
-        fresh.active_view.map(|view| view.computation),
+        fresh.active_view.as_ref().map(|view| &view.computation),
         Some(ViewComputationState::Fresh)
     ));
+    let fresh_diagnostics = fresh.calculation.as_ref().expect("diagnostics remain");
+    assert_eq!(fresh_diagnostics.active_request_id, None);
+    assert_eq!(
+        fresh_diagnostics.calc_key, loading_diagnostics.calc_key,
+        "the last completed calculation identity remains inspectable"
+    );
+    assert!(fresh_diagnostics.last_good_scene_present);
 
     let second = demo_application(repository.clone());
     ready(&second);

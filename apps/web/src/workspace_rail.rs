@@ -1,12 +1,12 @@
 use leptos::prelude::*;
 use mirabile_app::{AppIntent, AppReadModel, ChartPersistence};
 
-use crate::{dispatcher::Dispatcher, library::LibraryShelf};
+use crate::{dispatcher::WorkbenchCoordinator, library::LibraryShelf};
 
 #[component]
 pub(super) fn WorkspaceRail(
     model: RwSignal<AppReadModel>,
-    dispatcher: Dispatcher,
+    dispatcher: WorkbenchCoordinator,
 ) -> impl IntoView {
     view! {
         <nav

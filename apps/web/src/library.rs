@@ -1,10 +1,13 @@
 use leptos::prelude::*;
 use mirabile_app::{AppIntent, AppReadModel, ChartPersistence};
 
-use crate::dispatcher::Dispatcher;
+use crate::dispatcher::WorkbenchCoordinator;
 
 #[component]
-pub(super) fn LibraryShelf(model: RwSignal<AppReadModel>, dispatcher: Dispatcher) -> impl IntoView {
+pub(super) fn LibraryShelf(
+    model: RwSignal<AppReadModel>,
+    dispatcher: WorkbenchCoordinator,
+) -> impl IntoView {
     view! {
         <section class="library-shelf" aria-labelledby="library-title">
             <p class="section-kicker">"LIBRARY"</p>

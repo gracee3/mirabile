@@ -358,6 +358,7 @@ impl MockState {
             version: self.version,
             status: self.status.clone(),
             activity: self.activity_read_model(),
+            calculation: None,
             library: LibraryReadModel {
                 charts: self.library_charts.clone(),
                 aspect_sets: self

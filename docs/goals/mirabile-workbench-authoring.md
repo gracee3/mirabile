@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 2 - semantic controls, observation, and coordinator metadata
+- Current phase: 3 - native workbench controls and edit buffers
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -24,8 +24,8 @@
 | Phase | State | Durable result | Validation | Commit |
 | --- | --- | --- | --- | --- |
 | 1. Isolation and settlement | Complete | Dedicated worktree; living goal; authoritative activity projection; observable chart/workspace/resource writes | `./scripts/check.sh` passes 119 tests, strict Clippy, formatting, and diff checks | Phase 1 commit |
-| 2. Semantic observation | In progress | Control IDs/addresses, manifest DTOs, snapshot, trace, coordinator metadata | Pending | Pending |
-| 3. Workbench controls | Pending | Native shallow components and buffered edit semantics | Pending | Pending |
+| 2. Semantic observation | Complete | Validated ControlId/ControlAddress, manifest/snapshot DTOs, bounded trace, calculation diagnostics, FIFO coordinator | `./scripts/check.sh` passes 125 tests, strict Clippy, formatting, and diff checks | Phase 2 commit |
+| 3. Workbench controls | In progress | Native shallow components and buffered edit semantics | Pending | Pending |
 | 4. Automation tooling | Pending | Feature-gated bridge, isolated database, CDP CLI, artifacts | Pending | Pending |
 | 5. Authoring capabilities | Pending | Provider-neutral supported/default options | Pending | Pending |
 | 6. New chart authoring | Pending | Typed editor, preview/cancel/atomic create | Pending | Pending |
@@ -55,6 +55,9 @@
 - Current authoritative view expectations determine projected calculation work. Superseded runtime requests can remain internally drainable without keeping the projection unsettled.
 - ChartDraft atomic creation and WorkspaceDocument persistence are accepted as pending work and complete through `wait_for_update()`, matching the existing Aspect Set save lifecycle.
 - Repository success, conflict, and failure all advance `ProjectionVersion`, publish a settled recoverable projection, and keep `ApplicationStatus::Ready`. Presentation settlement loops no longer reverse-engineer pending state from component fields.
+- `ControlId` uses validated lowercase dotted segments; `ControlAddress` adds sorted semantic qualifiers and rejects duplicates or invalid JSON input. Manifest descriptors carry authoritative value, optional local buffer, interaction state, availability/options, and entity identity.
+- `AutomationSnapshotV1` selects application/workspace/chart/view/calculation state, controls, coordinator state, and trace without serializing `Scene`. Provider-neutral diagnostics retain backend/engine identity, Worker protocol, request and calculation/analysis keys, computation state, and last-good Scene presence.
+- `WorkbenchCoordinator` serializes initialization and all semantic actions FIFO, publishes only newer projections, settles through the application predicate, tracks action source/origin/highlight, and records a bounded 256-entry execution trace with accepted/settled projections and pending transitions.
 
 ## Blockers
 
