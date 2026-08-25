@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 10 - session display state and chart slots
+- Current phase: 11 - dense diagnostics and deliberate exports
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -32,7 +32,7 @@
 | 7. Saved chart editing | Complete | Atomic compare-only/write CAS batch; separate Record/Definition bases; saved preview/cancel/save; structured two-component conflicts; shared-record protection | `./scripts/check.sh` passes 139 Rust tests plus 5 Python tests; native/WASM checks; IndexedDB rollback contract; live visible-control saved edit/cancel/save journey | Phase 7 commit |
 | 8. Workspace management | Complete | Workspace summaries/title metadata; typed new/open/rename/save/discard; loss-reasoned Save/Discard/Stay switching; explicit idempotent atomic demo loading | `./scripts/check.sh` passes 145 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control lifecycle | Phase 8 commit |
 | 9. Aspect Set authoring | Complete | New/duplicate/saved lifecycle; title and every row; canonical create/CAS save; workspace binding; per-row invalid buffers | `./scripts/check.sh` passes 147 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control full-row journey | Phase 9 commit |
-| 10. Session and slots | Pending | Inspectable temporary/durable display and slot state | Pending | Pending |
+| 10. Session and slots | Complete | Supported point visibility; complete temporary/durable replacement and promotion; saved/draft slot identity, promotion, and options | `./scripts/check.sh` passes 148 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control session and slot journey | Phase 10 commit |
 | 11. Diagnostics UI | Pending | Dense diagnostics, trace, deliberate JSON export | Pending | Pending |
 | 12. Macros | Pending | Record/import/export/replay with bindings and failures | Pending | Pending |
 | 13. Level A scenarios | Pending | Shared Mock/Real semantic conformance | Pending | Pending |
@@ -85,6 +85,11 @@
 - `DraftState` distinguishes unsaved New/Creating from saved Clean/Dirty/Saving/Conflict states. Saved title and row changes publish with revision CAS; fresh create uses revision one, then binds the new resource into the working workspace and marks that document dirty. Canceling New writes nothing.
 - Native `aspect.title`, `aspect.enabled[aspect=...]`, and `aspect.maximum-orb[aspect=...]` controls use independent local buffers. A malformed row remains local, is visible as invalid in the control manifest, and disables both editor and toolbar save until corrected; no invalid string crosses the typed application boundary.
 - The visible-control journey edits Square and Conjunction, renames and saves revision two, verifies authoritative values, duplicates the complete set, publishes revision one, and observes settled resource-save and recalculation transitions against isolated IndexedDB, the Worker, and XALEN.
+- Active-view display projection enumerates only points supported by the provider descriptor and records effective, durable, and optional temporary visibility separately. Unsupported semantic point mutations are rejected before session state changes.
+- Temporary display overrides are complete replacement values seeded from the durable view, not additive hidden-point deltas. This preserves unrelated durable choices during promotion and permits an explicit temporary unhide to clear a durable hidden point; promotion removes the session layer and dirties the workspace.
+- Slot projections expose the effective chart, durable chart, draft overlay, saved definition identity or draft promotion requirement, and every option with enabled state and reason. Required slots retain an inspectable disabled Unassigned option instead of silently omitting it.
+- Automation snapshots include point visibility and slot provenance without Scene contents. The constrained scenario runner now follows numeric array segments in dotted expectation paths, enabling exact machine assertions over those versioned snapshot structures.
+- Native supported-point toggles and explicit display promotion route through the coordinator. The live control journey proves temporary hide, durable promotion, new-chart draft assignment, atomic chart creation, saved-definition slot promotion, option reasons, settlement, and trace against isolated IndexedDB, the Worker, and XALEN.
 
 ## Blockers
 

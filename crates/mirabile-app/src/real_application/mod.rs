@@ -35,14 +35,15 @@ use crate::{
     AspectDraftValue, AspectSetDraftMutation, AspectSetDraftReadModel, AspectSetSummary,
     AuthoringCapabilitiesReadModel, Availability, BindingSourceSummary,
     CalculationDiagnosticsReadModel, CalculationRuntime, CalculationRuntimeError, ChartEditorState,
-    ChartMutation, ChartPersistence, ChartSlotAssignment, CommandCapability, DraftState,
-    ImplementationIdentityReadModel, InlineCalculationRuntime, InspectorReadModel,
-    LibraryChartSummary, LibraryReadModel, OpenChartSummary, PendingOperationReadModel,
-    ProjectionVersion, ResourceBindingSummary, ResourceEditorReadModel, StartupCalculationProfile,
-    StartupPolicy, ViewComputationState, ViewReadModel, ViewSummary, WorkspaceDocumentBacking,
-    WorkspaceReadModel, WorkspaceSession, WorkspaceSwitchDecisionReadModel, WorkspaceSwitchTarget,
-    blank_workspace_session, current_transits_session, current_unix_millis,
-    workspace_commands::apply_workspace_command,
+    ChartMutation, ChartPersistence, ChartSlotAssignment, ChartSlotOption, CommandCapability,
+    DisplayValueSource, DraftState, ImplementationIdentityReadModel, InlineCalculationRuntime,
+    InspectorReadModel, LibraryChartSummary, LibraryReadModel, OpenChartSummary,
+    PendingOperationReadModel, PointVisibilityReadModel, ProjectionVersion, ResourceBindingSummary,
+    ResourceEditorReadModel, SlotAssignmentSource, StartupCalculationProfile, StartupPolicy,
+    ViewComputationState, ViewDisplayReadModel, ViewReadModel, ViewSummary,
+    WorkspaceDocumentBacking, WorkspaceReadModel, WorkspaceSession,
+    WorkspaceSwitchDecisionReadModel, WorkspaceSwitchTarget, blank_workspace_session,
+    current_transits_session, current_unix_millis, workspace_commands::apply_workspace_command,
 };
 #[cfg(feature = "xalen-backend")]
 use mirabile_engine::XalenBackend;

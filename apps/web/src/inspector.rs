@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use mirabile_app::{
     ActionSource, Angle, AppAction, AppIntent, AppReadModel, AspectDraftValue,
     AspectSetDraftMutation, Availability, BindingSourceSummary, ChartPersistence, ControlAddress,
-    ControlId, DraftState, InstanceId, ResourceId,
+    ControlId, DisplayValueSource, DraftState, InstanceId, ResourceId, SlotAssignmentSource,
 };
 
 use crate::chart_editor::ChartAuthoring;
@@ -52,6 +52,63 @@ pub(super) fn Inspector(
 
             <ChartAuthoring model dispatcher />
 
+            <section class="inspector-section" aria-labelledby="display-title">
+                <h3 id="display-title">"Point visibility"</h3>
+                {move || model.get().active_view.map(|view| view.display).map(|display| view! {
+                    <div class="display-point-list">
+                        {display.points.into_iter().map(|point| {
+                            let point_id = point.point_id;
+                            let qualifier = point_id.as_str().to_owned();
+                            let point_dispatcher = dispatcher;
+                            let source = match point.source {
+                                DisplayValueSource::Durable => "Durable workspace value",
+                                DisplayValueSource::Temporary => "Temporary session value",
+                            };
+                            view! {
+                                <label class="check-field display-point-control">
+                                    <input
+                                        type="checkbox"
+                                        data-mirabile-control=ControlId::DISPLAY_POINT.to_string()
+                                        data-mirabile-point=qualifier.clone()
+                                        data-mirabile-address=ControlAddress::qualified(
+                                            ControlId::DISPLAY_POINT,
+                                            [("point", qualifier.as_str())],
+                                        ).expect("display point address").to_string()
+                                        prop:checked=point.visible
+                                        on:change=move |event| point_dispatcher.dispatch_from(
+                                            AppIntent::SetTemporaryPointHidden {
+                                                point_id: point_id.clone(),
+                                                hidden: !event_target_checked(&event),
+                                            },
+                                            ActionSource::Human,
+                                            ControlAddress::qualified(
+                                                ControlId::DISPLAY_POINT,
+                                                [("point", point_id.as_str())],
+                                            ).ok(),
+                                        )
+                                    />
+                                    <span>{point.label}</span>
+                                    <small>{source}</small>
+                                </label>
+                            }
+                        }).collect_view()}
+                    </div>
+                    <button
+                        class="button secondary full-width"
+                        type="button"
+                        data-mirabile-control=ControlId::DISPLAY_PROMOTE.to_string()
+                        data-mirabile-address=ControlAddress::new(ControlId::DISPLAY_PROMOTE).to_string()
+                        disabled=!display.promotion.is_enabled()
+                        title=availability_title(&display.promotion)
+                        on:click=move |_| dispatcher.dispatch_from(
+                            AppIntent::PromoteTemporaryDisplay,
+                            ActionSource::Human,
+                            Some(ControlAddress::new(ControlId::DISPLAY_PROMOTE)),
+                        )
+                    >"Promote display state to workspace"</button>
+                })}
+            </section>
+
             <section class="inspector-section" aria-labelledby="slot-title">
                 <h3 id="slot-title">"Chart slots"</h3>
                 {move || {
@@ -70,6 +127,15 @@ pub(super) fn Inspector(
                             ).expect("view slot address");
                             let origin = address.clone();
                             let current = assignment.chart.map_or_else(String::new, |id| id.to_string());
+                            let assignment_status = match assignment.source {
+                                SlotAssignmentSource::Unassigned => "Unassigned".to_owned(),
+                                SlotAssignmentSource::Saved { definition_id, .. } => {
+                                    format!("Saved definition {definition_id}")
+                                }
+                                SlotAssignmentSource::Draft { .. } => {
+                                    "Draft assignment · saved with the chart, not the workspace".into()
+                                }
+                            };
                             view! {
                                 <label class="field-label">
                                     <span>
@@ -100,11 +166,15 @@ pub(super) fn Inspector(
                                             );
                                         }
                                     >
-                                        {(!assignment.required).then(|| view! { <option value="">"Unassigned"</option> })}
-                                        {snapshot.workspace.charts.iter().map(|chart| view! {
-                                            <option value=chart.instance_id.to_string()>{chart.title.clone()}</option>
+                                        {assignment.options.into_iter().map(|option| view! {
+                                            <option
+                                                value=option.chart.map_or_else(String::new, |chart| chart.to_string())
+                                                disabled=!option.enabled
+                                                title=option.disabled_reason.unwrap_or_default()
+                                            >{option.label}</option>
                                         }).collect_view()}
                                     </select>
+                                    <small>{assignment_status}</small>
                                 </label>
                             }
                         }).collect_view()

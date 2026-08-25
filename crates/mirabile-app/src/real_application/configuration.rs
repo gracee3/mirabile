@@ -28,20 +28,18 @@ impl RealState {
             ConfigurationLayer::Workspace,
         )
         .map_err(view_resolution_error)?;
-        let temporary_hidden = self
+        let effective_overrides = self
             .session
             .as_ref()
             .and_then(|session| session.temporary_view_overrides.get(&view.id))
-            .map(|overrides| overrides.hidden_points.as_slice())
-            .unwrap_or_default();
-        if !view.overrides.hidden_points.is_empty() || !temporary_hidden.is_empty() {
+            .unwrap_or(&view.overrides);
+        if !effective_overrides.hidden_points.is_empty() {
             displayed_points
                 .value
                 .points
                 .retain(|selector| match selector {
                     mirabile_core::PointSelector::Point(point) => {
-                        !view.overrides.hidden_points.contains(point)
-                            && !temporary_hidden.contains(point)
+                        !effective_overrides.hidden_points.contains(point)
                     }
                     mirabile_core::PointSelector::Category(_) => true,
                 });

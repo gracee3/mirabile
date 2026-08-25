@@ -63,11 +63,11 @@ class CDPClientTests(unittest.TestCase):
         ):
             self.assertIn(name, source)
 
-    def test_scenario_expectations_follow_dotted_object_paths(self) -> None:
+    def test_scenario_expectations_follow_dotted_object_and_array_paths(self) -> None:
         module = load_workbench_control()
         module.assert_expectations(
-            {"value": {"chart": {"saved": True}}},
-            {"value.chart.saved": True},
+            {"value": {"chart": {"saved": True}, "slots": [{"source": "draft"}]}},
+            {"value.chart.saved": True, "value.slots.0.source": "draft"},
             3,
         )
         with self.assertRaises(CDPError):

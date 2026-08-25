@@ -2,10 +2,11 @@ use super::{
     ActiveChartInspector, AppAction, AppError, AppErrorKind, AppReadModel, AppResult,
     ApplicationStatus, AuthoringCapabilitiesReadModel, Availability,
     CalculationDiagnosticsReadModel, CalculationRuntime, ChartPersistence, ChartSlotAssignment,
-    CommandCapability, ConfigurationLayer, DraftState, ImplementationIdentityReadModel,
-    InspectorReadModel, LibraryReadModel, OpenChartSummary, RealApplication, RealState,
-    ResourceEditorReadModel, ResourceRepository, ViewComputationState, ViewInstanceId,
-    ViewReadModel, ViewSummary, WorkerProtocolVersion, WorkspaceReadModel,
+    ChartSlotOption, CommandCapability, ConfigurationLayer, DisplayValueSource, DraftState,
+    ImplementationIdentityReadModel, InspectorReadModel, LibraryReadModel, OpenChartSummary,
+    PointVisibilityReadModel, RealApplication, RealState, ResourceEditorReadModel,
+    ResourceRepository, SlotAssignmentSource, ViewComputationState, ViewDisplayReadModel,
+    ViewInstanceId, ViewReadModel, ViewSummary, WorkerProtocolVersion, WorkspaceReadModel,
     aspect_editor_read_model, binding_summary, capability, chart_record_subtitle, disabled,
     resolve_typed_binding, view_title,
 };
@@ -22,10 +23,14 @@ where
             .chart_editor
             .as_ref()
             .is_some_and(crate::ChartAuthoringEditor::location_complete);
-        model.authoring = AuthoringCapabilitiesReadModel::from_backend(
+        let authoring = AuthoringCapabilitiesReadModel::from_backend(
             self.engine.backend_descriptor(),
             complete_location,
         );
+        if let Some(view) = model.active_view.as_mut() {
+            view.display = state.view_display_read_model(view.view_id, &authoring.points)?;
+        }
+        model.authoring = authoring;
         model.calculation = Some(self.calculation_diagnostics(&state));
         Ok(model)
     }
@@ -214,6 +219,7 @@ impl RealState {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn view_read_model(&self, view_id: ViewInstanceId) -> AppResult<ViewReadModel> {
         let workspace = self.workspace().expect("read model checked workspace");
         let session = self.session()?;
@@ -231,22 +237,139 @@ impl RealState {
             resolve_typed_binding(&view.document, &self.catalog, ConfigurationLayer::View)
                 .map_err(|error| AppError::new(AppErrorKind::NotFound, error.to_string()))?;
         let runtime = self.views.get(&view_id).cloned().unwrap_or_default();
+        let slot_options = |required: bool| {
+            let mut options = vec![ChartSlotOption {
+                chart: None,
+                label: "Unassigned".into(),
+                persistence: None,
+                enabled: !required,
+                disabled_reason: required.then(|| "This slot requires a chart".into()),
+            }];
+            options.extend(workspace.chart_instances.iter().map(|chart| {
+                let title = self.catalog.chart_definition(chart.definition).map_or_else(
+                    || "Missing saved chart".into(),
+                    |definition| definition.title.clone(),
+                );
+                ChartSlotOption {
+                    chart: Some(chart.instance_id),
+                    label: title,
+                    persistence: Some(ChartPersistence::Saved {
+                        definition_id: chart.definition,
+                    }),
+                    enabled: true,
+                    disabled_reason: None,
+                }
+            }));
+            options.extend(session.draft_charts.iter().map(|chart| ChartSlotOption {
+                chart: Some(chart.instance_id),
+                label: chart.draft.title.clone(),
+                persistence: Some(ChartPersistence::Ephemeral),
+                enabled: true,
+                disabled_reason: None,
+            }));
+            options
+        };
         Ok(ViewReadModel {
             view_id,
             title: view_title(view, &self.catalog)?,
             scene: runtime.scene,
             computation: runtime.computation,
+            display: ViewDisplayReadModel {
+                points: Vec::new(),
+                has_temporary_override: false,
+                promotion: disabled(
+                    "Display state is unavailable until capabilities are projected",
+                ),
+            },
             slots: document
                 .value
                 .chart_slots
                 .into_iter()
-                .map(|slot| ChartSlotAssignment {
-                    chart: session.effective_chart_assignment(view_id, &slot.id),
-                    slot: slot.id,
-                    label: slot.label,
-                    required: slot.required,
+                .map(|slot| {
+                    let durable_chart = view.charts.get(&slot.id).copied();
+                    let draft_chart = session
+                        .draft_chart_assignments
+                        .get(&view_id)
+                        .and_then(|assignments| assignments.get(&slot.id))
+                        .copied();
+                    let chart = draft_chart.or(durable_chart);
+                    let source = if let Some(instance_id) = draft_chart {
+                        SlotAssignmentSource::Draft {
+                            instance_id,
+                            promotion: crate::DraftAssignmentPromotion::RequiresChartSave,
+                        }
+                    } else if let Some(instance_id) = durable_chart {
+                        let definition_id = workspace
+                            .chart_instances
+                            .iter()
+                            .find(|chart| chart.instance_id == instance_id)
+                            .map(|chart| chart.definition)
+                            .expect("validated saved slot assignment has a chart definition");
+                        SlotAssignmentSource::Saved {
+                            instance_id,
+                            definition_id,
+                        }
+                    } else {
+                        SlotAssignmentSource::Unassigned
+                    };
+                    ChartSlotAssignment {
+                        chart,
+                        durable_chart,
+                        draft_chart,
+                        source,
+                        options: slot_options(slot.required),
+                        slot: slot.id,
+                        label: slot.label,
+                        required: slot.required,
+                    }
                 })
                 .collect(),
+        })
+    }
+
+    fn view_display_read_model(
+        &self,
+        view_id: ViewInstanceId,
+        supported_points: &[crate::AuthoringOption<crate::PointId>],
+    ) -> AppResult<ViewDisplayReadModel> {
+        let session = self.session()?;
+        let view = session
+            .document
+            .views
+            .iter()
+            .find(|view| view.id == view_id)
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::NotFound,
+                    format!("View {view_id} was not found"),
+                )
+            })?;
+        let temporary = session.temporary_view_overrides.get(&view_id);
+        let effective = temporary.unwrap_or(&view.overrides);
+        Ok(ViewDisplayReadModel {
+            points: supported_points
+                .iter()
+                .filter(|option| option.enabled)
+                .map(|option| PointVisibilityReadModel {
+                    point_id: option.value.clone(),
+                    label: option.label.clone(),
+                    visible: !effective.hidden_points.contains(&option.value),
+                    durable_visible: !view.overrides.hidden_points.contains(&option.value),
+                    temporary_visible: temporary
+                        .map(|overrides| !overrides.hidden_points.contains(&option.value)),
+                    source: if temporary.is_some() {
+                        DisplayValueSource::Temporary
+                    } else {
+                        DisplayValueSource::Durable
+                    },
+                })
+                .collect(),
+            has_temporary_override: temporary.is_some(),
+            promotion: if temporary.is_some() {
+                Availability::Enabled
+            } else {
+                disabled("The active view has no temporary display override")
+            },
         })
     }
 

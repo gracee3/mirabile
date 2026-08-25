@@ -1,0 +1,25 @@
+{
+  "name": "session-slots-control",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.view.slots.0.source": "draft", "value.view.slots.0.promotion": "requires_chart_save", "value.view.slots.0.durable_chart": null}},
+    {"command": "get", "address": "display.point[point=sun]", "expect": {"enabled": true, "value": true}},
+    {"command": "check", "address": "display.point[point=sun]", "value": false},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.workspace.temporary_display_override": true}},
+    {"command": "get", "address": "display.point[point=sun]", "expect": {"value": false}},
+    {"command": "get", "address": "display.promote", "expect": {"enabled": true}},
+    {"command": "click", "address": "display.promote"},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.workspace.temporary_display_override": false, "value.workspace.dirty": true}},
+    {"command": "get", "address": "display.point[point=sun]", "expect": {"value": false}},
+    {"command": "click", "address": "chart.new"},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.view.slots.0.source": "draft", "value.view.slots.0.promotion": "requires_chart_save"}},
+    {"command": "click", "address": "chart.editor-save"},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.view.slots.0.source": "saved", "value.view.slots.0.draft_chart": null, "value.view.slots.0.promotion": null, "value.chart.saved": true}},
+    {"command": "get", "address": "view.slot", "expect": {"enabled": true}},
+    {"command": "trace"}
+  ]
+}

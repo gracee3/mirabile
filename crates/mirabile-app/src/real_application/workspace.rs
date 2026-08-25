@@ -489,6 +489,22 @@ where
         point_id: mirabile_core::PointId,
         hidden: bool,
     ) -> AppResult<()> {
+        let supported = self
+            .engine
+            .backend_descriptor()
+            .capabilities
+            .celestial
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.supported_points.contains(&point_id));
+        if !supported {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                format!(
+                    "Point {} is not supported by the active calculation provider",
+                    point_id.as_str()
+                ),
+            ));
+        }
         let mut state = self.state.borrow_mut();
         let session = state.session.as_mut().ok_or_else(|| {
             AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
@@ -496,13 +512,43 @@ where
         let view_id = session
             .active_view
             .ok_or_else(|| AppError::new(AppErrorKind::Unavailable, "There is no active view"))?;
-        let overrides = session.temporary_view_overrides.entry(view_id).or_default();
+        let durable = session
+            .document
+            .views
+            .iter()
+            .find(|view| view.id == view_id)
+            .map(|view| view.overrides.clone())
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::NotFound,
+                    format!("View {view_id} was not found"),
+                )
+            })?;
+        let current_hidden = session
+            .temporary_view_overrides
+            .get(&view_id)
+            .unwrap_or(&durable)
+            .hidden_points
+            .contains(&point_id);
+        if current_hidden == hidden {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                format!(
+                    "Point {} visibility already has the requested value",
+                    point_id.as_str()
+                ),
+            ));
+        }
+        let overrides = session
+            .temporary_view_overrides
+            .entry(view_id)
+            .or_insert_with(|| durable.clone());
         if hidden && !overrides.hidden_points.contains(&point_id) {
             overrides.hidden_points.push(point_id);
         } else if !hidden {
             overrides.hidden_points.retain(|point| point != &point_id);
         }
-        if overrides == &mirabile_core::ViewOverrides::default() {
+        if overrides == &durable {
             session.temporary_view_overrides.remove(&view_id);
         }
         self.submit_active_view_refresh(&mut state)?;

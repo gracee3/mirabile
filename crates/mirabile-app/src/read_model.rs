@@ -423,7 +423,31 @@ pub struct ViewReadModel {
     pub title: String,
     pub scene: Option<Scene>,
     pub computation: ViewComputationState,
+    pub display: ViewDisplayReadModel,
     pub slots: Vec<ChartSlotAssignment>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ViewDisplayReadModel {
+    pub points: Vec<PointVisibilityReadModel>,
+    pub has_temporary_override: bool,
+    pub promotion: Availability,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PointVisibilityReadModel {
+    pub point_id: PointId,
+    pub label: String,
+    pub visible: bool,
+    pub durable_visible: bool,
+    pub temporary_visible: Option<bool>,
+    pub source: DisplayValueSource,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DisplayValueSource {
+    Durable,
+    Temporary,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -440,6 +464,37 @@ pub struct ChartSlotAssignment {
     pub label: String,
     pub required: bool,
     pub chart: Option<InstanceId>,
+    pub durable_chart: Option<InstanceId>,
+    pub draft_chart: Option<InstanceId>,
+    pub source: SlotAssignmentSource,
+    pub options: Vec<ChartSlotOption>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SlotAssignmentSource {
+    Unassigned,
+    Saved {
+        instance_id: InstanceId,
+        definition_id: ResourceId,
+    },
+    Draft {
+        instance_id: InstanceId,
+        promotion: DraftAssignmentPromotion,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DraftAssignmentPromotion {
+    RequiresChartSave,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChartSlotOption {
+    pub chart: Option<InstanceId>,
+    pub label: String,
+    pub persistence: Option<ChartPersistence>,
+    pub enabled: bool,
+    pub disabled_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

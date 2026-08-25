@@ -6,11 +6,13 @@ use mirabile_app::{
     AppNoticeKind, AppReadModel, AppResult, Application, ApplicationActivityReadModel,
     ApplicationStatus, AspectDraftValue, AspectId, AspectSetDraftMutation, AspectSetDraftReadModel,
     AspectSetSummary, AuthoringCapabilitiesReadModel, Availability, BindingSourceSummary,
-    ChartPersistence, ChartSlotAssignment, ChartSlotId, Circle, CommandCapability, DraftState,
-    FillRole, InspectorReadModel, InstanceId, Label, LibraryChartSummary, LibraryReadModel, Line,
-    OpenChartSummary, PendingOperationReadModel, ProjectionVersion, ResourceBindingSummary,
-    ResourceEditorReadModel, ResourceId, Revision, Scene, StrokeRole, ViewComputationState,
-    ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel, WorkspaceSummary,
+    ChartPersistence, ChartSlotAssignment, ChartSlotId, Circle, CommandCapability,
+    DisplayValueSource, DraftAssignmentPromotion, DraftState, FillRole, InspectorReadModel,
+    InstanceId, Label, LibraryChartSummary, LibraryReadModel, Line, OpenChartSummary,
+    PendingOperationReadModel, PointVisibilityReadModel, ProjectionVersion, ResourceBindingSummary,
+    ResourceEditorReadModel, ResourceId, Revision, Scene, SlotAssignmentSource, StrokeRole,
+    ViewComputationState, ViewDisplayReadModel, ViewInstanceId, ViewReadModel, ViewSummary,
+    WorkspaceReadModel, WorkspaceSummary,
 };
 
 const CHART_DEFINITION_IDS: [&str; 5] = [
@@ -269,6 +271,13 @@ impl MockState {
                     label: "Radix".into(),
                     required: true,
                     chart: Some(instances[1]),
+                    durable_chart: Some(instances[1]),
+                    draft_chart: None,
+                    source: SlotAssignmentSource::Saved {
+                        instance_id: instances[1],
+                        definition_id: parse_resource(CHART_DEFINITION_IDS[1]),
+                    },
+                    options: Vec::new(),
                 }],
             },
             MockView {
@@ -282,12 +291,26 @@ impl MockState {
                         label: "Radix".into(),
                         required: true,
                         chart: Some(instances[1]),
+                        durable_chart: Some(instances[1]),
+                        draft_chart: None,
+                        source: SlotAssignmentSource::Saved {
+                            instance_id: instances[1],
+                            definition_id: parse_resource(CHART_DEFINITION_IDS[1]),
+                        },
+                        options: Vec::new(),
                     },
                     ChartSlotAssignment {
                         slot: outer,
                         label: "Outer wheel".into(),
                         required: false,
                         chart: Some(instances[0]),
+                        durable_chart: Some(instances[0]),
+                        draft_chart: None,
+                        source: SlotAssignmentSource::Saved {
+                            instance_id: instances[0],
+                            definition_id: parse_resource(CHART_DEFINITION_IDS[0]),
+                        },
+                        options: Vec::new(),
                     },
                 ],
             },
@@ -400,6 +423,29 @@ impl MockState {
                 title: active_view.title.clone(),
                 scene: active_view.scene.clone(),
                 computation: active_view.computation.clone(),
+                display: ViewDisplayReadModel {
+                    points: vec![PointVisibilityReadModel {
+                        point_id: mirabile_app::PointId::new("sun").expect("point ID"),
+                        label: "sun".into(),
+                        visible: true,
+                        durable_visible: true,
+                        temporary_visible: self
+                            .workspace
+                            .temporary_display_override
+                            .then_some(true),
+                        source: if self.workspace.temporary_display_override {
+                            DisplayValueSource::Temporary
+                        } else {
+                            DisplayValueSource::Durable
+                        },
+                    }],
+                    has_temporary_override: self.workspace.temporary_display_override,
+                    promotion: if self.workspace.temporary_display_override {
+                        Availability::Enabled
+                    } else {
+                        disabled("The active view has no temporary display override")
+                    },
+                },
                 slots: self.effective_slots(active_view),
             }),
             inspector: InspectorReadModel {
@@ -459,6 +505,11 @@ impl MockState {
                     .get(&(view.view_id, assignment.slot.clone()))
                 {
                     assignment.chart = Some(*chart);
+                    assignment.draft_chart = Some(*chart);
+                    assignment.source = SlotAssignmentSource::Draft {
+                        instance_id: *chart,
+                        promotion: DraftAssignmentPromotion::RequiresChartSave,
+                    };
                 }
                 assignment
             })

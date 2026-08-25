@@ -163,6 +163,41 @@ impl AutomationSnapshotV1 {
                 title: view.title.clone(),
                 computation: computation_label(&view.computation).into(),
                 last_good_scene_present: view.scene.is_some(),
+                points: view
+                    .display
+                    .points
+                    .iter()
+                    .map(|point| AutomationPointVisibility {
+                        point_id: point.point_id.as_str().into(),
+                        visible: point.visible,
+                        durable_visible: point.durable_visible,
+                        temporary_visible: point.temporary_visible,
+                    })
+                    .collect(),
+                slots: view
+                    .slots
+                    .iter()
+                    .map(|slot| {
+                        let (source, definition_id, promotion) = match slot.source {
+                            crate::SlotAssignmentSource::Unassigned => ("unassigned", None, None),
+                            crate::SlotAssignmentSource::Saved { definition_id, .. } => {
+                                ("saved", Some(definition_id), None)
+                            }
+                            crate::SlotAssignmentSource::Draft { .. } => {
+                                ("draft", None, Some("requires_chart_save"))
+                            }
+                        };
+                        AutomationSlotAssignment {
+                            slot: slot.slot.as_str().into(),
+                            chart: slot.chart,
+                            durable_chart: slot.durable_chart,
+                            draft_chart: slot.draft_chart,
+                            source: source.into(),
+                            definition_id,
+                            promotion: promotion.map(str::to_owned),
+                        }
+                    })
+                    .collect(),
             });
         Self {
             schema_version: AUTOMATION_SNAPSHOT_VERSION,
@@ -214,6 +249,27 @@ pub struct AutomationViewSnapshot {
     pub title: String,
     pub computation: String,
     pub last_good_scene_present: bool,
+    pub points: Vec<AutomationPointVisibility>,
+    pub slots: Vec<AutomationSlotAssignment>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AutomationPointVisibility {
+    pub point_id: String,
+    pub visible: bool,
+    pub durable_visible: bool,
+    pub temporary_visible: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AutomationSlotAssignment {
+    pub slot: String,
+    pub chart: Option<InstanceId>,
+    pub durable_chart: Option<InstanceId>,
+    pub draft_chart: Option<InstanceId>,
+    pub source: String,
+    pub definition_id: Option<ResourceId>,
+    pub promotion: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

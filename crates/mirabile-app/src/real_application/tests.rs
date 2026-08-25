@@ -324,6 +324,21 @@ fn aspect_row<'a>(
         .expect("Aspect Set row is projected")
 }
 
+fn point_visibility<'a>(
+    model: &'a AppReadModel,
+    point_id: &str,
+) -> &'a crate::PointVisibilityReadModel {
+    model
+        .active_view
+        .as_ref()
+        .expect("active view")
+        .display
+        .points
+        .iter()
+        .find(|point| point.point_id.as_str() == point_id)
+        .expect("supported point visibility is projected")
+}
+
 fn ensure_demo<R>(repository: &R)
 where
     R: ResourceRepository + Clone,
@@ -1205,6 +1220,7 @@ fn resolved_required_view_slots_are_referential_application_invariants() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn chart_draft_previews_then_atomically_creates_record_and_definition() {
     let repository = MemoryRepository::default();
     let application = demo_application(repository.clone());
@@ -1252,8 +1268,31 @@ fn chart_draft_previews_then_atomically_creates_record_and_definition() {
     .expect("draft can be assigned for preview");
     let preview = block_on(application.wait_for_update(previewing.version))
         .expect("draft preview calculation settles");
-    assert!(preview.active_view.is_some_and(|view| {
+    assert!(preview.active_view.as_ref().is_some_and(|view| {
         view.scene.is_some() && view.computation == ViewComputationState::Fresh
+    }));
+    let preview_slot = preview
+        .active_view
+        .as_ref()
+        .and_then(|view| view.slots.iter().find(|slot| slot.slot == required_slot))
+        .expect("draft slot projection");
+    assert_eq!(preview_slot.draft_chart, Some(instance_id));
+    assert!(matches!(
+        preview_slot.source,
+        SlotAssignmentSource::Draft {
+            instance_id: draft_id,
+            promotion: crate::DraftAssignmentPromotion::RequiresChartSave,
+        } if draft_id == instance_id
+    ));
+    assert!(preview_slot.options.iter().any(|option| {
+        option.chart == Some(instance_id)
+            && option.persistence == Some(ChartPersistence::Ephemeral)
+            && option.enabled
+    }));
+    assert!(preview_slot.options.iter().any(|option| {
+        option.chart.is_none()
+            && !option.enabled
+            && option.disabled_reason.as_deref() == Some("This slot requires a chart")
     }));
     {
         let state = application.state.borrow();
@@ -1282,6 +1321,20 @@ fn chart_draft_previews_then_atomically_creates_record_and_definition() {
     let ChartPersistence::Saved { definition_id } = saved_chart.persistence else {
         panic!("saved draft projects a canonical definition")
     };
+    let saved_slot = saved
+        .active_view
+        .as_ref()
+        .and_then(|view| view.slots.iter().find(|slot| slot.slot == required_slot))
+        .expect("saved slot projection");
+    assert_eq!(saved_slot.draft_chart, None);
+    assert_eq!(saved_slot.durable_chart, Some(instance_id));
+    assert!(matches!(
+        saved_slot.source,
+        SlotAssignmentSource::Saved {
+            instance_id: saved_id,
+            definition_id: saved_definition,
+        } if saved_id == instance_id && saved_definition == definition_id
+    ));
     assert!(saved.workspace.document_dirty);
     {
         let state = application.state.borrow();
@@ -1914,6 +1967,12 @@ fn temporary_display_override_requires_explicit_promotion_and_workspace_save() {
     let ids = demo_ids();
     assert!(!initial.workspace.document_dirty);
     let sun = PointId::new("sun").expect("point ID");
+    let unsupported = block_on(application.dispatch(AppIntent::SetTemporaryPointHidden {
+        point_id: PointId::new("pluto").expect("point ID"),
+        hidden: true,
+    }))
+    .expect_err("unsupported point is rejected");
+    assert_eq!(unsupported.kind, AppErrorKind::InvalidIntent);
 
     let temporary = block_on(application.dispatch(AppIntent::SetTemporaryPointHidden {
         point_id: sun.clone(),
@@ -1922,6 +1981,12 @@ fn temporary_display_override_requires_explicit_promotion_and_workspace_save() {
     .expect("temporary override succeeds");
     assert!(!temporary.workspace.document_dirty);
     assert!(temporary.workspace.has_temporary_display_override);
+    assert!(!point_visibility(&temporary, "sun").visible);
+    assert!(point_visibility(&temporary, "sun").durable_visible);
+    assert_eq!(
+        point_visibility(&temporary, "sun").temporary_visible,
+        Some(false)
+    );
     block_on(application.wait_for_update(temporary.version)).expect("temporary preview settles");
     let canonical = block_on(repository.get(ids.workspace))
         .expect("workspace read")
@@ -1932,6 +1997,9 @@ fn temporary_display_override_requires_explicit_promotion_and_workspace_save() {
         .expect("promotion succeeds");
     assert!(promoted.workspace.document_dirty);
     assert!(!promoted.workspace.has_temporary_display_override);
+    assert!(!point_visibility(&promoted, "sun").visible);
+    assert!(!point_visibility(&promoted, "sun").durable_visible);
+    assert_eq!(point_visibility(&promoted, "sun").temporary_visible, None);
     block_on(application.wait_for_update(promoted.version)).expect("promoted preview settles");
 
     let saving =
@@ -1946,6 +2014,46 @@ fn temporary_display_override_requires_explicit_promotion_and_workspace_save() {
     };
     assert_eq!(document.revision.get(), 2);
     assert_eq!(document.payload.views[0].overrides.hidden_points, vec![sun]);
+}
+
+#[test]
+fn temporary_display_is_a_complete_replacement_that_can_unhide_durable_points() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    ready(&application);
+    let sun = PointId::new("sun").expect("point ID");
+
+    let hidden = block_on(application.dispatch(AppIntent::SetTemporaryPointHidden {
+        point_id: sun.clone(),
+        hidden: true,
+    }))
+    .expect("temporary hide");
+    settle(&application, hidden);
+    let promoted =
+        block_on(application.dispatch(AppIntent::PromoteTemporaryDisplay)).expect("hide promotes");
+    settle(&application, promoted);
+    assert!(
+        !point_visibility(&block_on(application.snapshot()).expect("snapshot"), "sun")
+            .durable_visible
+    );
+
+    let visible = block_on(application.dispatch(AppIntent::SetTemporaryPointHidden {
+        point_id: sun,
+        hidden: false,
+    }))
+    .expect("temporary unhide");
+    assert!(point_visibility(&visible, "sun").visible);
+    assert!(!point_visibility(&visible, "sun").durable_visible);
+    assert_eq!(
+        point_visibility(&visible, "sun").temporary_visible,
+        Some(true)
+    );
+    settle(&application, visible);
+    let promoted = block_on(application.dispatch(AppIntent::PromoteTemporaryDisplay))
+        .expect("unhide promotes");
+    assert!(point_visibility(&promoted, "sun").visible);
+    assert!(point_visibility(&promoted, "sun").durable_visible);
+    assert_eq!(point_visibility(&promoted, "sun").temporary_visible, None);
 }
 
 #[test]

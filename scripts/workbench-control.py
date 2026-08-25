@@ -221,11 +221,14 @@ def assert_expectations(result: Any, expectations: Any, step: int) -> None:
             raise CDPError(f"scenario step {step} expectation path is invalid")
         actual = result
         for segment in path.split("."):
-            if not isinstance(actual, dict) or segment not in actual:
+            if isinstance(actual, dict) and segment in actual:
+                actual = actual[segment]
+            elif isinstance(actual, list) and segment.isdigit() and int(segment) < len(actual):
+                actual = actual[int(segment)]
+            else:
                 raise CDPError(
                     f"scenario step {step} expectation path {path!r} was not present"
                 )
-            actual = actual[segment]
         if actual != expected:
             raise CDPError(
                 f"scenario step {step} expected {path}={expected!r}; got {actual!r}"
