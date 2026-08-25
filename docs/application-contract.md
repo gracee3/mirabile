@@ -134,6 +134,13 @@ intent is accepted while the view is already `Refreshing`; it replaces that view
 request ID and CalcKey. Stale success and failure results make no authoritative transition and do
 not advance `ProjectionVersion`.
 
+`ApplicationActivityReadModel { settled, pending_operations }` is the authoritative description of
+application work. Consumers, coordinator settlement, macros, and automation call
+`AppReadModel::is_settled()` rather than inferring activity from editor or view fields. Repository
+success, conflict, and failure each advance `ProjectionVersion` and return to a settled, recoverable
+Ready projection. View-specific calculation failure remains `ViewComputationState::Failed` and does
+not escalate the application shell to Error.
+
 ## Workspace document and session policy
 
 Active and selected charts are separate contract fields owned by `WorkspaceSession`.
@@ -192,6 +199,19 @@ real pipeline reuses `CalculationValue` by `CalcKey`, rebuilds `SnapshotContext`
 analysis and wheel layout with the preview. Save does not recalculate an astronomically identical
 chart, and Cancel returns analysis to canonical AspectSet semantics through the same cache path.
 
+Chart authoring is also application-owned. Typed begin-new/begin-saved-edit, `ChartMutation`, save,
+and cancel intents replace browser-built aggregates. The private authoring state may retain an
+enabled but incomplete manual location while projecting structured validation and the last valid
+preview. New charts default to an application-provided UTC Birth chart with no subject/location,
+Tropical, Geocentric, NoHouses, and the backend descriptor's correction profile. Saved editors
+retain separate Record and Definition bases; factual edits are disabled when multiple definitions
+share the Record, while definition-only changes remain available.
+
+Aspect Set authoring projects every row and supports new, duplicate, rename, typed enabled/orb
+mutations, save, and cancel. Malformed browser number text remains only in the local edit buffer.
+The draft lifecycle distinguishes new/creating and saved clean/dirty/saving/conflict states;
+addition or deletion of aspect rows remains deferred.
+
 ## Capabilities and presentation commands
 
 The application projects `CommandCapability { action, availability }`, where availability is
@@ -202,6 +222,43 @@ Labels, shortcuts, grouping, keywords, and eventual command-palette presentation
 adapter's command registry. The current shortcuts support primary-modifier Save, Escape Cancel
 outside text-entry controls, Alt+1 chart-rail focus, and primary-modifier Refresh outside text-entry
 controls. The frontend does not infer executability from draft details; it consumes capabilities.
+
+Backend descriptors provide provider-neutral supported zodiac modes, coordinate systems, points,
+house systems, and the default authoring correction profile. The application contextualizes every
+finite option and supplies disabled reasons. Current XALEN authoring is Tropical, Geocentric,
+Sun-Jupiter, NoHouses, plus Equal/Placidus with a complete location. Unsupported or deferred
+Sidereal, Whole Sign, Topocentric, Heliocentric, named-zone, and local-time semantics stay visible
+as unavailable instead of being approximated.
+
+Workspace intents cover new/open/rename/save/discard and explicit switch resolution. Unsafe switches
+project loss reasons and Save/Discard/Stay choices; Save-and-switch is available only when a
+workspace save can preserve all outstanding work and never silently saves chart/resource editors.
+The working title lives in `WorkspaceSession`, while the saved title remains envelope metadata.
+`LoadDemoBundle` is explicit, idempotent, and never part of initialization.
+
+Display controls project effective, durable, and optional temporary visibility for supported points.
+Promotion explicitly moves the temporary replacement into the working document. Slot projections
+identify saved versus draft assignment, durable versus overlay identity, promotion requirements,
+and disabled option reasons.
+
+## Semantic controls, trace, and macros
+
+`ControlId` validates lowercase dotted names. `ControlAddress` combines an ID with sorted semantic
+qualifiers such as `display.point[point=sun]` and `view.slot[slot=primary,view=...]`. The manifest
+reports label, kind, authoritative value, optional local buffer, interaction/validation/pending
+state, enabled reason, options, and relevant entity identity. Hierarchy, coordinates, and
+`nth-child` selectors are not part of this contract.
+
+The coordinator retains the newest 256 trace entries with source, optional origin control, semantic
+intent summary, accepted/settled projections, pending transitions, and outcome. Trace and visual
+highlight state are local noncanonical observation.
+
+`MacroDocumentV1` is a bounded typed action whitelist. It supports validated `$chartN`/`$resourceN`
+result bindings and unambiguous title resolution for pre-existing resources. Recording observes
+accepted semantic intents, not edit mechanics or invalid buffers. Replay resolves one step at a
+time, executes through the coordinator, waits for authoritative settlement, and stops with a
+structured failure. Macro JSON has no DOM selector, coordinate, delay, JavaScript, or arbitrary
+intent escape hatch.
 
 ## Error classes and interchangeability
 
@@ -282,7 +339,7 @@ resource. `WorkspaceSession` holds draft charts beside the saved chart reference
 document. Starting and canceling a draft do not write the library. A draft can be assigned to a
 view and calculated through the payload-only engine seam before it has resource identities.
 
-`SaveChartDraft` creates a new revision-one `ChartRecord` and a distinct revision-one
+Saving a new chart creates a new revision-one `ChartRecord` and a distinct revision-one
 `ChartDefinition` whose radix source references that record. Any draft slot overlays are then
 promoted into the working document using the now-saved instance identity.
 `ResourceRepository::create_batch`
@@ -292,6 +349,12 @@ read-write transaction. Any validation, identity, or storage failure publishes n
 and the application retains the draft. Success replaces the session draft with a saved chart
 instance, adds the chart to the library, and marks workspace membership dirty for an explicit
 workspace save.
+
+Saving an existing chart uses `ResourceRepository::save_batch` with expectations for both the
+Record and Definition bases and writes only components that changed. Compare-only expectations
+therefore catch independent factual conflicts without creating meaningless Record revisions for a
+definition-only edit. On conflict, discoverable remote heads refresh while the local editor and
+component-specific conflict details remain available.
 
 Calculation requests are submitted through `CalculationRuntime` as soon as the authoritative
 intent is prepared. Native inline and controlled runtimes use the exact versioned worker protocol.

@@ -32,7 +32,18 @@ recovery remain outside portable `WorkspaceDocument`.
 
 ## Repository contract
 
-`ResourceRepository` provides create, optimistic revision save, live current read, state-aware head/read-history operations, versioned delete, and typed listing. `MemoryRepository` retains every live revision and tombstone for deterministic tests. `IndexedDbRepository` stores current state and revision history in the existing `resources` and `resource_revisions` object stores and uses the resource's stable ID as the logical key.
+`ResourceRepository` provides create, optimistic revision save, atomic create/save batches, live
+current read, state-aware head/read-history operations, versioned delete, and typed listing.
+`MemoryRepository` retains every live revision and tombstone for deterministic tests.
+`IndexedDbRepository` stores current state and revision history in the existing `resources` and
+`resource_revisions` object stores and uses the resource's stable ID as the logical key.
+
+`AtomicSaveBatch` contains unique revision expectations, including compare-only expectations, and
+the changed envelopes to publish. Implementations validate the complete batch and collect
+identity-specific conflicts before publishing anything. Memory preflights before map mutation;
+IndexedDB performs every expectation read, current-head write, and history insertion in one
+transaction across both stores. Every accepted revision remains in history. Saved-chart editing
+always expects both its Record and Definition bases but writes only the changed components.
 
 Deletion writes `ResourceTombstone { id, kind, revision, deleted_at }` as the next revision to both
 stores in one transaction. Ordinary `get` and `list` hide tombstones; `get_head` and
@@ -57,13 +68,22 @@ immediately. Draft chart slot assignments live in `WorkspaceSession::draft_chart
 override the effective view without touching or dirtying `WorkspaceDocument`. Atomic chart save
 promotes those assignments only after the same instance becomes a saved chart; cancel removes them.
 
-For `Unsaved` backing, `SaveWorkspace` creates a new `WorkspaceDocument` at revision one. Later
+The working workspace title lives in `WorkspaceSession`; canonical title metadata remains on the
+`ResourceEnvelope`, outside `WorkspaceDocument`. For `Unsaved` backing, `SaveWorkspace` creates a
+new `WorkspaceDocument` envelope at revision one. Later
 saves require a dirty document and write the next revision. A durable-only referential check runs
 immediately before persistence and rejects any slot assignment not backed by the document's saved
 chart membership. Activating/selecting charts, changing the active view, draft overlays, and
 temporary display overrides are session-only. Reload restores only the last explicitly saved
 document; navigation and unpromoted overlays are intentionally lost. `ProjectionVersion` and the
 calculation cache remain application-instance-local and are never written to IndexedDB.
+
+Creating/opening a workspace cannot silently discard local state. When chart/resource editors,
+temporary display, or workspace changes would be lost, the application projects an explicit switch
+decision. Save-and-switch writes only the workspace and is disabled if another editor must first be
+resolved. Discard restores the saved envelope or a fresh unsaved workspace. The stable demo bundle
+is created only by explicit `LoadDemoBundle`; compatible existing heads remain untouched and any
+incompatible collision rejects the complete create batch.
 
 Repository writes accept a fully versioned resource and reject missing, duplicate, skipped, or stale revisions. Sync will later append operations after a successful local transaction; ordinary local writes must not wait on a server.
 
@@ -99,3 +119,8 @@ second instance opens the same database and must restore Chart B, the committed 
 the persisted `WorkspaceDocument`, and a newly reconstructed fresh Scene. The unique database name and
 temporary Chromium profile isolate this lifecycle from normal user data; profile cleanup removes
 the test database after the run.
+
+The workbench E2E harness uses a separate validated `mirabile-workbench-e2e-*` database per run.
+The feature-gated peer `RealApplication` can lazily open that same database to prove independent
+CAS conflicts through typed application actions. This is test-only behavior and never changes the
+normal `mirabile` database.

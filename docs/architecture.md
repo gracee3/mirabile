@@ -16,9 +16,31 @@ engine   store
 `mirabile-engine` owns provider-neutral execution contracts, orchestration, content keys, analysis, and
 layout; it has no DOM or persistence dependency. `mirabile-store` owns persistence adapters.
 `mirabile-app` owns `Application`, `RealApplication`, hydration, calculation runtime orchestration,
-canonical-to-read-model projection, workspace commands, and drafts. `mirabile-web` is the CSR
+canonical-to-read-model projection, workspace commands, authoring, semantic controls, macros, and
+automation DTOs. `mirabile-web` is the CSR
 presentation adapter and also packages the calculation-worker binary; normal UI modules still see
 only `mirabile-app`.
+
+## Workbench authority and observation
+
+`AppReadModel` is the one authoritative presentation projection. Cohesive nested projections expose
+application activity, provider-neutral authoring choices, chart/resource editors, workspace and
+library state, active-view display/slots, and calculation diagnostics. `AppReadModel::is_settled()`
+is the only public settlement predicate. Its typed pending operations cover current initialization,
+calculation, chart create/save, workspace/resource saves, and explicit demo loading; superseded
+calculation requests may remain internally drainable without keeping current state unsettled.
+
+`WorkbenchCoordinator` is the serialized presentation gateway. It owns FIFO action execution,
+newer-projection publication, settlement, action source and originating `ControlAddress`, bounded
+trace, macro state, and current highlight. Components never mutate authoritative state or create
+parallel draft authorities. Native controls are instrumented with validated dotted `ControlId` and
+canonical semantic qualifiers; the browser manifest is derived from the controls that actually
+rendered.
+
+The machine snapshot is a selected `AutomationSnapshotV1`, not a database export. It includes
+settlement, workspace/chart/view/editor state, provider and key diagnostics, actual controls,
+coordinator/macro state, and recent trace. It records only whether a last-good Scene exists and
+never serializes Scene contents.
 
 ## Calculation ownership and execution boundary
 

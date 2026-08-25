@@ -26,9 +26,10 @@ Calculated positions, analysis, layout, and scenes are disposable derived state.
 - `apps/web`: Leptos 0.8 CSR presentation and the calculation Worker binary
 
 Architecture and current constraints are documented in [architecture](docs/architecture.md),
-[domain model](docs/domain-model.md), [state and persistence](docs/state-and-persistence.md), and
-the concise [decision records](docs/decisions/README.md). The original foundation plan is retained
-as a historical record, not as the current product description.
+[application contract](docs/application-contract.md), [domain model](docs/domain-model.md),
+[state and persistence](docs/state-and-persistence.md), [local automation](docs/local-automation.md),
+and the concise [decision records](docs/decisions/README.md). The original foundation plan is
+retained as a historical record, not as the current product description.
 
 ## Development
 
@@ -50,8 +51,9 @@ application reload, and Worker calculation in an isolated headless Chromium prof
 
 `verify.sh` runs formatting, every package and workspace test suite, XALEN-enabled tests, strict
 Clippy, provider-neutral and XALEN native/WASM checks, the web WASM check, the Trunk main/Worker
-build, the dependency/license guard, notice-asset validation, the Chromium contract, and staged
-plus unstaged diff checks. Missing local prerequisites fail with an actionable message.
+build, the dependency/license guard, notice-asset validation, the Chromium repository contract,
+semantic workbench scenarios, native-control golden journeys, expected-failure artifact proof,
+and staged plus unstaged diff checks. Missing local prerequisites fail with an actionable message.
 
 The WASM build requires the `wasm32-unknown-unknown` Rust target. Run the app with:
 

@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 17 - documentation, audit, full verification, and handoff
+- Current phase: Complete - READY for unmerged goal-branch handoff
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -39,7 +39,7 @@
 | 14. Level B browser semantics | Complete | Real isolated IndexedDB/Worker/XALEN semantic workflows plus a lazily initialized peer Real application sharing the same database for independent chart conflicts | Semantic Aspect Set/display/workspace scenario and two-application Record+Definition conflict scenario pass; `./scripts/check.sh` passes 153 Rust tests plus 5 Python tests; strict Clippy and native/WASM automation checks | Phase 14 commit |
 | 15. Level C control E2E | Complete | Native semantic-address journeys cover chart creation/validation, saved edit/cancel, independent conflicts, workspace decisions/revisions, full Aspect Set rows, display promotion/slots, macros, diagnostics, trace, and screenshots | Nine live control scenarios pass against isolated IndexedDB, Worker, and XALEN; `./scripts/check.sh` passes 153 Rust tests plus 5 Python tests | Phase 15 commit |
 | 16. Cockpit composition | Complete | Single desktop grid keeps library, wheel, diagnostics/trace/macros, and inspector visible with bounded independent scrolling; responsive fallback remains; manifest labels/values and keyboard focus semantics refined | 1600x1000 live screenshot reviewed; diagnostics control audit verifies exact authoritative buffered value, semantic labels, disabled reasons, and full manifest; native/WASM checks and `./scripts/check.sh` pass | Phase 16 commit |
-| 17. Handoff | Pending | Docs, audit, verification, push, clean remote equality | Pending | Pending |
+| 17. Handoff | Complete | Architecture, application, persistence, and local-automation docs; explicit scope/authority/control/artifact/license audit; complete local suite; unmerged goal-branch delivery | `./scripts/verify.sh` passes every native/package/workspace/XALEN/WASM/Trunk/license/browser/semantic/control/artifact check; final push and remote-SHA equality are the post-commit delivery action | Final handoff commit |
 
 ## Required acceptance evidence
 
@@ -114,3 +114,21 @@
 ## Blockers
 
 - None.
+
+## Final audit
+
+- Application authority: no presentation repository writes or alternate component state authority;
+  every workbench mutation uses the coordinator and typed `Application` intent.
+- Automation boundary: no Mirabile HTTP/WebSocket control server, arbitrary-evaluate CLI, pixel or
+  DOM-structure journey, executable JavaScript macro, selector/coordinate macro field, or scenario
+  delay. CDP uses Chromium's loopback endpoint and semantic address lookup only.
+- Authoring and persistence: invalid buffers remain browser-local; chart creation and saved editing
+  use atomic batches; conflicts retain drafts; workspace switches require explicit decisions; draft
+  assignments do not leak into saved workspaces.
+- Capability truth: no browser-built XALEN correction choices or unsupported astrology semantics;
+  provider-neutral application options and disabled reasons remain authoritative.
+- Delivery hygiene: no new framework or third-party package, no hosted CI, no astrology scope
+  expansion, and the pinned-XALEN dependency/license/notice guard passes.
+- Failure evidence: the expected-failure scenario preserves all eight required artifacts.
+
+Verdict: **READY**
