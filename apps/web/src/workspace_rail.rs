@@ -1,9 +1,12 @@
 use leptos::prelude::*;
-use mirabile_app::{AppIntent, AppReadModel, ChartPersistence};
+use mirabile_app::{
+    ActionSource, AppIntent, AppReadModel, ChartPersistence, ControlAddress, ControlId,
+};
 
 use crate::{dispatcher::WorkbenchCoordinator, library::LibraryShelf};
 
 #[component]
+#[allow(clippy::too_many_lines)]
 pub(super) fn WorkspaceRail(
     model: RwSignal<AppReadModel>,
     dispatcher: WorkbenchCoordinator,
@@ -41,6 +44,21 @@ pub(super) fn WorkspaceRail(
                             ChartPersistence::Saved { .. } => "Saved",
                             ChartPersistence::Ephemeral => "Ephemeral",
                         };
+                        let activate_address = ControlAddress::qualified(
+                            ControlId::CHART_ACTIVATE,
+                            [("instance", chart.instance_id.to_string())],
+                        ).expect("chart activate address");
+                        let select_address = ControlAddress::qualified(
+                            ControlId::CHART_SELECT,
+                            [("instance", chart.instance_id.to_string())],
+                        ).expect("chart select address");
+                        let close_address = ControlAddress::qualified(
+                            ControlId::CHART_CLOSE,
+                            [("instance", chart.instance_id.to_string())],
+                        ).expect("chart close address");
+                        let activate_origin = activate_address.clone();
+                        let select_origin = select_address.clone();
+                        let close_origin = close_address.clone();
                         view! {
                             <li class="chart-row" class:active=active class:selected=selected>
                                 <input
@@ -48,18 +66,30 @@ pub(super) fn WorkspaceRail(
                                     type="checkbox"
                                     prop:checked=selected
                                     aria-label=select_label
-                                    on:change=move |event| select.dispatch(AppIntent::SetChartSelection {
-                                        instance_id: chart.instance_id,
-                                        selected: event_target_checked(&event),
-                                    })
+                                    data-mirabile-control=ControlId::CHART_SELECT.to_string()
+                                    data-mirabile-instance=chart.instance_id.to_string()
+                                    data-mirabile-address=select_address.to_string()
+                                    on:change=move |event| select.dispatch_from(
+                                        AppIntent::SetChartSelection {
+                                            instance_id: chart.instance_id,
+                                            selected: event_target_checked(&event),
+                                        },
+                                        ActionSource::Human,
+                                        Some(select_origin.clone()),
+                                    )
                                 />
                                 <button
                                     class="chart-activate"
                                     type="button"
                                     aria-current=active.then_some("page")
-                                    on:click=move |_| activate.dispatch(AppIntent::ActivateChart {
-                                        instance_id: chart.instance_id,
-                                    })
+                                    data-mirabile-control=ControlId::CHART_ACTIVATE.to_string()
+                                    data-mirabile-instance=chart.instance_id.to_string()
+                                    data-mirabile-address=activate_address.to_string()
+                                    on:click=move |_| activate.dispatch_from(
+                                        AppIntent::ActivateChart { instance_id: chart.instance_id },
+                                        ActionSource::Human,
+                                        Some(activate_origin.clone()),
+                                    )
                                 >
                                     <span class="chart-title">{chart.title}</span>
                                     <span class="chart-subtitle">{chart.subtitle}</span>
@@ -73,9 +103,14 @@ pub(super) fn WorkspaceRail(
                                     class="close-chart"
                                     type="button"
                                     aria-label=close_label
-                                    on:click=move |_| close.dispatch(AppIntent::CloseChart {
-                                        instance_id: chart.instance_id,
-                                    })
+                                    data-mirabile-control=ControlId::CHART_CLOSE.to_string()
+                                    data-mirabile-instance=chart.instance_id.to_string()
+                                    data-mirabile-address=close_address.to_string()
+                                    on:click=move |_| close.dispatch_from(
+                                        AppIntent::CloseChart { instance_id: chart.instance_id },
+                                        ActionSource::Human,
+                                        Some(close_origin.clone()),
+                                    )
                                 >"×"</button>
                             </li>
                         }

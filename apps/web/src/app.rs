@@ -4,7 +4,8 @@ use leptos::{ev, prelude::*};
 #[cfg(target_arch = "wasm32")]
 use mirabile_app::RealApplication;
 use mirabile_app::{
-    AppAction, AppIntent, AppReadModel, Application, ApplicationStatus, Availability, ResourceId,
+    ActionSource, AppAction, AppIntent, AppReadModel, Application, ApplicationStatus, Availability,
+    ControlAddress, ControlId, ResourceId,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -82,7 +83,12 @@ pub fn App() -> impl IntoView {
                             <p class="brand-mark">"MIRABILE"</p>
                             <h1 id="startup-error-title">"The workspace could not open"</h1>
                             <p class="error-message" role="alert">{error.message}</p>
-                            <button class="button primary" type="button" on:click=move |_| retry.initialize()>
+                            <button
+                                class="button primary"
+                                type="button"
+                                data-mirabile-control=ControlId::APPLICATION_RETRY.to_string()
+                                on:click=move |_| retry.initialize()
+                            >
                                 "Retry initialization"
                             </button>
                         </main>
@@ -120,15 +126,25 @@ fn ReadyShell(
                     snapshot.workspace.views.into_iter().map(|summary| {
                         let active = snapshot.workspace.active_view == Some(summary.view_id);
                         let dispatch = dispatcher;
+                        let address = ControlAddress::qualified(
+                            ControlId::VIEW_ACTIVATE,
+                            [("view", summary.view_id.to_string())],
+                        ).expect("view address");
+                        let origin = address.clone();
                         view! {
                             <button
                                 type="button"
                                 class="view-tab"
                                 class:active=active
                                 aria-current=active.then_some("page")
-                                on:click=move |_| dispatch.dispatch(AppIntent::SetActiveView {
-                                    view_id: summary.view_id,
-                                })
+                                data-mirabile-control=ControlId::VIEW_ACTIVATE.to_string()
+                                data-mirabile-view=summary.view_id.to_string()
+                                data-mirabile-address=address.to_string()
+                                on:click=move |_| dispatch.dispatch_from(
+                                    AppIntent::SetActiveView { view_id: summary.view_id },
+                                    ActionSource::Human,
+                                    Some(origin.clone()),
+                                )
                             >
                                 {summary.title}
                             </button>
@@ -187,6 +203,7 @@ fn CommandActions(
             <button
                 class="icon-command"
                 type="button"
+                data-mirabile-control=ControlId::APPLICATION_REFRESH.to_string()
                 disabled=move || !model.get().availability(AppAction::RefreshView).is_enabled()
                 title=move || command_title(refresh_meta, &model.get().availability(AppAction::RefreshView))
                 on:click=move |_| refresh.dispatch(AppIntent::RefreshActiveView)
@@ -197,7 +214,9 @@ fn CommandActions(
             <button
                 class="icon-command primary"
                 type="button"
+                data-mirabile-control=ControlId::DRAFT_SAVE.to_string()
                 disabled=move || !model.get().availability(AppAction::SaveDraft).is_enabled()
+                    || orb_error.get().is_some()
                 title=move || command_title(save_meta, &model.get().availability(AppAction::SaveDraft))
                 on:click=move |_| execute_command(CommandId::SaveDraft, save, model, orb_buffer, orb_error)
             >
@@ -208,6 +227,7 @@ fn CommandActions(
             <button
                 class="icon-command"
                 type="button"
+                data-mirabile-control=ControlId::DRAFT_CANCEL.to_string()
                 disabled=move || !model.get().availability(AppAction::CancelDraft).is_enabled()
                 title=move || command_title(cancel_meta, &model.get().availability(AppAction::CancelDraft))
                 on:click=move |_| execute_command(CommandId::CancelDraft, cancel, model, orb_buffer, orb_error)

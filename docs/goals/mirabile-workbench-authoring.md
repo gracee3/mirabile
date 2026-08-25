@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 3 - native workbench controls and edit buffers
+- Current phase: 4 - constrained local automation tooling
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -25,8 +25,8 @@
 | --- | --- | --- | --- | --- |
 | 1. Isolation and settlement | Complete | Dedicated worktree; living goal; authoritative activity projection; observable chart/workspace/resource writes | `./scripts/check.sh` passes 119 tests, strict Clippy, formatting, and diff checks | Phase 1 commit |
 | 2. Semantic observation | Complete | Validated ControlId/ControlAddress, manifest/snapshot DTOs, bounded trace, calculation diagnostics, FIFO coordinator | `./scripts/check.sh` passes 125 tests, strict Clippy, formatting, and diff checks | Phase 2 commit |
-| 3. Workbench controls | In progress | Native shallow components and buffered edit semantics | Pending | Pending |
-| 4. Automation tooling | Pending | Feature-gated bridge, isolated database, CDP CLI, artifacts | Pending | Pending |
+| 3. Workbench controls | Complete | Native panel/disclosure/field/select/toggle/action/status palette; buffered text/number/date/time semantics; semantic DOM instrumentation | Native and WASM checks; `./scripts/check.sh` passes 127 tests, strict Clippy, formatting, and diff checks | Phase 3 commit |
+| 4. Automation tooling | In progress | Feature-gated bridge, isolated database, CDP CLI, artifacts | Pending | Pending |
 | 5. Authoring capabilities | Pending | Provider-neutral supported/default options | Pending | Pending |
 | 6. New chart authoring | Pending | Typed editor, preview/cancel/atomic create | Pending | Pending |
 | 7. Saved chart editing | Pending | Atomic CAS batch, conflict projection, shared-record guard | Pending | Pending |
@@ -58,6 +58,8 @@
 - `ControlId` uses validated lowercase dotted segments; `ControlAddress` adds sorted semantic qualifiers and rejects duplicates or invalid JSON input. Manifest descriptors carry authoritative value, optional local buffer, interaction state, availability/options, and entity identity.
 - `AutomationSnapshotV1` selects application/workspace/chart/view/calculation state, controls, coordinator state, and trace without serializing `Scene`. Provider-neutral diagnostics retain backend/engine identity, Worker protocol, request and calculation/analysis keys, computation state, and last-good Scene presence.
 - `WorkbenchCoordinator` serializes initialization and all semantic actions FIFO, publishes only newer projections, settles through the application predicate, tracks action source/origin/highlight, and records a bounded 256-entry execution trace with accepted/settled projections and pending transitions.
+- The shallow native control palette covers panels, disclosure sections, field rows, buffered text/number/date/time fields, enum selects, pickers, toggles, actions, and status. Buffered fields keep invalid strings local, commit only parsed values on Apply/Enter, restore authoritative values on Escape/Cancel, and restore keyboard focus.
+- Existing workbench actions now expose stable `data-mirabile-control`, canonical address, and semantic qualifier attributes. Human actions carry their originating `ControlAddress` into the coordinator trace. Aspect orb entry now commits only a valid semantic value, and both visible and keyboard save paths reject an invalid local buffer.
 
 ## Blockers
 

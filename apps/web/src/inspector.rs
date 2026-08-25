@@ -2,11 +2,13 @@ use std::str::FromStr;
 
 use leptos::prelude::*;
 use mirabile_app::{
-    Angle, AppAction, AppIntent, AppReadModel, AspectSetDraftMutation, Availability,
-    BindingSourceSummary, ChartPersistence, DraftState, InstanceId, ResourceId,
+    ActionSource, Angle, AppAction, AppIntent, AppReadModel, AspectSetDraftMutation, Availability,
+    BindingSourceSummary, ChartPersistence, ControlAddress, ControlId, DraftState, InstanceId,
+    ResourceId,
 };
 
 use crate::dispatcher::{WorkbenchCoordinator, reset_orb_buffer};
+use crate::workbench_controls::BufferedNumberField;
 
 #[component]
 #[allow(clippy::too_many_lines)]
@@ -61,6 +63,14 @@ pub(super) fn Inspector(
                             let dispatch = dispatcher;
                             let view_id = active_view.view_id;
                             let slot = assignment.slot.clone();
+                            let address = ControlAddress::qualified(
+                                ControlId::VIEW_SLOT,
+                                [
+                                    ("slot", assignment.slot.as_str().to_owned()),
+                                    ("view", view_id.to_string()),
+                                ],
+                            ).expect("view slot address");
+                            let origin = address.clone();
                             let current = assignment.chart.map_or_else(String::new, |id| id.to_string());
                             view! {
                                 <label class="field-label">
@@ -70,6 +80,10 @@ pub(super) fn Inspector(
                                     </span>
                                     <select
                                         prop:value=current
+                                        data-mirabile-control=ControlId::VIEW_SLOT.to_string()
+                                        data-mirabile-slot=assignment.slot.as_str().to_owned()
+                                        data-mirabile-view=view_id.to_string()
+                                        data-mirabile-address=address.to_string()
                                         on:change=move |event| {
                                             let value = event_target_value(&event);
                                             let chart = if value.is_empty() {
@@ -77,11 +91,15 @@ pub(super) fn Inspector(
                                             } else {
                                                 InstanceId::from_str(&value).ok()
                                             };
-                                            dispatch.dispatch(AppIntent::AssignChartSlot {
-                                                view_id,
-                                                slot: slot.clone(),
-                                                chart,
-                                            });
+                                            dispatch.dispatch_from(
+                                                AppIntent::AssignChartSlot {
+                                                    view_id,
+                                                    slot: slot.clone(),
+                                                    chart,
+                                                },
+                                                ActionSource::Human,
+                                                Some(origin.clone()),
+                                            );
                                         }
                                     >
                                         {(!assignment.required).then(|| view! { <option value="">"Unassigned"</option> })}
@@ -102,6 +120,7 @@ pub(super) fn Inspector(
                     <span>"Workspace resource"</span>
                     <select
                         id="aspect-set-picker"
+                        data-mirabile-control=ControlId::ASPECT_RESOURCE.to_string()
                         prop:value=move || model.get().inspector.active_aspect_set.map_or_else(String::new, |id| id.to_string())
                         on:change=move |event| {
                             let value = event_target_value(&event);
@@ -110,7 +129,11 @@ pub(super) fn Inspector(
                                     orb_buffer.set(format_orb(summary.conjunction_orb));
                                     orb_error.set(None);
                                 }
-                                aspect_dispatcher.dispatch(AppIntent::SetWorkspaceAspectSet { resource_id });
+                                aspect_dispatcher.dispatch_from(
+                                    AppIntent::SetWorkspaceAspectSet { resource_id },
+                                    ActionSource::Human,
+                                    Some(ControlAddress::new(ControlId::ASPECT_RESOURCE)),
+                                );
                             }
                         }
                     >
@@ -150,6 +173,7 @@ pub(super) fn Inspector(
                 <button
                     class="button secondary full-width"
                     type="button"
+                    data-mirabile-control=ControlId::ASPECT_EDIT.to_string()
                     disabled=move || !model.get().availability(AppAction::BeginAspectSetEdit).is_enabled()
                     on:click=move |_| {
                         let snapshot = model.get_untracked();
@@ -158,7 +182,14 @@ pub(super) fn Inspector(
                                 orb_buffer.set(format_orb(summary.conjunction_orb));
                                 orb_error.set(None);
                             }
-                            edit_dispatcher.dispatch(AppIntent::BeginAspectSetEdit { resource_id });
+                            edit_dispatcher.dispatch_from(
+                                AppIntent::BeginAspectSetEdit { resource_id },
+                                ActionSource::Human,
+                                ControlAddress::qualified(
+                                    ControlId::ASPECT_EDIT,
+                                    [("resource", resource_id.to_string())],
+                                ).ok(),
+                            );
                         }
                     }
                 >
@@ -173,6 +204,7 @@ pub(super) fn Inspector(
                     DraftState::Clean { .. } | DraftState::Dirty { .. } | DraftState::Saving { .. } => None,
                 };
                 let aspect_id_for_orb = draft.conjunction.aspect_id.clone();
+                let aspect_orb_qualifier = aspect_id_for_orb.as_str().to_owned();
                 let aspect_id_for_enabled = draft.conjunction.aspect_id;
                 view! {
                     <section class="inspector-section draft-editor" aria-labelledby="draft-editor-title">
@@ -192,50 +224,56 @@ pub(super) fn Inspector(
                             </div>
                         })}
 
-                        <label class="field-label" for="conjunction-orb">
-                            <span>"Conjunction maximum orb"</span>
-                            <div class="input-with-unit">
-                                <input
-                                    id="conjunction-orb"
-                                    type="text"
-                                    inputmode="decimal"
-                                    prop:value=move || orb_buffer.get()
-                                    aria-invalid=move || orb_error.get().is_some()
-                                    aria-describedby="orb-help orb-error"
-                                    disabled=matches!(draft.state, DraftState::Saving { .. })
-                                    on:input=move |event| {
-                                        let text = event_target_value(&event);
-                                        orb_buffer.set(text.clone());
-                                        match parse_orb(&text) {
-                                            Ok(maximum) => {
-                                                orb_error.set(None);
-                                                orb_dispatcher.dispatch(AppIntent::UpdateAspectSetDraft(
-                                                    AspectSetDraftMutation::SetOrb {
-                                                        aspect_id: aspect_id_for_orb.clone(),
-                                                        maximum,
-                                                    },
-                                                ));
-                                            }
-                                            Err(message) => orb_error.set(Some(message)),
-                                        }
-                                    }
-                                />
-                                <span aria-hidden="true">"°"</span>
-                            </div>
-                        </label>
-                        <p id="orb-help" class="field-help">"Enter a semantic value from 0° through 20°. Temporary text remains UI-local."</p>
-                        <p id="orb-error" class="field-error" role="status">{move || orb_error.get().unwrap_or_default()}</p>
+                        <BufferedNumberField
+                            address=ControlAddress::qualified(
+                                ControlId::ASPECT_MAXIMUM_ORB,
+                                [("aspect", aspect_orb_qualifier.as_str())],
+                            ).expect("static Aspect control address").to_string()
+                            label="Conjunction maximum orb".to_owned()
+                            authoritative=Signal::derive(move || model.get().resource_editor.aspect_set
+                                .map_or_else(String::new, |draft| format_orb(draft.conjunction.maximum_orb)))
+                            disabled=Signal::derive(move || model.get().resource_editor.aspect_set
+                                .is_none_or(|draft| matches!(draft.state, DraftState::Saving { .. })))
+                            buffer=orb_buffer
+                            error=orb_error
+                            parser=Callback::new(|text: String| parse_orb(&text).map(format_orb))
+                            on_commit=Callback::new(move |text: String| {
+                                if let Ok(maximum) = parse_orb(&text) {
+                                    orb_dispatcher.dispatch_from(
+                                        AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetOrb {
+                                            aspect_id: aspect_id_for_orb.clone(),
+                                            maximum,
+                                        }),
+                                        mirabile_app::ActionSource::Human,
+                                        ControlAddress::qualified(
+                                            ControlId::ASPECT_MAXIMUM_ORB,
+                                            [("aspect", aspect_id_for_orb.as_str())],
+                                        ).ok(),
+                                    );
+                                }
+                            })
+                            help="Enter a semantic value from 0° through 20°. Enter applies; Escape restores the authoritative value.".to_owned()
+                            qualifier_name="aspect".to_owned()
+                            qualifier_value=aspect_orb_qualifier
+                        />
 
                         <label class="check-field">
                             <input
                                 type="checkbox"
+                                data-mirabile-control=ControlId::ASPECT_ENABLED.to_string()
+                                data-mirabile-aspect=aspect_id_for_enabled.as_str().to_owned()
                                 prop:checked=draft.conjunction.enabled
                                 disabled=matches!(draft.state, DraftState::Saving { .. })
-                                on:change=move |event| enabled_dispatcher.dispatch(
+                                on:change=move |event| enabled_dispatcher.dispatch_from(
                                     AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetEnabled {
-                                        aspect_id: aspect_id_for_enabled.clone(),
-                                        enabled: event_target_checked(&event),
+                                            aspect_id: aspect_id_for_enabled.clone(),
+                                            enabled: event_target_checked(&event),
                                     }),
+                                    ActionSource::Human,
+                                    ControlAddress::qualified(
+                                        ControlId::ASPECT_ENABLED,
+                                        [("aspect", aspect_id_for_enabled.as_str())],
+                                    ).ok(),
                                 )
                             />
                             <span>"Conjunction enabled"</span>
@@ -245,18 +283,28 @@ pub(super) fn Inspector(
                             <button
                                 class="button primary"
                                 type="button"
+                                data-mirabile-control=ControlId::DRAFT_SAVE.to_string()
                                 disabled=move || !model.get().availability(AppAction::SaveDraft).is_enabled()
                                 title=move || availability_title(&model.get().availability(AppAction::SaveDraft))
-                                on:click=move |_| save_dispatcher.dispatch(AppIntent::SaveDraft)
+                                on:click=move |_| save_dispatcher.dispatch_from(
+                                    AppIntent::SaveDraft,
+                                    ActionSource::Human,
+                                    Some(ControlAddress::new(ControlId::DRAFT_SAVE)),
+                                )
                             >"Save draft"</button>
                             <button
                                 class="button secondary"
                                 type="button"
+                                data-mirabile-control=ControlId::DRAFT_CANCEL.to_string()
                                 disabled=move || !model.get().availability(AppAction::CancelDraft).is_enabled()
                                 title=move || availability_title(&model.get().availability(AppAction::CancelDraft))
                                 on:click=move |_| {
                                     reset_orb_buffer(model, orb_buffer, orb_error);
-                                    cancel_dispatcher.dispatch(AppIntent::CancelDraft);
+                                    cancel_dispatcher.dispatch_from(
+                                        AppIntent::CancelDraft,
+                                        ActionSource::Human,
+                                        Some(ControlAddress::new(ControlId::DRAFT_CANCEL)),
+                                    );
                                 }
                             >"Cancel"</button>
                         </div>

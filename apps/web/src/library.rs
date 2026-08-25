@@ -1,5 +1,7 @@
 use leptos::prelude::*;
-use mirabile_app::{AppIntent, AppReadModel, ChartPersistence};
+use mirabile_app::{
+    ActionSource, AppIntent, AppReadModel, ChartPersistence, ControlAddress, ControlId,
+};
 
 use crate::dispatcher::WorkbenchCoordinator;
 
@@ -20,6 +22,11 @@ pub(super) fn LibraryShelf(
                             matches!(open.persistence, ChartPersistence::Saved { definition_id } if definition_id == chart.definition_id)
                         });
                         let dispatch = dispatcher;
+                        let address = ControlAddress::qualified(
+                            ControlId::CHART_OPEN,
+                            [("definition", chart.definition_id.to_string())],
+                        ).expect("chart library address");
+                        let origin = address.clone();
                         let label = if is_open {
                             format!("Activate {}", chart.title)
                         } else {
@@ -31,9 +38,14 @@ pub(super) fn LibraryShelf(
                                     class="library-chart"
                                     type="button"
                                     aria-label=label
-                                    on:click=move |_| dispatch.dispatch(AppIntent::OpenChart {
-                                        definition_id: chart.definition_id,
-                                    })
+                                    data-mirabile-control=ControlId::CHART_OPEN.to_string()
+                                    data-mirabile-definition=chart.definition_id.to_string()
+                                    data-mirabile-address=address.to_string()
+                                    on:click=move |_| dispatch.dispatch_from(
+                                        AppIntent::OpenChart { definition_id: chart.definition_id },
+                                        ActionSource::Human,
+                                        Some(origin.clone()),
+                                    )
                                 >
                                     <span>{chart.title}</span>
                                     <small>{if is_open { "Open" } else { "+ Open" }}</small>

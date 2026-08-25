@@ -21,6 +21,9 @@ mod mock_application;
 mod render;
 #[cfg(not(feature = "browser-contract"))]
 mod view_host;
+#[allow(dead_code)]
+#[cfg(not(feature = "browser-contract"))]
+mod workbench_controls;
 #[cfg(not(feature = "browser-contract"))]
 mod workspace_rail;
 

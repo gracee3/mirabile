@@ -10,12 +10,15 @@ pub struct ControlId(Cow<'static, str>);
 
 impl ControlId {
     pub const APPLICATION_REFRESH: Self = Self(Cow::Borrowed("application.refresh"));
+    pub const APPLICATION_RETRY: Self = Self(Cow::Borrowed("application.retry"));
+    pub const ASPECT_EDIT: Self = Self(Cow::Borrowed("aspect.edit"));
     pub const ASPECT_ENABLED: Self = Self(Cow::Borrowed("aspect.enabled"));
     pub const ASPECT_MAXIMUM_ORB: Self = Self(Cow::Borrowed("aspect.maximum-orb"));
     pub const ASPECT_RESOURCE: Self = Self(Cow::Borrowed("aspect.resource"));
     pub const CHART_ACTIVATE: Self = Self(Cow::Borrowed("chart.activate"));
     pub const CHART_CLOSE: Self = Self(Cow::Borrowed("chart.close"));
     pub const CHART_OPEN: Self = Self(Cow::Borrowed("chart.open"));
+    pub const CHART_SELECT: Self = Self(Cow::Borrowed("chart.select"));
     pub const DISPLAY_POINT: Self = Self(Cow::Borrowed("display.point"));
     pub const DRAFT_CANCEL: Self = Self(Cow::Borrowed("draft.cancel"));
     pub const DRAFT_SAVE: Self = Self(Cow::Borrowed("draft.save"));

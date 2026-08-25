@@ -6,7 +6,8 @@ use mirabile_app::ProjectionVersion;
 use mirabile_app::{
     ActionSource, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind,
     AppReadModel, Application, ApplicationActivityReadModel, ApplicationStatus, ControlAddress,
-    CoordinatorReadModel, ExecutionOutcome, ExecutionTraceEntry, PendingTransition, TraceHistory,
+    ControlId, CoordinatorReadModel, ExecutionOutcome, ExecutionTraceEntry, PendingTransition,
+    TraceHistory,
 };
 use wasm_bindgen::JsCast;
 
@@ -317,8 +318,13 @@ pub(super) fn execute_command(
                 .get_untracked()
                 .availability(AppAction::SaveDraft)
                 .is_enabled()
+                && orb_error.get_untracked().is_none()
             {
-                dispatcher.dispatch(AppIntent::SaveDraft);
+                dispatcher.dispatch_from(
+                    AppIntent::SaveDraft,
+                    ActionSource::Human,
+                    Some(ControlAddress::new(ControlId::DRAFT_SAVE)),
+                );
             }
         }
         CommandId::CancelDraft => {
@@ -328,7 +334,11 @@ pub(super) fn execute_command(
                 .is_enabled()
             {
                 reset_orb_buffer(model, orb_buffer, orb_error);
-                dispatcher.dispatch(AppIntent::CancelDraft);
+                dispatcher.dispatch_from(
+                    AppIntent::CancelDraft,
+                    ActionSource::Human,
+                    Some(ControlAddress::new(ControlId::DRAFT_CANCEL)),
+                );
             }
         }
         CommandId::FocusChartRail => focus_chart_rail(),
@@ -338,7 +348,11 @@ pub(super) fn execute_command(
                 .availability(AppAction::RefreshView)
                 .is_enabled()
             {
-                dispatcher.dispatch(AppIntent::RefreshActiveView);
+                dispatcher.dispatch_from(
+                    AppIntent::RefreshActiveView,
+                    ActionSource::Human,
+                    Some(ControlAddress::new(ControlId::APPLICATION_REFRESH)),
+                );
             }
         }
     }
