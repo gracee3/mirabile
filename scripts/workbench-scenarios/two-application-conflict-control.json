@@ -1,0 +1,36 @@
+{
+  "name": "two-application-conflict-control",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.new"},
+    {"command": "click", "address": "chart.title"},
+    {"command": "set", "address": "chart.title", "value": "Control Conflict Base"},
+    {"command": "key", "address": "chart.title", "key": "Enter"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.editor-save"},
+    {"command": "wait", "timeout": 20},
+    {"command": "peer_initialize"},
+    {"command": "peer_wait", "timeout": 20},
+    {"command": "click", "address": "chart.edit-saved"},
+    {"command": "click", "address": "chart.title"},
+    {"command": "set", "address": "chart.title", "value": "Local Control Conflict"},
+    {"command": "key", "address": "chart.title", "key": "Enter"},
+    {"command": "select", "address": "chart.event-kind", "value": "event"},
+    {"command": "wait", "timeout": 15},
+    {"command": "peer_replay", "macro": {"schema_version": 1, "name": "Peer conflict edit", "steps": [
+      {"action": {"action": "open_chart", "chart": {"title": "Control Conflict Base"}}, "bind": "$chart1"},
+      {"action": {"action": "begin_saved_chart_edit", "chart": {"binding": "$chart1"}}},
+      {"action": {"action": "set_chart_title", "title": "Peer Control Conflict"}},
+      {"action": {"action": "set_chart_event_kind", "event_kind": "ingress"}},
+      {"action": {"action": "save_chart_editor"}}
+    ]}},
+    {"command": "peer_wait", "timeout": 20},
+    {"command": "peer_snapshot", "expect": {"value.chart.title": "Peer Control Conflict", "value.chart.saved": true, "value.application.settled": true}},
+    {"command": "click", "address": "chart.editor-save"},
+    {"command": "wait", "timeout": 20},
+    {"command": "snapshot", "expect": {"value.application.status": "ready", "value.application.settled": true, "value.chart_editor.state": "conflict", "value.chart_editor.fields.title": "Local Control Conflict", "value.chart_editor.conflicts.0.component": "record", "value.chart_editor.conflicts.1.component": "definition"}},
+    {"command": "get", "address": "chart.title", "expect": {"enabled": true}},
+    {"command": "trace"},
+    {"command": "screenshot", "path": "target/workbench-e2e-artifacts/two-application-conflict-control/final.png"}
+  ]
+}

@@ -75,6 +75,7 @@ run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-failure-co
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-bridge --mode semantic
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario two-application-conflict --mode semantic
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario level-b-semantic --mode semantic
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario two-application-conflict-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario artifact-smoke --mode semantic
 
 run git diff --check
