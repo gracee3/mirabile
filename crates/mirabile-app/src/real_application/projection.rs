@@ -18,8 +18,14 @@ where
     pub(super) fn read_model(&self) -> AppResult<AppReadModel> {
         let state = self.state.borrow();
         let mut model = state.read_model()?;
-        model.authoring =
-            AuthoringCapabilitiesReadModel::from_backend(self.engine.backend_descriptor(), false);
+        let complete_location = state
+            .chart_editor
+            .as_ref()
+            .is_some_and(crate::ChartAuthoringEditor::location_complete);
+        model.authoring = AuthoringCapabilitiesReadModel::from_backend(
+            self.engine.backend_descriptor(),
+            complete_location,
+        );
         model.calculation = Some(self.calculation_diagnostics(&state));
         Ok(model)
     }
@@ -162,6 +168,10 @@ impl RealState {
             activity: self.activity_read_model(),
             calculation: None,
             authoring: AuthoringCapabilitiesReadModel::default(),
+            chart_editor: self
+                .chart_editor
+                .as_ref()
+                .map(crate::ChartAuthoringEditor::read_model),
             library: LibraryReadModel {
                 charts: library_charts,
                 aspect_sets: self.catalog.aspect_set_summaries()?,
@@ -233,7 +243,35 @@ impl RealState {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn capabilities(&self) -> Vec<CommandCapability> {
+        let begin_new_chart = if self.chart_editor.is_none() {
+            Availability::Enabled
+        } else {
+            disabled("Save or cancel the current chart editor first")
+        };
+        let save_chart_editor = self.chart_editor.as_ref().map_or_else(
+            || disabled("There is no chart editor to save"),
+            |editor| {
+                if editor.state == crate::ChartEditorState::Saving {
+                    disabled("The chart editor is already saving")
+                } else if editor.validation.is_empty() {
+                    Availability::Enabled
+                } else {
+                    disabled("Complete every invalid chart field before saving")
+                }
+            },
+        );
+        let cancel_chart_editor = self.chart_editor.as_ref().map_or_else(
+            || disabled("There is no chart editor to cancel"),
+            |editor| {
+                if editor.state == crate::ChartEditorState::Saving {
+                    disabled("Wait for the chart save to finish")
+                } else {
+                    Availability::Enabled
+                }
+            },
+        );
         let (save, cancel) = match self.editor.as_ref().map(|editor| &editor.state) {
             None => (
                 disabled("Begin an Aspect Set edit before saving"),
@@ -314,6 +352,9 @@ impl RealState {
             },
         );
         vec![
+            capability(AppAction::BeginNewChart, begin_new_chart),
+            capability(AppAction::SaveChartEditor, save_chart_editor),
+            capability(AppAction::CancelChartEditor, cancel_chart_editor),
             capability(AppAction::SaveChartDraft, save_chart_draft),
             capability(AppAction::CancelChartDraft, cancel_chart_draft),
             capability(AppAction::BeginAspectSetEdit, begin),

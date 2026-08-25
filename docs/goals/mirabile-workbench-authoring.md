@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 6 - new chart authoring
+- Current phase: 7 - saved chart editing and atomic CAS batches
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -28,8 +28,8 @@
 | 3. Workbench controls | Complete | Native panel/disclosure/field/select/toggle/action/status palette; buffered text/number/date/time semantics; semantic DOM instrumentation | Native and WASM checks; `./scripts/check.sh` passes 127 tests, strict Clippy, formatting, and diff checks | Phase 3 commit |
 | 4. Automation tooling | Complete | Non-default query-gated bridge; isolated IndexedDB override; loopback-only standard-library CDP client/CLI; scenario and failure artifacts | Native/WASM feature checks; Python contract tests; live semantic smoke and expected-failure artifact smoke | Phase 4 commit |
 | 5. Authoring capabilities | Complete | Provider-neutral zodiac/coordinate/point/house support and default correction metadata; contextual app options with disabled reasons | `./scripts/check.sh` passes 129 Rust tests plus 4 Python tests; native/WASM feature checks | Phase 5 commit |
-| 6. New chart authoring | In progress | Typed editor, preview/cancel/atomic create | Pending | Pending |
-| 7. Saved chart editing | Pending | Atomic CAS batch, conflict projection, shared-record guard | Pending | Pending |
+| 6. New chart authoring | Complete | Typed application-owned editor/defaults; partial-location validation; last-valid preview; native controls; cancel/no-write; atomic create and slot promotion | `./scripts/check.sh` passes 133 Rust tests plus 5 Python tests; native/WASM automation checks; live semantic and actual-control XALEN journeys | Phase 6 commit |
+| 7. Saved chart editing | In progress | Atomic CAS batch, conflict projection, shared-record guard | Pending | Pending |
 | 8. Workspace management | Pending | Library/new/open/rename/save/discard/switch and explicit demos | Pending | Pending |
 | 9. Aspect Set authoring | Pending | Full-row lifecycle editor | Pending | Pending |
 | 10. Session and slots | Pending | Inspectable temporary/durable display and slot state | Pending | Pending |
@@ -66,6 +66,10 @@
 - Backend descriptors now carry provider-neutral authoring support for zodiac modes and coordinate systems plus the provider's default correction profile; existing point and house capability metadata remains authoritative. The application projects every finite zodiac, coordinate, house, and timezone choice with contextual enabled state and a reason for every disabled choice.
 - XALEN truth is Tropical, Geocentric, Sun through Jupiter, NoHouses everywhere, and Equal/Placidus only with complete location. Sidereal, Whole Sign, Topocentric, Heliocentric, named zones, Local Mean Time, and Local Apparent Time remain visibly deferred or unsupported; its all-enabled apparent-place correction profile is application data rather than a browser choice.
 - Machine snapshots include the cohesive authoring capability projection. The inaccurate deterministic-provider browser label was replaced with a provider-neutral local-worker description.
+- New chart authoring begins from `Untitled Chart`, Birth, the current UTC civil instant, no subject/location, Tropical, Geocentric, NoHouses, and the backend descriptor's correction profile. Every edit is a typed `ChartMutation`; browser buffers parse dates, times, offsets, coordinates, and enums into core values before dispatch.
+- The private authoring draft can retain an enabled but incomplete manual location. Structured field validation is projected while the last valid aggregate and Scene remain authoritative; house selection is location-gated and removing a required location cannot leak a runtime-invalid chart into save.
+- Beginning a chart creates only session state, assigns its stable instance to the active required slot as a preview overlay, and writes nothing. Cancel removes it without writes. Save creates Record and Definition through one atomic batch, promotes the same slot assignment, updates library/workspace projections, and leaves workspace membership explicitly dirty.
+- The feature-gated bridge whitelists the same typed chart actions. Live semantic and native-control journeys exercise XALEN defaults, incomplete application validation, an invalid local numeric buffer, Enter commits, capability-gated Equal houses, settlement, trace origins, atomic save, and a final screenshot using only semantic control addresses.
 
 ## Blockers
 

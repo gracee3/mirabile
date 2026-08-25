@@ -7,6 +7,7 @@ use mirabile_app::{
     ResourceId,
 };
 
+use crate::chart_editor::ChartAuthoring;
 use crate::dispatcher::{WorkbenchCoordinator, reset_orb_buffer};
 use crate::workbench_controls::BufferedNumberField;
 
@@ -53,6 +54,8 @@ pub(super) fn Inspector(
                     },
                 )}
             </section>
+
+            <ChartAuthoring model dispatcher />
 
             <section class="inspector-section" aria-labelledby="slot-title">
                 <h3 id="slot-title">"Chart slots"</h3>

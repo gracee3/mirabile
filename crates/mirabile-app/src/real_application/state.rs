@@ -14,6 +14,7 @@ impl Default for RealState {
             session: None,
             views: BTreeMap::new(),
             editor: None,
+            chart_editor: None,
             cache: ComputationCache::default(),
             pending: VecDeque::new(),
             inflight: BTreeMap::new(),

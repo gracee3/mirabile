@@ -31,14 +31,14 @@ use crate::{
     AppReadModel, AppResult, Application, ApplicationActivityReadModel, ApplicationStatus,
     AspectDraftValue, AspectSetDraftMutation, AspectSetDraftReadModel, AspectSetSummary,
     AuthoringCapabilitiesReadModel, Availability, BindingSourceSummary,
-    CalculationDiagnosticsReadModel, CalculationRuntime, CalculationRuntimeError, ChartPersistence,
-    ChartSlotAssignment, CommandCapability, DraftState, ImplementationIdentityReadModel,
-    InlineCalculationRuntime, InspectorReadModel, LibraryChartSummary, LibraryReadModel,
-    OpenChartSummary, PendingOperationReadModel, ProjectionVersion, ResourceBindingSummary,
-    ResourceEditorReadModel, StartupCalculationProfile, StartupPolicy, ViewComputationState,
-    ViewReadModel, ViewSummary, WorkspaceDocumentBacking, WorkspaceReadModel, WorkspaceSession,
-    blank_workspace_session, current_transits_session, current_unix_millis,
-    workspace_commands::apply_workspace_command,
+    CalculationDiagnosticsReadModel, CalculationRuntime, CalculationRuntimeError, ChartEditorState,
+    ChartMutation, ChartPersistence, ChartSlotAssignment, CommandCapability, DraftState,
+    ImplementationIdentityReadModel, InlineCalculationRuntime, InspectorReadModel,
+    LibraryChartSummary, LibraryReadModel, OpenChartSummary, PendingOperationReadModel,
+    ProjectionVersion, ResourceBindingSummary, ResourceEditorReadModel, StartupCalculationProfile,
+    StartupPolicy, ViewComputationState, ViewReadModel, ViewSummary, WorkspaceDocumentBacking,
+    WorkspaceReadModel, WorkspaceSession, blank_workspace_session, current_transits_session,
+    current_unix_millis, workspace_commands::apply_workspace_command,
 };
 #[cfg(feature = "xalen-backend")]
 use mirabile_engine::XalenBackend;
@@ -330,6 +330,7 @@ where
                 state.next_timestamp = hydrated.next_timestamp;
                 state.status = ApplicationStatus::Ready;
                 state.editor = None;
+                state.chart_editor = None;
                 state.pending.clear();
                 state.inflight.clear();
                 state.saving_chart_drafts.clear();
@@ -374,6 +375,10 @@ where
         }
 
         match intent {
+            AppIntent::BeginNewChart => self.begin_new_chart()?,
+            AppIntent::ApplyChartMutation(mutation) => self.apply_chart_mutation(mutation)?,
+            AppIntent::SaveChartEditor => self.begin_save_chart_editor()?,
+            AppIntent::CancelChartEditor => self.cancel_chart_editor()?,
             AppIntent::StartChartDraft { draft } => self.start_chart_draft(*draft)?,
             AppIntent::SaveChartDraft { instance_id } => {
                 self.begin_save_chart_draft(instance_id)?;
@@ -465,6 +470,7 @@ struct RealState {
     session: Option<WorkspaceSession>,
     views: BTreeMap<ViewInstanceId, ViewRuntime>,
     editor: Option<AspectSetEditor>,
+    chart_editor: Option<crate::ChartAuthoringEditor>,
     cache: ComputationCache,
     pending: VecDeque<PendingWork>,
     inflight: BTreeMap<CalculationRequestId, PendingViewCalculation>,

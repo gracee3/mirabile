@@ -1,0 +1,24 @@
+{
+  "name": "new-chart",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "begin_new_chart"}}},
+    {"command": "wait", "timeout": 15},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "set_chart_title", "title": "Workbench Natal"}}},
+    {"command": "wait", "timeout": 15},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "set_chart_location_enabled", "enabled": true}}},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.chart_editor.fields.location.enabled": true, "value.chart_editor.validation": [{"field": "location.display_name", "message": "Location name is required when manual location is enabled"}, {"field": "location.latitude", "message": "Latitude is required when manual location is enabled"}, {"field": "location.longitude", "message": "Longitude is required when manual location is enabled"}]}},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "set_chart_location_name", "name": "Baltimore"}}},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "set_chart_latitude", "latitude": 39.2904}}},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "set_chart_longitude", "longitude": -76.6122}}},
+    {"command": "wait", "timeout": 15},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "set_chart_houses", "houses": "equal"}}},
+    {"command": "wait", "timeout": 15},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "save_chart_editor"}}},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.chart.saved": true, "value.chart.title": "Workbench Natal", "value.chart_editor": null, "value.workspace.dirty": true}},
+    {"command": "controls"},
+    {"command": "trace"}
+  ]
+}

@@ -404,10 +404,18 @@ pub(super) fn EnumSelect(
     disabled: Signal<bool>,
     on_change: Callback<String>,
 ) -> impl IntoView {
+    let control = address
+        .split_once('[')
+        .map_or_else(|| address.clone(), |(control, _)| control.to_owned());
     view! {
-        <label class="field-label" data-mirabile-control=address>
+        <label
+            class="field-label"
+            data-mirabile-control=control
+            data-mirabile-address=address
+        >
             <span>{label}</span>
             <select
+                data-mirabile-native="value"
                 prop:value=move || value.get()
                 disabled=move || disabled.get()
                 on:change=move |event| on_change.run(event_target_value(&event))
@@ -430,10 +438,18 @@ pub(super) fn Toggle(
     disabled: Signal<bool>,
     on_change: Callback<bool>,
 ) -> impl IntoView {
+    let control = address
+        .split_once('[')
+        .map_or_else(|| address.clone(), |(control, _)| control.to_owned());
     view! {
-        <label class="check-field" data-mirabile-control=address>
+        <label
+            class="check-field"
+            data-mirabile-control=control
+            data-mirabile-address=address
+        >
             <input
                 type="checkbox"
+                data-mirabile-native="value"
                 prop:checked=move || checked.get()
                 disabled=move || disabled.get()
                 on:change=move |event| on_change.run(event_target_checked(&event))
@@ -462,11 +478,15 @@ pub(super) fn ActionControl(
     disabled: Signal<bool>,
     on_activate: Callback<()>,
 ) -> impl IntoView {
+    let control = address
+        .split_once('[')
+        .map_or_else(|| address.clone(), |(control, _)| control.to_owned());
     view! {
         <button
             type="button"
             class="button"
-            data-mirabile-control=address
+            data-mirabile-control=control
+            data-mirabile-address=address
             disabled=move || disabled.get()
             on:click=move |_| on_activate.run(())
         >

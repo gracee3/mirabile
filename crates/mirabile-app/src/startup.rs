@@ -216,7 +216,7 @@ fn supported_point_set() -> PointSet {
     }
 }
 
-fn utc_civil_datetime(unix_millis: i64) -> CivilDateTime {
+pub(crate) fn utc_civil_datetime(unix_millis: i64) -> CivilDateTime {
     let unix_seconds = unix_millis.div_euclid(1_000);
     let days = unix_seconds.div_euclid(86_400);
     let seconds = unix_seconds.rem_euclid(86_400);

@@ -6,6 +6,7 @@
 
 mod application;
 mod automation;
+mod chart_authoring;
 mod chart_draft;
 mod control;
 mod demo;
@@ -21,6 +22,7 @@ mod workspace_session;
 
 pub use application::*;
 pub use automation::*;
+pub use chart_authoring::*;
 pub use chart_draft::*;
 pub use control::*;
 pub use demo::*;
@@ -35,8 +37,9 @@ pub use workspace_session::*;
 
 // Stable identity/value types cross the application boundary without frontend-specific aliases.
 pub use mirabile_core::{
-    Angle, AspectId, ChartSlotId, CoordinateSystem, CorrectionSpec, HouseSystem, InstanceId,
-    PointId, ResourceId, Revision, ViewInstanceId,
+    Angle, AspectId, ChartSlotId, CivilDate, CivilTime, CoordinateSystem, CorrectionSpec,
+    EventKind, HouseSystem, InstanceId, Latitude, Longitude, Offset, PointId, ResourceId, Revision,
+    ViewInstanceId, ZodiacSpec,
 };
 pub use mirabile_engine::ZodiacMode;
 

@@ -5,8 +5,8 @@ use mirabile_engine::{BackendDescriptor, ZodiacMode};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Angle, AppError, AspectId, CalculationDiagnosticsReadModel, ChartSlotId, InstanceId, PointId,
-    ResourceId, Revision, Scene, ViewInstanceId,
+    Angle, AppError, AspectId, CalculationDiagnosticsReadModel, ChartEditorReadModel, ChartSlotId,
+    InstanceId, PointId, ResourceId, Revision, Scene, ViewInstanceId,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -16,6 +16,7 @@ pub struct AppReadModel {
     pub activity: ApplicationActivityReadModel,
     pub calculation: Option<CalculationDiagnosticsReadModel>,
     pub authoring: AuthoringCapabilitiesReadModel,
+    pub chart_editor: Option<ChartEditorReadModel>,
     pub library: LibraryReadModel,
     pub workspace: WorkspaceReadModel,
     pub active_view: Option<ViewReadModel>,
@@ -33,6 +34,7 @@ impl AppReadModel {
             activity: ApplicationActivityReadModel::initializing(),
             calculation: None,
             authoring: AuthoringCapabilitiesReadModel::default(),
+            chart_editor: None,
             library: LibraryReadModel::default(),
             workspace: WorkspaceReadModel::default(),
             active_view: None,
@@ -496,6 +498,9 @@ impl DraftState {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AppAction {
+    BeginNewChart,
+    SaveChartEditor,
+    CancelChartEditor,
     SaveChartDraft,
     CancelChartDraft,
     BeginAspectSetEdit,

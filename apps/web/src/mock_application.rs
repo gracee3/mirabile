@@ -360,6 +360,7 @@ impl MockState {
             activity: self.activity_read_model(),
             calculation: None,
             authoring: AuthoringCapabilitiesReadModel::default(),
+            chart_editor: None,
             library: LibraryReadModel {
                 charts: self.library_charts.clone(),
                 aspect_sets: self
@@ -507,6 +508,15 @@ impl MockState {
         });
 
         vec![
+            capability(AppAction::BeginNewChart, Availability::Enabled),
+            capability(
+                AppAction::SaveChartEditor,
+                disabled("There is no chart editor to save"),
+            ),
+            capability(
+                AppAction::CancelChartEditor,
+                disabled("There is no chart editor to cancel"),
+            ),
             capability(
                 AppAction::SaveChartDraft,
                 if active_chart_is_draft {
@@ -550,6 +560,13 @@ impl MockState {
     fn apply(&mut self, intent: AppIntent) -> AppResult<()> {
         self.notice = None;
         match intent {
+            AppIntent::BeginNewChart
+            | AppIntent::ApplyChartMutation(_)
+            | AppIntent::SaveChartEditor
+            | AppIntent::CancelChartEditor => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Typed chart authoring is provided by the real application adapter",
+            )),
             AppIntent::StartChartDraft { draft } => {
                 if draft.title.trim().is_empty() {
                     return Err(AppError::new(

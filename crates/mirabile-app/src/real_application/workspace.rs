@@ -430,7 +430,11 @@ impl RealState {
                     "Workspace Aspect Set binding changed; the workspace is dirty and analysis is refreshing",
                 ))
             }
-            AppIntent::StartChartDraft { .. }
+            AppIntent::BeginNewChart
+            | AppIntent::ApplyChartMutation(_)
+            | AppIntent::SaveChartEditor
+            | AppIntent::CancelChartEditor
+            | AppIntent::StartChartDraft { .. }
             | AppIntent::SaveChartDraft { .. }
             | AppIntent::CancelChartDraft { .. }
             | AppIntent::BeginAspectSetEdit { .. }

@@ -1,0 +1,33 @@
+{
+  "name": "new-chart-control",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.new"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.title"},
+    {"command": "set", "address": "chart.title", "value": "Control Natal"},
+    {"command": "key", "address": "chart.title", "key": "Enter"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.location-enabled"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.location-name"},
+    {"command": "set", "address": "chart.location-name", "value": "Baltimore"},
+    {"command": "key", "address": "chart.location-name", "key": "Enter"},
+    {"command": "click", "address": "chart.latitude"},
+    {"command": "set", "address": "chart.latitude", "value": "999"},
+    {"command": "key", "address": "chart.latitude", "key": "Enter"},
+    {"command": "get", "address": "chart.latitude", "expect": {"invalid": true, "local_buffer": "999"}},
+    {"command": "set", "address": "chart.latitude", "value": "39.2904"},
+    {"command": "key", "address": "chart.latitude", "key": "Enter"},
+    {"command": "click", "address": "chart.longitude"},
+    {"command": "set", "address": "chart.longitude", "value": "-76.6122"},
+    {"command": "key", "address": "chart.longitude", "key": "Enter"},
+    {"command": "wait", "timeout": 15},
+    {"command": "select", "address": "chart.houses", "value": "equal"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.editor-save"},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.chart.saved": true, "value.chart.title": "Control Natal", "value.chart_editor": null}},
+    {"command": "trace"}
+  ]
+}

@@ -7,6 +7,8 @@ mod automation_bridge;
 #[cfg(all(target_arch = "wasm32", feature = "browser-contract"))]
 mod browser_contract;
 #[cfg(not(feature = "browser-contract"))]
+mod chart_editor;
+#[cfg(not(feature = "browser-contract"))]
 mod commands;
 #[cfg(not(feature = "browser-contract"))]
 mod dispatcher;

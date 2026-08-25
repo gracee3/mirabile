@@ -8,7 +8,8 @@ use futures::{
     task::LocalSpawnExt,
 };
 use mirabile_core::{
-    Angle, CanonicalResource, PointId, PointSelector, ResourceEnvelope, ResourceKind,
+    Angle, CanonicalResource, CoordinateSystem, EventKind, HouseSystem, Latitude, Longitude,
+    PointId, PointSelector, ResourceEnvelope, ResourceKind,
 };
 use mirabile_engine::{
     BackendDescriptor, CalculationBackend, CalculationBackendError,
@@ -813,7 +814,7 @@ fn draft_slot_overlay_never_enters_saved_workspace_and_reload_restores_durable_a
     );
     let preview =
         block_on(application.wait_for_update(previewing.version)).expect("draft preview settles");
-    assert!(preview.active_view.is_some_and(|view| {
+    assert!(preview.active_view.as_ref().is_some_and(|view| {
         view.slots
             .iter()
             .any(|slot| slot.slot == required_slot && slot.chart == Some(draft_id))
@@ -1065,6 +1066,146 @@ fn chart_draft_previews_then_atomically_creates_record_and_definition() {
         block_on(repository.get(record)).expect("record read"),
         Some(CanonicalResource::ChartRecord(_))
     ));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn typed_new_chart_authoring_retains_last_valid_preview_and_saves_atomically() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    let initial = ready(&application);
+    let initial_count = repository.current_count();
+    let initial_scene = initial
+        .active_view
+        .as_ref()
+        .and_then(|view| view.scene.clone());
+
+    let started = block_on(application.dispatch(AppIntent::BeginNewChart))
+        .expect("typed chart editor begins");
+    let instance_id = started.workspace.active_chart.expect("new chart is active");
+    let editor = started.chart_editor.as_ref().expect("editor projection");
+    assert_eq!(editor.fields.title, "Untitled Chart");
+    assert_eq!(editor.fields.event_kind, EventKind::Birth);
+    assert_eq!(editor.fields.houses, HouseSystem::NoHouses);
+    assert_eq!(editor.fields.coordinates, CoordinateSystem::Geocentric);
+    assert!(editor.validation.is_empty());
+    assert_eq!(repository.current_count(), initial_count);
+    let preview = settle(&application, started);
+    assert!(preview.active_view.as_ref().is_some_and(|view| {
+        view.slots
+            .iter()
+            .any(|slot| slot.required && slot.chart == Some(instance_id))
+    }));
+
+    let incomplete = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetLocationEnabled(true),
+    )))
+    .expect("incomplete location is accepted as editor state");
+    assert!(incomplete.is_settled());
+    assert_eq!(
+        incomplete
+            .chart_editor
+            .as_ref()
+            .expect("editor")
+            .validation
+            .len(),
+        3
+    );
+    assert_eq!(
+        incomplete
+            .active_view
+            .as_ref()
+            .and_then(|view| view.scene.clone()),
+        preview
+            .active_view
+            .as_ref()
+            .and_then(|view| view.scene.clone())
+            .or(initial_scene),
+        "incomplete fields retain the last valid Scene"
+    );
+    assert!(
+        !incomplete
+            .availability(AppAction::SaveChartEditor)
+            .is_enabled()
+    );
+
+    block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetLocationName("Baltimore".into()),
+    )))
+    .expect("location name");
+    block_on(
+        application.dispatch(AppIntent::ApplyChartMutation(ChartMutation::SetLatitude(
+            Some(Latitude::from_degrees(39.29).expect("latitude")),
+        ))),
+    )
+    .expect("latitude");
+    let complete = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetLongitude(Some(Longitude::from_degrees(-76.61).expect("longitude"))),
+    )))
+    .expect("complete location refreshes preview");
+    let complete = settle(&application, complete);
+    assert!(
+        complete
+            .chart_editor
+            .as_ref()
+            .expect("editor")
+            .validation
+            .is_empty()
+    );
+    assert!(
+        complete
+            .authoring
+            .house_systems
+            .iter()
+            .any(|option| { option.value == HouseSystem::Equal && option.enabled })
+    );
+
+    let houses = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetHouseSystem(HouseSystem::Equal),
+    )))
+    .expect("location-backed Equal houses are supported");
+    settle(&application, houses);
+    let saving = block_on(application.dispatch(AppIntent::SaveChartEditor))
+        .expect("typed editor save is accepted");
+    assert!(!saving.is_settled());
+    assert_eq!(
+        saving.chart_editor.as_ref().map(|editor| editor.state),
+        Some(ChartEditorState::Saving)
+    );
+    let saved = settle(&application, saving);
+    assert!(saved.chart_editor.is_none());
+    assert_eq!(repository.current_count(), initial_count + 2);
+    assert!(matches!(
+        saved
+            .workspace
+            .charts
+            .iter()
+            .find(|chart| chart.instance_id == instance_id)
+            .map(|chart| &chart.persistence),
+        Some(ChartPersistence::Saved { .. })
+    ));
+}
+
+#[test]
+fn typed_new_chart_cancel_writes_nothing() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    ready(&application);
+    let initial_count = repository.current_count();
+    let started = block_on(application.dispatch(AppIntent::BeginNewChart)).expect("begin chart");
+    let instance_id = started.workspace.active_chart.expect("new chart");
+    settle(&application, started);
+    let canceled =
+        block_on(application.dispatch(AppIntent::CancelChartEditor)).expect("cancel chart editor");
+    assert!(canceled.chart_editor.is_none());
+    assert!(
+        canceled
+            .workspace
+            .charts
+            .iter()
+            .all(|chart| chart.instance_id != instance_id)
+    );
+    assert_eq!(repository.current_count(), initial_count);
 }
 
 #[test]

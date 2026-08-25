@@ -1,9 +1,15 @@
 use crate::{
-    Angle, AspectId, ChartDraft, ChartSlotId, InstanceId, PointId, ResourceId, ViewInstanceId,
+    Angle, AspectId, ChartDraft, ChartMutation, ChartSlotId, InstanceId, PointId, ResourceId,
+    ViewInstanceId,
 };
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppIntent {
+    BeginNewChart,
+    ApplyChartMutation(ChartMutation),
+    SaveChartEditor,
+    CancelChartEditor,
+    /// Compatibility path for non-browser fixtures. Workbench authoring uses typed mutations.
     StartChartDraft {
         draft: Box<ChartDraft>,
     },
@@ -66,7 +72,10 @@ pub enum AspectSetDraftMutation {
 impl AppIntent {
     pub fn semantic_summary(&self) -> String {
         match self {
-            Self::StartChartDraft { .. } => "chart.begin-new".into(),
+            Self::BeginNewChart | Self::StartChartDraft { .. } => "chart.begin-new".into(),
+            Self::ApplyChartMutation(mutation) => mutation.semantic_summary(),
+            Self::SaveChartEditor => "chart.editor.save".into(),
+            Self::CancelChartEditor => "chart.editor.cancel".into(),
             Self::SaveChartDraft { instance_id } => format!("chart.save[{instance_id}]"),
             Self::CancelChartDraft { instance_id } => format!("chart.cancel[{instance_id}]"),
             Self::OpenChart { definition_id } => format!("chart.open[{definition_id}]"),
@@ -111,6 +120,33 @@ impl AppIntent {
             Self::SaveDraft => "draft.save".into(),
             Self::CancelDraft => "draft.cancel".into(),
             Self::RefreshActiveView => "application.refresh".into(),
+        }
+    }
+}
+
+impl ChartMutation {
+    fn semantic_summary(&self) -> String {
+        match self {
+            Self::SetTitle(_) => "chart.title.set".into(),
+            Self::SetEventKind(_) => "chart.event-kind.set".into(),
+            Self::SetSubjectName(Some(_)) => "chart.subject-name.set".into(),
+            Self::SetSubjectName(None) => "chart.subject-name.clear".into(),
+            Self::SetCivilDate(_) => "chart.civil-date.set".into(),
+            Self::SetCivilTime(_) => "chart.civil-time.set".into(),
+            Self::SetTimezone(_) => "chart.timezone.set".into(),
+            Self::SetLocationEnabled(enabled) => {
+                format!("chart.location.enabled={enabled}")
+            }
+            Self::SetLocationName(_) => "chart.location.name.set".into(),
+            Self::SetCountryRegion(Some(_)) => "chart.location.region.set".into(),
+            Self::SetCountryRegion(None) => "chart.location.region.clear".into(),
+            Self::SetLatitude(Some(_)) => "chart.location.latitude.set".into(),
+            Self::SetLatitude(None) => "chart.location.latitude.clear".into(),
+            Self::SetLongitude(Some(_)) => "chart.location.longitude.set".into(),
+            Self::SetLongitude(None) => "chart.location.longitude.clear".into(),
+            Self::SetZodiac(_) => "chart.zodiac.set".into(),
+            Self::SetHouseSystem(_) => "chart.houses.set".into(),
+            Self::SetCoordinateSystem(_) => "chart.coordinates.set".into(),
         }
     }
 }

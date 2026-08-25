@@ -194,12 +194,34 @@ def run_scenario(
                 raise CDPError(f"scenario step {index + 1} is malformed")
             command = step["command"]
             result = perform(client, command, step)
+            assert_expectations(result, step.get("expect"), index + 1)
             results.append({"step": index + 1, "command": command, "value": result})
         return {"scenario": scenario.get("name", "unnamed"), "steps": results}
     except Exception as error:
         if artifacts is not None:
             collect_failure_artifacts(client, artifacts, scenario, str(error))
         raise
+
+
+def assert_expectations(result: Any, expectations: Any, step: int) -> None:
+    if expectations is None:
+        return
+    if not isinstance(expectations, dict):
+        raise CDPError(f"scenario step {step} expect must be an object")
+    for path, expected in expectations.items():
+        if not isinstance(path, str) or not path:
+            raise CDPError(f"scenario step {step} expectation path is invalid")
+        actual = result
+        for segment in path.split("."):
+            if not isinstance(actual, dict) or segment not in actual:
+                raise CDPError(
+                    f"scenario step {step} expectation path {path!r} was not present"
+                )
+            actual = actual[segment]
+        if actual != expected:
+            raise CDPError(
+                f"scenario step {step} expected {path}={expected!r}; got {actual!r}"
+            )
 
 
 def collect_failure_artifacts(

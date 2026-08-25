@@ -1,17 +1,215 @@
 use super::{
     AppError, AppErrorKind, AppNotice, AppNoticeKind, AppResult, AspectSet, AspectSetDraftMutation,
-    AspectSetEditor, CalculationRuntime, CanonicalResource, ChartDefinition, ChartSource,
-    DomainValidate, DraftState, InstanceId, PendingWork, RealApplication, RepositoryError,
-    ResourceEnvelope, ResourceId, ResourceRepository, Revision, Timestamp, WorkspaceDocumentChart,
-    conflict_refresh_warning, conjunction, info, not_found, repository_app_error,
-    restore_dirty_editor, success,
+    AspectSetEditor, CalculationRuntime, CanonicalResource, ChartDefinition, ChartEditorState,
+    ChartMutation, ChartSource, DomainValidate, DraftState, InstanceId, PendingWork,
+    RealApplication, RepositoryError, ResourceEnvelope, ResourceId, ResourceRepository, Revision,
+    Timestamp, WorkspaceDocumentChart, conflict_refresh_warning, conjunction, info, not_found,
+    repository_app_error, restore_dirty_editor, success,
 };
+
+fn ensure_option_enabled<T: PartialEq>(
+    options: &[crate::AuthoringOption<T>],
+    value: &T,
+) -> AppResult<()> {
+    match options.iter().find(|option| &option.value == value) {
+        Some(option) if option.enabled => Ok(()),
+        Some(option) => Err(AppError::new(
+            AppErrorKind::InvalidIntent,
+            option
+                .disabled_reason
+                .clone()
+                .unwrap_or_else(|| "The authoring choice is disabled".into()),
+        )),
+        None => Err(AppError::new(
+            AppErrorKind::InvalidIntent,
+            "The authoring choice is not available",
+        )),
+    }
+}
 
 impl<R, C> RealApplication<R, C>
 where
     R: ResourceRepository + Clone,
     C: CalculationRuntime,
 {
+    pub(super) fn begin_new_chart(&self) -> AppResult<()> {
+        let instance_id = InstanceId::new();
+        let editor = crate::ChartAuthoringEditor::new(
+            instance_id,
+            crate::startup::utc_civil_datetime((self.clock)()),
+            self.engine
+                .backend_descriptor()
+                .authoring
+                .default_corrections
+                .clone(),
+        );
+        let draft = editor.last_valid.clone();
+        let mut state = self.state.borrow_mut();
+        if state.chart_editor.is_some() {
+            return Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Save or cancel the current chart editor before beginning another chart",
+            ));
+        }
+        let active_view = state.session()?.active_view;
+        let required_slot = active_view
+            .map(|view_id| {
+                state
+                    .resolve_view_documents(state.workspace().expect("ready workspace"))?
+                    .remove(&view_id)
+                    .and_then(|document| {
+                        document
+                            .chart_slots
+                            .into_iter()
+                            .find(|slot| slot.required)
+                            .map(|slot| slot.id)
+                    })
+                    .map(|slot| (view_id, slot))
+                    .ok_or_else(|| {
+                        AppError::new(
+                            AppErrorKind::NotFound,
+                            "The active view has no required chart slot for preview",
+                        )
+                    })
+            })
+            .transpose()?;
+        let session = state.session.as_mut().expect("ready session");
+        session
+            .draft_charts
+            .push(crate::WorkspaceSessionDraftChart { instance_id, draft });
+        session.active_chart = Some(instance_id);
+        if let Some((view_id, slot)) = required_slot {
+            session
+                .draft_chart_assignments
+                .entry(view_id)
+                .or_default()
+                .insert(slot, instance_id);
+        }
+        state.chart_editor = Some(editor);
+        if active_view.is_some() {
+            self.submit_active_view_refresh(&mut state)?;
+        }
+        state.notice = Some(info(
+            "New chart editor opened with application-owned defaults and a session-only preview",
+        ));
+        state.advance()
+    }
+
+    pub(super) fn apply_chart_mutation(&self, mutation: ChartMutation) -> AppResult<()> {
+        let descriptor = self.engine.backend_descriptor();
+        let mut state = self.state.borrow_mut();
+        let complete_location = state
+            .chart_editor
+            .as_ref()
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::InvalidIntent,
+                    "Begin a chart edit before changing chart fields",
+                )
+            })?
+            .location_complete();
+        let capabilities =
+            crate::AuthoringCapabilitiesReadModel::from_backend(descriptor, complete_location);
+        match &mutation {
+            ChartMutation::SetZodiac(value) => {
+                let mode = match value {
+                    mirabile_core::ZodiacSpec::Tropical => mirabile_engine::ZodiacMode::Tropical,
+                    mirabile_core::ZodiacSpec::Sidereal { .. } => {
+                        mirabile_engine::ZodiacMode::Sidereal
+                    }
+                };
+                ensure_option_enabled(&capabilities.zodiac_modes, &mode)?;
+            }
+            ChartMutation::SetCoordinateSystem(value) => {
+                ensure_option_enabled(&capabilities.coordinate_systems, value)?;
+            }
+            ChartMutation::SetHouseSystem(value) => {
+                ensure_option_enabled(&capabilities.house_systems, value)?;
+            }
+            ChartMutation::SetTitle(_)
+            | ChartMutation::SetEventKind(_)
+            | ChartMutation::SetSubjectName(_)
+            | ChartMutation::SetCivilDate(_)
+            | ChartMutation::SetCivilTime(_)
+            | ChartMutation::SetTimezone(_)
+            | ChartMutation::SetLocationEnabled(_)
+            | ChartMutation::SetLocationName(_)
+            | ChartMutation::SetCountryRegion(_)
+            | ChartMutation::SetLatitude(_)
+            | ChartMutation::SetLongitude(_) => {}
+        }
+        let (instance_id, materialized) = {
+            let editor = state.chart_editor.as_mut().expect("editor was checked");
+            if editor.state == ChartEditorState::Saving {
+                return Err(AppError::new(
+                    AppErrorKind::Unavailable,
+                    "The chart editor cannot change while saving",
+                ));
+            }
+            (editor.instance_id(), editor.apply(mutation))
+        };
+        if let Some(materialized) = materialized {
+            let session = state.session.as_mut().expect("ready session");
+            let draft = session
+                .draft_charts
+                .iter_mut()
+                .find(|draft| draft.instance_id == instance_id)
+                .ok_or_else(|| {
+                    AppError::new(AppErrorKind::NotFound, "The chart preview is not open")
+                })?;
+            draft.draft = materialized;
+            self.submit_active_view_refresh(&mut state)?;
+            state.notice = Some(info(
+                "Chart mutation accepted; the authoritative preview is refreshing",
+            ));
+        } else {
+            state.notice = Some(info(
+                "Chart field accepted but is incomplete; the last valid preview is retained",
+            ));
+        }
+        state.advance()
+    }
+
+    pub(super) fn begin_save_chart_editor(&self) -> AppResult<()> {
+        let instance_id = {
+            let state = self.state.borrow();
+            let editor = state.chart_editor.as_ref().ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::InvalidIntent,
+                    "There is no chart editor to save",
+                )
+            })?;
+            if !editor.validation.is_empty() {
+                return Err(AppError::new(
+                    AppErrorKind::InvalidIntent,
+                    "Complete every invalid chart field before saving",
+                ));
+            }
+            editor.instance_id()
+        };
+        self.begin_save_chart_draft(instance_id)?;
+        if let Some(editor) = self.state.borrow_mut().chart_editor.as_mut() {
+            editor.state = ChartEditorState::Saving;
+        }
+        Ok(())
+    }
+
+    pub(super) fn cancel_chart_editor(&self) -> AppResult<()> {
+        let instance_id = self
+            .state
+            .borrow()
+            .chart_editor
+            .as_ref()
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::InvalidIntent,
+                    "There is no chart editor to cancel",
+                )
+            })?
+            .instance_id();
+        self.cancel_chart_draft(instance_id)
+    }
+
     pub(super) fn start_chart_draft(&self, draft: crate::ChartDraft) -> AppResult<()> {
         if draft.title.trim().is_empty() {
             return Err(AppError::new(
@@ -111,6 +309,13 @@ where
             let failure = repository_app_error("Could not atomically save the ChartDraft", &error);
             let mut state = self.state.borrow_mut();
             state.saving_chart_drafts.remove(&instance_id);
+            if let Some(editor) = state
+                .chart_editor
+                .as_mut()
+                .filter(|editor| editor.instance_id() == instance_id)
+            {
+                editor.state = ChartEditorState::Dirty;
+            }
             state.notice = Some(AppNotice {
                 kind: if failure.kind == AppErrorKind::Conflict {
                     AppNoticeKind::Conflict
@@ -124,6 +329,13 @@ where
 
         let mut state = self.state.borrow_mut();
         state.saving_chart_drafts.remove(&instance_id);
+        if state
+            .chart_editor
+            .as_ref()
+            .is_some_and(|editor| editor.instance_id() == instance_id)
+        {
+            state.chart_editor = None;
+        }
         state.next_timestamp = state.next_timestamp.saturating_add(1);
         state
             .catalog
@@ -187,6 +399,13 @@ where
         }
         if refresh_active_view {
             self.submit_active_view_refresh(&mut state)?;
+        }
+        if state
+            .chart_editor
+            .as_ref()
+            .is_some_and(|editor| editor.instance_id() == instance_id)
+        {
+            state.chart_editor = None;
         }
         state.notice = Some(info(
             "Chart draft canceled; no canonical resources were created",

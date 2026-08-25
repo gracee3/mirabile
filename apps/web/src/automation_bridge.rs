@@ -238,6 +238,12 @@ pub(super) fn install(
                 .clone()
                 .dyn_into::<web_sys::HtmlSelectElement>()
                 .ok();
+            let nested_select = element
+                .query_selector("select")
+                .ok()
+                .flatten()
+                .and_then(|select| select.dyn_into::<web_sys::HtmlSelectElement>().ok());
+            let effective_select = select.as_ref().or(nested_select.as_ref());
             let nested_input = element
                 .query_selector("input")
                 .ok()
@@ -246,7 +252,7 @@ pub(super) fn install(
             let effective_input = input.as_ref().or(nested_input.as_ref());
             let kind = if tag == "BUTTON" {
                 ControlKind::Action
-            } else if select.is_some() {
+            } else if effective_select.is_some() {
                 ControlKind::Select
             } else if effective_input.is_some_and(|input| input.type_() == "checkbox") {
                 ControlKind::Checkbox
@@ -257,7 +263,7 @@ pub(super) fn install(
             } else {
                 ControlKind::Text
             };
-            let value = if let Some(select) = &select {
+            let value = if let Some(select) = effective_select {
                 serde_json::Value::String(select.value())
             } else if let Some(input) = effective_input {
                 if input.type_() == "checkbox" {
@@ -272,10 +278,8 @@ pub(super) fn install(
             };
             let disabled = element.has_attribute("disabled")
                 || effective_input.is_some_and(web_sys::HtmlInputElement::disabled)
-                || select
-                    .as_ref()
-                    .is_some_and(web_sys::HtmlSelectElement::disabled);
-            let options = select.as_ref().map_or_else(Vec::new, |select| {
+                || effective_select.is_some_and(web_sys::HtmlSelectElement::disabled);
+            let options = effective_select.map_or_else(Vec::new, |select| {
                 (0..select.length())
                     .filter_map(|index| select.item(index))
                     .filter_map(|option| option.dyn_into::<web_sys::HtmlOptionElement>().ok())
@@ -343,6 +347,48 @@ struct ExecuteRequest {
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 enum WhitelistedAction {
+    BeginNewChart,
+    SaveChartEditor,
+    CancelChartEditor,
+    SetChartTitle {
+        title: String,
+    },
+    SetChartEventKind {
+        event_kind: mirabile_app::EventKind,
+    },
+    SetChartSubjectName {
+        subject_name: Option<String>,
+    },
+    SetChartCivilDate {
+        date: mirabile_app::CivilDate,
+    },
+    SetChartCivilTime {
+        time: mirabile_app::CivilTime,
+    },
+    SetChartTimezone {
+        timezone: mirabile_app::ChartTimezone,
+    },
+    SetChartLocationEnabled {
+        enabled: bool,
+    },
+    SetChartLocationName {
+        name: String,
+    },
+    SetChartLatitude {
+        latitude: Option<mirabile_app::Latitude>,
+    },
+    SetChartLongitude {
+        longitude: Option<mirabile_app::Longitude>,
+    },
+    SetChartZodiac {
+        zodiac: mirabile_app::ZodiacSpec,
+    },
+    SetChartHouses {
+        houses: mirabile_app::HouseSystem,
+    },
+    SetChartCoordinates {
+        coordinates: mirabile_app::CoordinateSystem,
+    },
     ActivateChart {
         instance_id: mirabile_app::InstanceId,
     },
@@ -389,6 +435,48 @@ impl WhitelistedAction {
     fn into_intent(self) -> Result<mirabile_app::AppIntent, String> {
         use mirabile_app::{AppIntent, AspectSetDraftMutation};
         Ok(match self {
+            Self::BeginNewChart => AppIntent::BeginNewChart,
+            Self::SaveChartEditor => AppIntent::SaveChartEditor,
+            Self::CancelChartEditor => AppIntent::CancelChartEditor,
+            Self::SetChartTitle { title } => {
+                AppIntent::ApplyChartMutation(mirabile_app::ChartMutation::SetTitle(title))
+            }
+            Self::SetChartEventKind { event_kind } => {
+                AppIntent::ApplyChartMutation(mirabile_app::ChartMutation::SetEventKind(event_kind))
+            }
+            Self::SetChartSubjectName { subject_name } => AppIntent::ApplyChartMutation(
+                mirabile_app::ChartMutation::SetSubjectName(subject_name),
+            ),
+            Self::SetChartCivilDate { date } => {
+                AppIntent::ApplyChartMutation(mirabile_app::ChartMutation::SetCivilDate(date))
+            }
+            Self::SetChartCivilTime { time } => {
+                AppIntent::ApplyChartMutation(mirabile_app::ChartMutation::SetCivilTime(time))
+            }
+            Self::SetChartTimezone { timezone } => {
+                AppIntent::ApplyChartMutation(mirabile_app::ChartMutation::SetTimezone(timezone))
+            }
+            Self::SetChartLocationEnabled { enabled } => AppIntent::ApplyChartMutation(
+                mirabile_app::ChartMutation::SetLocationEnabled(enabled),
+            ),
+            Self::SetChartLocationName { name } => {
+                AppIntent::ApplyChartMutation(mirabile_app::ChartMutation::SetLocationName(name))
+            }
+            Self::SetChartLatitude { latitude } => {
+                AppIntent::ApplyChartMutation(mirabile_app::ChartMutation::SetLatitude(latitude))
+            }
+            Self::SetChartLongitude { longitude } => {
+                AppIntent::ApplyChartMutation(mirabile_app::ChartMutation::SetLongitude(longitude))
+            }
+            Self::SetChartZodiac { zodiac } => {
+                AppIntent::ApplyChartMutation(mirabile_app::ChartMutation::SetZodiac(zodiac))
+            }
+            Self::SetChartHouses { houses } => {
+                AppIntent::ApplyChartMutation(mirabile_app::ChartMutation::SetHouseSystem(houses))
+            }
+            Self::SetChartCoordinates { coordinates } => AppIntent::ApplyChartMutation(
+                mirabile_app::ChartMutation::SetCoordinateSystem(coordinates),
+            ),
             Self::ActivateChart { instance_id } => AppIntent::ActivateChart { instance_id },
             Self::BeginAspectSetEdit { resource_id } => {
                 AppIntent::BeginAspectSetEdit { resource_id }
