@@ -46,7 +46,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   color: inherit;
   font: inherit;
 }
@@ -67,6 +68,7 @@ input:disabled {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
@@ -479,6 +481,7 @@ kbd {
 
 .chart-rail,
 .inspector {
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 1rem;
   background: var(--surface-1);

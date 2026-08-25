@@ -69,6 +69,7 @@ pub(super) fn Inspector(
                                     <input
                                         type="checkbox"
                                         data-mirabile-control=ControlId::DISPLAY_POINT.to_string()
+                                        data-mirabile-label=format!("{} visibility", point.label)
                                         data-mirabile-point=qualifier.clone()
                                         data-mirabile-address=ControlAddress::qualified(
                                             ControlId::DISPLAY_POINT,
@@ -190,6 +191,7 @@ pub(super) fn Inspector(
                         id="aspect-set-picker"
                         data-mirabile-control=ControlId::ASPECT_RESOURCE.to_string()
                         data-mirabile-address=ControlAddress::new(ControlId::ASPECT_RESOURCE).to_string()
+                        data-mirabile-label="Aspect Set resource"
                         prop:value=move || model.get().inspector.active_aspect_set.map_or_else(String::new, |id| id.to_string())
                         on:change=move |event| {
                             let value = event_target_value(&event);

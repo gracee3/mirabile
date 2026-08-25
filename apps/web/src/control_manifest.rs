@@ -71,7 +71,9 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
         } else {
             ControlKind::Text
         };
-        let value = if let Some(select) = effective_select {
+        let value = if let Some(value) = element.get_attribute("data-mirabile-value") {
+            serde_json::Value::String(value)
+        } else if let Some(select) = effective_select {
             serde_json::Value::String(select.value())
         } else if let Some(textarea) = effective_textarea {
             serde_json::Value::String(textarea.value())
@@ -131,7 +133,13 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
                 || element.get_attribute("aria-invalid").as_deref() == Some("true"),
             pending: element.get_attribute("aria-busy").as_deref() == Some("true"),
             enabled: !disabled,
-            disabled_reason: disabled.then(|| element.get_attribute("title")).flatten(),
+            disabled_reason: disabled.then(|| {
+                element
+                    .get_attribute("title")
+                    .or_else(|| effective_input.and_then(|input| input.get_attribute("title")))
+                    .or_else(|| effective_select.and_then(|select| select.get_attribute("title")))
+                    .unwrap_or_else(|| "Control is currently unavailable".to_owned())
+            }),
             options,
             entity: ControlEntityIdentity {
                 resource_id: element

@@ -45,6 +45,7 @@ pub(super) fn MacroPanel(dispatcher: WorkbenchCoordinator) -> impl IntoView {
                         data-mirabile-native="value"
                         data-mirabile-control=ControlId::MACRO_NAME.to_string()
                         data-mirabile-address=ControlId::MACRO_NAME.to_string()
+                        data-mirabile-label="Macro name"
                         prop:value=move || name.get()
                         on:input=move |event| name.set(event_target_value(&event))
                     />
@@ -137,6 +138,7 @@ pub(super) fn MacroPanel(dispatcher: WorkbenchCoordinator) -> impl IntoView {
                     data-mirabile-native="value"
                     data-mirabile-control=ControlId::MACRO_JSON.to_string()
                     data-mirabile-address=ControlId::MACRO_JSON.to_string()
+                    data-mirabile-label="Versioned macro JSON"
                     data-mirabile-invalid=move || json_error().is_some().to_string()
                     aria-invalid=move || json_error().is_some().then_some("true")
                     prop:value=move || json.get()

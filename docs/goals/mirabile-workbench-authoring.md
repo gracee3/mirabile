@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 16 - cockpit composition and accessibility refinement
+- Current phase: 17 - documentation, audit, full verification, and handoff
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -38,7 +38,7 @@
 | 13. Level A scenarios | Complete | Shared Mock/Real settlement, Aspect Set cancel/save, display promotion, slots, library/session semantics; Real typed chart/workspace/full-row authoring matrix alongside atomic conflict/shared-record proofs | `./scripts/check.sh` passes 153 Rust tests plus 5 Python tests; strict Clippy, formatting, and diff checks | Phase 13 commit |
 | 14. Level B browser semantics | Complete | Real isolated IndexedDB/Worker/XALEN semantic workflows plus a lazily initialized peer Real application sharing the same database for independent chart conflicts | Semantic Aspect Set/display/workspace scenario and two-application Record+Definition conflict scenario pass; `./scripts/check.sh` passes 153 Rust tests plus 5 Python tests; strict Clippy and native/WASM automation checks | Phase 14 commit |
 | 15. Level C control E2E | Complete | Native semantic-address journeys cover chart creation/validation, saved edit/cancel, independent conflicts, workspace decisions/revisions, full Aspect Set rows, display promotion/slots, macros, diagnostics, trace, and screenshots | Nine live control scenarios pass against isolated IndexedDB, Worker, and XALEN; `./scripts/check.sh` passes 153 Rust tests plus 5 Python tests | Phase 15 commit |
-| 16. Cockpit composition | Pending | Single dense accessible workbench | Pending | Pending |
+| 16. Cockpit composition | Complete | Single desktop grid keeps library, wheel, diagnostics/trace/macros, and inspector visible with bounded independent scrolling; responsive fallback remains; manifest labels/values and keyboard focus semantics refined | 1600x1000 live screenshot reviewed; diagnostics control audit verifies exact authoritative buffered value, semantic labels, disabled reasons, and full manifest; native/WASM checks and `./scripts/check.sh` pass | Phase 16 commit |
 | 17. Handoff | Pending | Docs, audit, verification, push, clean remote equality | Pending | Pending |
 
 ## Required acceptance evidence
@@ -107,6 +107,9 @@
 - Automation snapshots now include the structured resource-editor projection so semantic scenarios can verify authoritative Aspect Set lifecycle state without inspecting presentation markup.
 - The Level C matrix resolves rendered native controls only by canonical `ControlAddress`, drives browser-native click/input/change/keyboard events, and waits for authoritative coordinator settlement. It covers the fresh natal chart and malformed local number, location-required houses, workspace Save/Discard/Stay and revisions, display promotion and draft/saved slots, saved edit/cancel, multi-row Aspect Sets, macro record/reset/replay and failure highlighting, plus diagnostics/control enumeration and screenshots.
 - A dedicated visible-control conflict journey creates and edits the primary chart entirely through rendered controls while the peer independently publishes through typed macro actions. The stale native Save reports both component conflicts, retains the local title/editor, leaves the application Ready and settled, and records human semantic origins without presentation selectors.
+- The final desktop cockpit uses the existing shallow CSS grid: workspace/library rail, wheel plus bounded diagnostics/trace/macro dock, and context/authoring inspector remain simultaneously visible at 1600x1000, while the established narrow-screen single-column fallback remains intact. Rail overflow is vertical-only and each dense region owns its scroll boundary.
+- Buffered controls now publish a separate semantic label and authoritative value instead of concatenated presentation text; invalid edit buffers remain separate. Direct display, resource, and macro fields have explicit machine labels, every disabled descriptor receives a reason, and buffered input/edit buttons plus textareas retain visible keyboard focus treatment.
+- The Chromium harness fixes a deterministic desktop viewport for golden screenshots. The live diagnostics journey asserts exact workspace value/label, point and macro labels, and disabled-state reasoning in addition to authoritative snapshot, agent trace, and control enumeration.
 
 ## Blockers
 

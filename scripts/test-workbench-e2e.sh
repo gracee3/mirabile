@@ -100,6 +100,7 @@ url="http://127.0.0.1:${server_port}/?mirabileAutomation=1&database=${database_n
   --no-sandbox \
   --disable-gpu \
   --disable-dev-shm-usage \
+  --window-size=1600,1000 \
   --user-data-dir="${profile_dir}" \
   --remote-debugging-address=127.0.0.1 \
   --remote-debugging-port="${debug_port}" \

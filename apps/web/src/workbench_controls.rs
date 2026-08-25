@@ -173,6 +173,9 @@ pub(super) fn BufferedField(
     let control = address
         .split_once('[')
         .map_or_else(|| address.clone(), |(control, _)| control.to_owned());
+    let manifest_label = label.clone();
+    let input_label = RwSignal::new(label.clone());
+    let edit_label = RwSignal::new(format!("Edit {label}"));
     let editing = RwSignal::new(false);
     let trigger_ref = NodeRef::<html::Button>::new();
     let input_ref = NodeRef::<html::Input>::new();
@@ -221,6 +224,8 @@ pub(super) fn BufferedField(
             data-mirabile-qualifier-name=qualifier_name
             data-mirabile-qualifier-value=qualifier_value
             data-mirabile-kind=kind.html_type()
+            data-mirabile-label=manifest_label
+            data-mirabile-value=move || authoritative.get()
             data-mirabile-editing=move || editing.get().to_string()
             data-mirabile-invalid=move || error.get().is_some().to_string()
         >
@@ -234,7 +239,7 @@ pub(super) fn BufferedField(
                         class="buffered-value"
                         data-mirabile-native="value"
                         disabled=move || disabled.get()
-                        aria-label="Edit value"
+                        aria-label=move || edit_label.get()
                         on:click=move |_| {
                             buffer.set(authoritative.get_untracked());
                             error.set(None);
@@ -252,6 +257,7 @@ pub(super) fn BufferedField(
                         data-mirabile-native="value"
                         inputmode=(kind == BufferedInputKind::Number).then_some("decimal")
                         prop:value=move || buffer.get()
+                        aria-label=move || input_label.get()
                         aria-invalid=move || error.get().is_some().to_string()
                         disabled=move || disabled.get()
                         on:input=move |event| {
@@ -407,11 +413,13 @@ pub(super) fn EnumSelect(
     let control = address
         .split_once('[')
         .map_or_else(|| address.clone(), |(control, _)| control.to_owned());
+    let manifest_label = label.clone();
     view! {
         <label
             class="field-label"
             data-mirabile-control=control
             data-mirabile-address=address
+            data-mirabile-label=manifest_label
         >
             <span>{label}</span>
             <select
@@ -441,11 +449,13 @@ pub(super) fn Toggle(
     let control = address
         .split_once('[')
         .map_or_else(|| address.clone(), |(control, _)| control.to_owned());
+    let manifest_label = label.clone();
     view! {
         <label
             class="check-field"
             data-mirabile-control=control
             data-mirabile-address=address
+            data-mirabile-label=manifest_label
         >
             <input
                 type="checkbox"
@@ -481,12 +491,14 @@ pub(super) fn ActionControl(
     let control = address
         .split_once('[')
         .map_or_else(|| address.clone(), |(control, _)| control.to_owned());
+    let manifest_label = label.clone();
     view! {
         <button
             type="button"
             class="button"
             data-mirabile-control=control
             data-mirabile-address=address
+            data-mirabile-label=manifest_label
             disabled=move || disabled.get()
             on:click=move |_| on_activate.run(())
         >
