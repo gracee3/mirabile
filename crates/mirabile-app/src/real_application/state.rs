@@ -15,6 +15,8 @@ impl Default for RealState {
             views: BTreeMap::new(),
             editor: None,
             chart_editor: None,
+            workspace_switch: None,
+            pending_workspace_switch: None,
             cache: ComputationCache::default(),
             pending: VecDeque::new(),
             inflight: BTreeMap::new(),
@@ -76,6 +78,7 @@ impl RealState {
                     | super::PendingWork::CreateChart { .. }
                     | super::PendingWork::SaveChartEdit { .. }
                     | super::PendingWork::SaveWorkspace { .. }
+                    | super::PendingWork::LoadDemoBundle { .. }
             )
         })
     }
@@ -119,6 +122,9 @@ impl RealState {
                 Some(PendingOperationReadModel::ChartSave {
                     definition_id: *definition_id,
                 })
+            }
+            super::PendingWork::LoadDemoBundle { .. } => {
+                Some(PendingOperationReadModel::DemoLoading)
             }
             super::PendingWork::CompleteCachedView(_) | super::PendingWork::CreateChart { .. } => {
                 None

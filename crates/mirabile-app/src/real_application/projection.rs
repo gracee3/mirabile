@@ -175,8 +175,10 @@ impl RealState {
             library: LibraryReadModel {
                 charts: library_charts,
                 aspect_sets: self.catalog.aspect_set_summaries()?,
+                workspaces: self.catalog.workspace_summaries(),
             },
             workspace: WorkspaceReadModel {
+                title: session.working_title.clone(),
                 charts: open_charts,
                 active_chart: session.active_chart,
                 selected_charts: session.selected_charts.clone(),
@@ -188,6 +190,11 @@ impl RealState {
                 has_temporary_display_override: session
                     .active_view
                     .is_some_and(|view_id| session.temporary_view_overrides.contains_key(&view_id)),
+                switch_decision: self
+                    .workspace_switch
+                    .as_ref()
+                    .map(|decision| self.workspace_switch_decision(decision.target))
+                    .transpose()?,
             },
             active_view,
             inspector: InspectorReadModel {
@@ -340,6 +347,11 @@ impl RealState {
                 }
             },
         );
+        let save_workspace = if self.workspace_switch.is_some() {
+            disabled("Use Save and switch from the pending workspace decision")
+        } else {
+            save_workspace
+        };
         let promote_display = self.session.as_ref().map_or_else(
             || disabled("No workspace session"),
             |session| {

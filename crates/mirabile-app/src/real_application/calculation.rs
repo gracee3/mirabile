@@ -66,6 +66,9 @@ where
                 expected_revision,
                 next,
             }) => self.complete_workspace_save(expected_revision, *next).await,
+            Some(PendingWork::LoadDemoBundle { resources }) => {
+                self.complete_demo_bundle_load(resources).await
+            }
             None if !self.state.borrow().inflight.is_empty() => {
                 // RuntimeInbox and the browser Worker runtime are intentionally
                 // single-consumer queues. Serialize receive calls so concurrent

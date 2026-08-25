@@ -30,6 +30,8 @@ pub enum WorkspaceDocumentBacking {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceSession {
     pub backing: WorkspaceDocumentBacking,
+    /// Working title; canonical metadata lives on the saved `ResourceEnvelope`.
+    pub working_title: String,
     pub document: WorkspaceDocument,
     pub active_chart: Option<InstanceId>,
     pub selected_charts: Vec<InstanceId>,
@@ -51,6 +53,7 @@ impl WorkspaceSession {
                 document_id: document.id,
                 revision: document.revision,
             },
+            working_title: document.title.clone(),
             active_chart: document
                 .payload
                 .chart_instances
@@ -74,6 +77,7 @@ impl WorkspaceSession {
         let active_view = document.views.first().map(|view| view.id);
         Self {
             backing: WorkspaceDocumentBacking::Unsaved,
+            working_title: "Untitled Workspace".into(),
             document,
             active_chart,
             selected_charts: Vec::new(),

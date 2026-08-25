@@ -1,9 +1,11 @@
 use super::{
-    AppError, AppErrorKind, AppIntent, AppResult, BTreeMap, CalculationRuntime, CanonicalResource,
-    Command, ConfigurationLayer, InstanceId, RealApplication, RealState, ResourceEnvelope,
-    ResourceRepository, Timestamp, ViewDocument, ViewInstanceId, WorkspaceDocument,
-    WorkspaceDocumentBacking, apply_workspace_command, info, not_found, repository_app_error,
-    resolve_typed_binding, success,
+    AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind, AppResult, BTreeMap,
+    CalculationRuntime, CanonicalResource, Command, ConfigurationLayer, InstanceId, PendingWork,
+    RealApplication, RealState, ResourceEnvelope, ResourceRepository, ResourceState, Timestamp,
+    ViewDocument, ViewInstanceId, WorkspaceDocument, WorkspaceDocumentBacking, WorkspaceSession,
+    WorkspaceSwitchDecisionReadModel, WorkspaceSwitchTarget, apply_workspace_command,
+    current_transits_session, info, not_found, repository_app_error, resolve_typed_binding,
+    success,
     validation::{validate_durable_document_references, validate_session_references},
 };
 
@@ -12,6 +14,259 @@ where
     R: ResourceRepository + Clone,
     C: CalculationRuntime,
 {
+    pub(super) fn rename_workspace(&self, title: &str) -> AppResult<()> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                "A workspace title must not be empty",
+            ));
+        }
+        let mut state = self.state.borrow_mut();
+        let session = state.session.as_mut().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })?;
+        if session.working_title == title {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                "The workspace title is unchanged",
+            ));
+        }
+        session.working_title = title.into();
+        session.mark_document_dirty();
+        state.notice = Some(info(
+            "Workspace title changed in the working session; save the workspace to publish it",
+        ));
+        state.advance()
+    }
+
+    pub(super) fn request_workspace_switch(&self, target: WorkspaceSwitchTarget) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        if let WorkspaceSwitchTarget::Saved { resource_id } = target
+            && state.catalog.workspace(resource_id).is_none()
+        {
+            return Err(not_found("WorkspaceDocument", resource_id));
+        }
+        let decision = state.workspace_switch_decision(target)?;
+        if decision.reasons.is_empty() {
+            self.activate_workspace_target(&mut state, target)?;
+            state.notice = Some(info(
+                "Workspace switched without discarding working changes",
+            ));
+        } else {
+            state.workspace_switch = Some(decision);
+            state.notice = Some(info(
+                "Workspace switch needs an explicit Save, Discard, or Stay decision",
+            ));
+        }
+        state.advance()
+    }
+
+    pub(super) fn resolve_workspace_switch(
+        &self,
+        action: crate::WorkspaceSwitchAction,
+    ) -> AppResult<()> {
+        let target = self
+            .state
+            .borrow()
+            .workspace_switch
+            .as_ref()
+            .map(|decision| decision.target)
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::InvalidIntent,
+                    "There is no pending workspace switch decision",
+                )
+            })?;
+        let decision = self.state.borrow().workspace_switch_decision(target)?;
+        match action {
+            crate::WorkspaceSwitchAction::Stay => {
+                let mut state = self.state.borrow_mut();
+                state.workspace_switch = None;
+                state.notice = Some(info("Stayed in the current workspace"));
+                state.advance()
+            }
+            crate::WorkspaceSwitchAction::DiscardAndSwitch => {
+                let mut state = self.state.borrow_mut();
+                state.workspace_switch = None;
+                self.activate_workspace_target(&mut state, decision.target)?;
+                state.notice = Some(info(
+                    "Working workspace state was explicitly discarded before switching",
+                ));
+                state.advance()
+            }
+            crate::WorkspaceSwitchAction::SaveAndSwitch => {
+                if !decision.save_and_switch_enabled {
+                    return Err(AppError::new(
+                        AppErrorKind::Unavailable,
+                        decision.save_and_switch_disabled_reason.unwrap_or_else(|| {
+                            "Save and switch is unavailable until local editors are resolved".into()
+                        }),
+                    ));
+                }
+                {
+                    let mut state = self.state.borrow_mut();
+                    state.workspace_switch = None;
+                    state.pending_workspace_switch = Some(decision.target);
+                }
+                if let Err(error) = self.begin_save_workspace() {
+                    self.state.borrow_mut().pending_workspace_switch = None;
+                    return Err(error);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    pub(super) fn discard_workspace_changes(&self) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        if state.workspace_switch.is_some() {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                "Use the projected workspace switch decision to Save, Discard, or Stay",
+            ));
+        }
+        let (workspace, session) = state.workspace.clone().map_or_else(
+            || {
+                (
+                    None,
+                    current_transits_session((self.clock)(), self.startup_calculation_profile),
+                )
+            },
+            |workspace| {
+                let session = WorkspaceSession::from_saved(&workspace);
+                (Some(workspace), session)
+            },
+        );
+        state.workspace = workspace;
+        state.session = Some(session);
+        state.editor = None;
+        state.chart_editor = None;
+        state.workspace_switch = None;
+        state.ensure_view_runtimes();
+        self.submit_active_view_refresh(&mut state)?;
+        state.notice = Some(info(
+            "Workspace changes were explicitly discarded and the saved or fresh session was restored",
+        ));
+        state.advance()
+    }
+
+    fn activate_workspace_target(
+        &self,
+        state: &mut RealState,
+        target: WorkspaceSwitchTarget,
+    ) -> AppResult<()> {
+        let (workspace, session) = match target {
+            WorkspaceSwitchTarget::New => (
+                None,
+                current_transits_session((self.clock)(), self.startup_calculation_profile),
+            ),
+            WorkspaceSwitchTarget::Saved { resource_id } => {
+                let workspace = state
+                    .catalog
+                    .workspace(resource_id)
+                    .cloned()
+                    .ok_or_else(|| not_found("WorkspaceDocument", resource_id))?;
+                let session = WorkspaceSession::from_saved(&workspace);
+                (Some(workspace), session)
+            }
+        };
+        state.workspace = workspace;
+        state.session = Some(session);
+        state.editor = None;
+        state.chart_editor = None;
+        state.workspace_switch = None;
+        state.ensure_view_runtimes();
+        self.submit_active_view_refresh(state)
+    }
+
+    pub(super) fn begin_load_demo_bundle(&self) -> AppResult<()> {
+        let resources = match self.startup_calculation_profile {
+            crate::StartupCalculationProfile::Baseline => crate::demo_resources(),
+            #[cfg(feature = "xalen-backend")]
+            crate::StartupCalculationProfile::ApparentPlace => {
+                crate::apparent_place_demo_resources()
+            }
+        };
+        let mut state = self.state.borrow_mut();
+        state
+            .pending
+            .push_back(PendingWork::LoadDemoBundle { resources });
+        state.notice = Some(info(
+            "Checking stable demo identities before one idempotent atomic load",
+        ));
+        state.advance()
+    }
+
+    pub(super) async fn complete_demo_bundle_load(
+        &self,
+        resources: Vec<CanonicalResource>,
+    ) -> AppResult<()> {
+        let mut missing = Vec::new();
+        for expected in resources {
+            match self.repository.get_head(expected.id()).await {
+                Ok(None) => missing.push(expected),
+                Ok(Some(ResourceState::Present(existing)))
+                    if existing.kind() == expected.kind() => {}
+                Ok(Some(ResourceState::Present(existing))) => {
+                    let mut state = self.state.borrow_mut();
+                    state.notice = Some(AppNotice {
+                        kind: AppNoticeKind::Warning,
+                        message: format!(
+                            "Demo identity {} is occupied by incompatible {:?} data",
+                            expected.id(),
+                            existing.kind()
+                        ),
+                    });
+                    return state.advance();
+                }
+                Ok(Some(ResourceState::Deleted(_))) => {
+                    let mut state = self.state.borrow_mut();
+                    state.notice = Some(AppNotice {
+                        kind: AppNoticeKind::Warning,
+                        message: format!(
+                            "Demo identity {} was deleted and cannot be reused",
+                            expected.id()
+                        ),
+                    });
+                    return state.advance();
+                }
+                Err(error) => {
+                    let failure = repository_app_error("Could not inspect demo identities", &error);
+                    let mut state = self.state.borrow_mut();
+                    state.notice = Some(AppNotice {
+                        kind: AppNoticeKind::Warning,
+                        message: failure.message,
+                    });
+                    return state.advance();
+                }
+            }
+        }
+        if let Err(error) = if missing.is_empty() {
+            Ok(())
+        } else {
+            self.repository.create_batch(missing.clone()).await
+        } {
+            let failure = repository_app_error("Could not atomically load the demo bundle", &error);
+            let mut state = self.state.borrow_mut();
+            state.notice = Some(AppNotice {
+                kind: AppNoticeKind::Warning,
+                message: failure.message,
+            });
+            return state.advance();
+        }
+        let created = missing.len();
+        let mut state = self.state.borrow_mut();
+        for resource in missing {
+            state.catalog.insert_current(resource);
+        }
+        state.notice = Some(success(if created == 0 {
+            "Demo bundle is already present; existing revisions were left untouched"
+        } else {
+            "Missing demo resources were created atomically; existing revisions were left untouched"
+        }));
+        state.advance()
+    }
     pub(super) fn activate_session_chart(&self, instance_id: InstanceId) -> AppResult<()> {
         let mut state = self.state.borrow_mut();
         let session = state.session.as_mut().ok_or_else(|| {
@@ -105,6 +360,12 @@ where
     pub(super) fn begin_save_workspace(&self) -> AppResult<()> {
         let (expected_revision, next) = {
             let state = self.state.borrow();
+            if state.workspace_switch.is_some() {
+                return Err(AppError::new(
+                    AppErrorKind::InvalidIntent,
+                    "Use Save and switch from the projected workspace switch decision",
+                ));
+            }
             let session = state.session.as_ref().ok_or_else(|| {
                 AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
             })?;
@@ -123,7 +384,7 @@ where
                 WorkspaceDocumentBacking::Unsaved => (
                     None,
                     ResourceEnvelope::new(
-                        "Mirabile Workspace",
+                        session.working_title.clone(),
                         session.document.clone(),
                         timestamp,
                     ),
@@ -146,7 +407,7 @@ where
                             "The saved WorkspaceDocument backing does not match the active session",
                         )
                     })?;
-                    let next = envelope
+                    let mut next = envelope
                         .next_with_payload(session.document.clone(), timestamp)
                         .map_err(|error| {
                             AppError::new(
@@ -154,6 +415,7 @@ where
                                 format!("WorkspaceDocument draft was invalid: {error}"),
                             )
                         })?;
+                    next.title.clone_from(&session.working_title);
                     (Some(envelope.revision), next)
                 }
             }
@@ -183,6 +445,7 @@ where
         if let Err(error) = result {
             let failure = repository_app_error("Could not save the WorkspaceDocument", &error);
             let mut state = self.state.borrow_mut();
+            state.pending_workspace_switch = None;
             state.notice = Some(super::AppNotice {
                 kind: if failure.kind == AppErrorKind::Conflict {
                     super::AppNoticeKind::Conflict
@@ -205,11 +468,19 @@ where
             .as_mut()
             .expect("ready application has a session")
             .mark_saved(next.id, next.revision);
-        state.notice = Some(success(if expected_revision.is_some() {
-            "Workspace saved as a new canonical revision"
+        let switch_target = state.pending_workspace_switch.take();
+        if let Some(target) = switch_target {
+            self.activate_workspace_target(&mut state, target)?;
+            state.notice = Some(success(
+                "Workspace saved successfully and the requested workspace switch completed",
+            ));
         } else {
-            "Workspace saved as canonical revision one"
-        }));
+            state.notice = Some(success(if expected_revision.is_some() {
+                "Workspace saved as a new canonical revision"
+            } else {
+                "Workspace saved as canonical revision one"
+            }));
+        }
         state.advance()
     }
 
@@ -280,6 +551,58 @@ where
 }
 
 impl RealState {
+    pub(super) fn workspace_switch_decision(
+        &self,
+        target: WorkspaceSwitchTarget,
+    ) -> AppResult<WorkspaceSwitchDecisionReadModel> {
+        let session = self.session()?;
+        let mut reasons = Vec::new();
+        if session.document_dirty {
+            reasons.push("The workspace document or title has unsaved changes".into());
+        }
+        if !session.draft_charts.is_empty() {
+            reasons.push("Unsaved chart drafts must be saved or canceled explicitly".into());
+        }
+        let chart_editor_dirty = self.chart_editor.as_ref().is_some_and(|editor| {
+            matches!(editor.target, crate::ChartEditorTarget::New { .. })
+                || editor.state != crate::ChartEditorState::Clean
+        });
+        if chart_editor_dirty {
+            reasons.push("The chart editor has unresolved local work".into());
+        }
+        let resource_editor_dirty = self
+            .editor
+            .as_ref()
+            .is_some_and(|editor| !matches!(editor.state, crate::DraftState::Clean { .. }));
+        if resource_editor_dirty {
+            reasons.push("The resource editor has unresolved local work".into());
+        }
+        if !session.temporary_view_overrides.is_empty() {
+            reasons.push("Temporary display state would be discarded".into());
+        }
+        let blockers = !session.draft_charts.is_empty()
+            || chart_editor_dirty
+            || resource_editor_dirty
+            || !session.temporary_view_overrides.is_empty();
+        let workspace_can_be_saved =
+            session.document_dirty || matches!(session.backing, WorkspaceDocumentBacking::Unsaved);
+        let save_and_switch_enabled = workspace_can_be_saved && !blockers;
+        let save_and_switch_disabled_reason = (!save_and_switch_enabled).then(|| {
+            if blockers {
+                "Resolve chart drafts, editors, and temporary display state before Save and switch"
+                    .into()
+            } else {
+                "The workspace has no unsaved canonical changes to save".into()
+            }
+        });
+        Ok(WorkspaceSwitchDecisionReadModel {
+            target,
+            reasons,
+            save_and_switch_enabled,
+            save_and_switch_disabled_reason,
+        })
+    }
+
     pub(super) fn resolve_view_documents(
         &self,
         workspace: &WorkspaceDocument,
@@ -443,6 +766,12 @@ impl RealState {
             | AppIntent::SaveDraft
             | AppIntent::CancelDraft
             | AppIntent::SaveWorkspace
+            | AppIntent::NewWorkspace
+            | AppIntent::OpenWorkspace { .. }
+            | AppIntent::RenameWorkspace { .. }
+            | AppIntent::DiscardWorkspaceChanges
+            | AppIntent::ResolveWorkspaceSwitch { .. }
+            | AppIntent::LoadDemoBundle
             | AppIntent::SetTemporaryPointHidden { .. }
             | AppIntent::PromoteTemporaryDisplay
             | AppIntent::RefreshActiveView => Err(AppError::new(

@@ -330,6 +330,14 @@ pub enum ApplicationStatus {
 pub struct LibraryReadModel {
     pub charts: Vec<LibraryChartSummary>,
     pub aspect_sets: Vec<AspectSetSummary>,
+    pub workspaces: Vec<WorkspaceSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceSummary {
+    pub resource_id: ResourceId,
+    pub title: String,
+    pub revision: Revision,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -350,6 +358,7 @@ pub struct AspectSetSummary {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorkspaceReadModel {
+    pub title: String,
     pub charts: Vec<OpenChartSummary>,
     pub active_chart: Option<InstanceId>,
     pub selected_charts: Vec<InstanceId>,
@@ -359,6 +368,30 @@ pub struct WorkspaceReadModel {
     pub document_revision: Option<Revision>,
     pub document_dirty: bool,
     pub has_temporary_display_override: bool,
+    pub switch_decision: Option<WorkspaceSwitchDecisionReadModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceSwitchDecisionReadModel {
+    pub target: WorkspaceSwitchTarget,
+    pub reasons: Vec<String>,
+    pub save_and_switch_enabled: bool,
+    pub save_and_switch_disabled_reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "target", rename_all = "snake_case")]
+pub enum WorkspaceSwitchTarget {
+    New,
+    Saved { resource_id: ResourceId },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceSwitchAction {
+    SaveAndSwitch,
+    DiscardAndSwitch,
+    Stay,
 }
 
 #[derive(Clone, Debug, PartialEq)]

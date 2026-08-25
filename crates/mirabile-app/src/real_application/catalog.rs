@@ -151,6 +151,20 @@ impl Catalog {
             })
             .collect()
     }
+
+    pub(super) fn workspace_summaries(&self) -> Vec<crate::WorkspaceSummary> {
+        self.current
+            .values()
+            .filter_map(|resource| match resource {
+                CanonicalResource::WorkspaceDocument(envelope) => Some(crate::WorkspaceSummary {
+                    resource_id: envelope.id,
+                    title: envelope.title.clone(),
+                    revision: envelope.revision,
+                }),
+                _ => None,
+            })
+            .collect()
+    }
 }
 pub(super) trait BoundPayload: Clone + Sized {
     fn envelope(resource: &CanonicalResource) -> Option<&ResourceEnvelope<Self>>;

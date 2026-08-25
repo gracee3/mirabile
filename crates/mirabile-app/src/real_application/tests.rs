@@ -9,7 +9,7 @@ use futures::{
 };
 use mirabile_core::{
     Angle, CanonicalResource, CoordinateSystem, EventKind, HouseSystem, Latitude, Longitude,
-    PointId, PointSelector, ResourceEnvelope, ResourceKind,
+    PointId, PointSelector, PointSet, ResourceEnvelope, ResourceKind,
 };
 use mirabile_engine::{
     BackendDescriptor, CalculationBackend, CalculationBackendError,
@@ -722,6 +722,230 @@ fn fresh_unsaved_session_can_open_and_assign_saved_library_chart_before_first_sa
         2,
         "the demo workspace and the newly saved session remain distinct"
     );
+}
+
+#[test]
+fn new_workspace_projects_switch_decisions_and_requires_explicit_discard() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository);
+    let initial = ready(&application);
+    let ids = demo_ids();
+    assert_eq!(initial.workspace.title, "Mirabile Workspace");
+    assert_eq!(initial.library.workspaces.len(), 1);
+
+    let creating = block_on(application.dispatch(AppIntent::NewWorkspace))
+        .expect("clean saved workspace switches directly to new");
+    let created = settle(&application, creating);
+    assert_eq!(created.workspace.title, "Untitled Workspace");
+    assert!(created.workspace.document_id.is_none());
+    assert_eq!(created.workspace.views.len(), 1);
+    assert!(created.workspace.charts.iter().any(|chart| {
+        chart.title == "Current Transits" && chart.persistence == ChartPersistence::Ephemeral
+    }));
+
+    let requested = block_on(application.dispatch(AppIntent::OpenWorkspace {
+        resource_id: ids.workspace,
+    }))
+    .expect("unsafe switch projects a decision");
+    let decision = requested
+        .workspace
+        .switch_decision
+        .as_ref()
+        .expect("switch decision");
+    assert!(!decision.save_and_switch_enabled);
+    assert!(
+        decision
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("draft"))
+    );
+    assert!(requested.workspace.document_id.is_none());
+
+    let stayed = block_on(application.dispatch(AppIntent::ResolveWorkspaceSwitch {
+        action: crate::WorkspaceSwitchAction::Stay,
+    }))
+    .expect("stay is explicit");
+    assert!(stayed.workspace.switch_decision.is_none());
+    block_on(application.dispatch(AppIntent::OpenWorkspace {
+        resource_id: ids.workspace,
+    }))
+    .expect("switch can be requested again");
+    let switching = block_on(application.dispatch(AppIntent::ResolveWorkspaceSwitch {
+        action: crate::WorkspaceSwitchAction::DiscardAndSwitch,
+    }))
+    .expect("discard and switch is explicit");
+    let switched = settle(&application, switching);
+    assert_eq!(switched.workspace.document_id, Some(ids.workspace));
+    assert_eq!(switched.workspace.title, "Mirabile Workspace");
+}
+
+#[test]
+fn save_and_switch_publishes_working_title_before_opening_target() {
+    let repository = MemoryRepository::default();
+    ensure_demo(&repository);
+    let ids = demo_ids();
+    let second_id = ResourceId::new();
+    let CanonicalResource::WorkspaceDocument(first) = block_on(repository.get(ids.workspace))
+        .expect("workspace read")
+        .expect("workspace exists")
+    else {
+        panic!("workspace resource")
+    };
+    let second = ResourceEnvelope::with_id(
+        second_id,
+        "Second Workspace",
+        first.payload.clone(),
+        Timestamp::from_unix_millis(2),
+    );
+    block_on(repository.create(CanonicalResource::WorkspaceDocument(second)))
+        .expect("second workspace");
+    let application = RealApplication::with_repository_and_policy(
+        repository.clone(),
+        StartupPolicy::OpenWorkspace(ids.workspace),
+    );
+    ready(&application);
+    let renamed = block_on(application.dispatch(AppIntent::RenameWorkspace {
+        title: "Renamed First Workspace".into(),
+    }))
+    .expect("working title changes");
+    assert!(renamed.workspace.document_dirty);
+    let requested = block_on(application.dispatch(AppIntent::OpenWorkspace {
+        resource_id: second_id,
+    }))
+    .expect("dirty switch decision");
+    assert!(
+        requested
+            .workspace
+            .switch_decision
+            .as_ref()
+            .expect("decision")
+            .save_and_switch_enabled
+    );
+    let saving = block_on(application.dispatch(AppIntent::ResolveWorkspaceSwitch {
+        action: crate::WorkspaceSwitchAction::SaveAndSwitch,
+    }))
+    .expect("save and switch begins");
+    assert!(!saving.is_settled());
+    let switched = settle(&application, saving);
+    assert_eq!(switched.workspace.document_id, Some(second_id));
+    assert_eq!(switched.workspace.title, "Second Workspace");
+    let first_saved = block_on(repository.get(ids.workspace))
+        .expect("first read")
+        .expect("first exists");
+    assert_eq!(first_saved.title(), "Renamed First Workspace");
+    assert_eq!(first_saved.revision().get(), 2);
+}
+
+#[test]
+fn save_and_switch_rechecks_new_editor_blockers_before_persisting() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    ready(&application);
+    block_on(application.dispatch(AppIntent::RenameWorkspace {
+        title: "Dirty before switch".into(),
+    }))
+    .expect("rename");
+    let requested =
+        block_on(application.dispatch(AppIntent::NewWorkspace)).expect("switch decision");
+    assert!(
+        requested
+            .workspace
+            .switch_decision
+            .expect("decision")
+            .save_and_switch_enabled
+    );
+    let editor = block_on(application.dispatch(AppIntent::BeginNewChart))
+        .expect("chart work may begin while decision is visible");
+    let editor = settle(&application, editor);
+    assert!(
+        !editor
+            .workspace
+            .switch_decision
+            .expect("recomputed decision")
+            .save_and_switch_enabled
+    );
+    assert!(matches!(
+        block_on(application.dispatch(AppIntent::ResolveWorkspaceSwitch {
+            action: crate::WorkspaceSwitchAction::SaveAndSwitch,
+        })),
+        Err(AppError {
+            kind: AppErrorKind::Unavailable,
+            ..
+        })
+    ));
+    assert_eq!(repository.revision_count(), 7);
+}
+
+#[test]
+fn discard_workspace_restores_saved_envelope_title() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    ready(&application);
+    block_on(application.dispatch(AppIntent::RenameWorkspace {
+        title: "Transient title".into(),
+    }))
+    .expect("rename");
+    let discarding = block_on(application.dispatch(AppIntent::DiscardWorkspaceChanges))
+        .expect("discard is explicit");
+    let discarded = settle(&application, discarding);
+    assert_eq!(discarded.workspace.title, "Mirabile Workspace");
+    assert!(!discarded.workspace.document_dirty);
+    assert_eq!(repository.revision_count(), 7);
+}
+
+#[test]
+fn demo_bundle_load_is_explicit_idempotent_and_atomic() {
+    let repository = MemoryRepository::default();
+    let application = RealApplication::with_repository(repository.clone());
+    let initial = ready(&application);
+    assert!(initial.library.workspaces.is_empty());
+    assert_eq!(repository.current_count(), 0);
+
+    let loading = block_on(application.dispatch(AppIntent::LoadDemoBundle))
+        .expect("explicit demo load begins");
+    assert_eq!(
+        loading.activity.pending_operations,
+        vec![PendingOperationReadModel::DemoLoading]
+    );
+    let loaded = settle(&application, loading);
+    assert_eq!(repository.current_count(), 7);
+    assert_eq!(repository.revision_count(), 7);
+    assert_eq!(loaded.library.workspaces.len(), 1);
+    let again =
+        block_on(application.dispatch(AppIntent::LoadDemoBundle)).expect("idempotent load begins");
+    let again = settle(&application, again);
+    assert_eq!(repository.current_count(), 7);
+    assert_eq!(repository.revision_count(), 7);
+    assert!(
+        again
+            .notice
+            .as_ref()
+            .is_some_and(|notice| notice.message.contains("already present"))
+    );
+}
+
+#[test]
+fn demo_bundle_rejects_incompatible_stable_identity_without_partial_creation() {
+    let repository = MemoryRepository::default();
+    let collision = CanonicalResource::PointSet(ResourceEnvelope::with_id(
+        demo_ids().workspace,
+        "Incompatible collision",
+        PointSet {
+            points: vec![PointSelector::Point(PointId::new("sun").expect("point ID"))],
+        },
+        Timestamp::from_unix_millis(1),
+    ));
+    block_on(repository.create(collision)).expect("collision fixture");
+    let application = RealApplication::with_repository(repository.clone());
+    ready(&application);
+    let loading = block_on(application.dispatch(AppIntent::LoadDemoBundle))
+        .expect("load begins before async collision inspection");
+    let rejected = settle(&application, loading);
+    assert_eq!(repository.current_count(), 1);
+    assert_eq!(repository.revision_count(), 1);
+    assert!(rejected.notice.as_ref().is_some_and(|notice| {
+        notice.kind == AppNoticeKind::Warning && notice.message.contains("incompatible")
+    }));
 }
 
 #[test]

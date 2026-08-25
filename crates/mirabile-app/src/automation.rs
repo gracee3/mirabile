@@ -132,12 +132,19 @@ impl AutomationSnapshotV1 {
             notice: model.notice.as_ref().map(|notice| notice.message.clone()),
         };
         let workspace = AutomationWorkspaceSnapshot {
+            title: model.workspace.title.clone(),
             resource_id: model.workspace.document_id,
             revision: model.workspace.document_revision.map(crate::Revision::get),
             dirty: model.workspace.document_dirty,
             active_chart: model.workspace.active_chart,
             active_view: model.workspace.active_view,
             temporary_display_override: model.workspace.has_temporary_display_override,
+            switch_reasons: model
+                .workspace
+                .switch_decision
+                .as_ref()
+                .map(|decision| decision.reasons.clone())
+                .unwrap_or_default(),
         };
         let chart = model
             .inspector
@@ -184,12 +191,14 @@ pub struct AutomationApplicationSnapshot {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AutomationWorkspaceSnapshot {
+    pub title: String,
     pub resource_id: Option<ResourceId>,
     pub revision: Option<u64>,
     pub dirty: bool,
     pub active_chart: Option<InstanceId>,
     pub active_view: Option<ViewInstanceId>,
     pub temporary_display_override: bool,
+    pub switch_reasons: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

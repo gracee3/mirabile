@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 8 - workspace management and explicit demo loading
+- Current phase: 9 - full Aspect Set authoring
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -30,7 +30,7 @@
 | 5. Authoring capabilities | Complete | Provider-neutral zodiac/coordinate/point/house support and default correction metadata; contextual app options with disabled reasons | `./scripts/check.sh` passes 129 Rust tests plus 4 Python tests; native/WASM feature checks | Phase 5 commit |
 | 6. New chart authoring | Complete | Typed application-owned editor/defaults; partial-location validation; last-valid preview; native controls; cancel/no-write; atomic create and slot promotion | `./scripts/check.sh` passes 133 Rust tests plus 5 Python tests; native/WASM automation checks; live semantic and actual-control XALEN journeys | Phase 6 commit |
 | 7. Saved chart editing | Complete | Atomic compare-only/write CAS batch; separate Record/Definition bases; saved preview/cancel/save; structured two-component conflicts; shared-record protection | `./scripts/check.sh` passes 139 Rust tests plus 5 Python tests; native/WASM checks; IndexedDB rollback contract; live visible-control saved edit/cancel/save journey | Phase 7 commit |
-| 8. Workspace management | Pending | Library/new/open/rename/save/discard/switch and explicit demos | Pending | Pending |
+| 8. Workspace management | Complete | Workspace summaries/title metadata; typed new/open/rename/save/discard; loss-reasoned Save/Discard/Stay switching; explicit idempotent atomic demo loading | `./scripts/check.sh` passes 145 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control lifecycle | Phase 8 commit |
 | 9. Aspect Set authoring | Pending | Full-row lifecycle editor | Pending | Pending |
 | 10. Session and slots | Pending | Inspectable temporary/durable display and slot state | Pending | Pending |
 | 11. Diagnostics UI | Pending | Dense diagnostics, trace, deliberate JSON export | Pending | Pending |
@@ -75,6 +75,12 @@
 - Saved previews are application-owned overlays: cancel drops the overlay and recalculates from the canonical catalog without writes. Save is observable `ChartSave` work, checks both component bases, publishes only changed components, and advances every success, conflict, or failure into a settled recoverable projection.
 - Batch conflicts refresh discoverable component heads into the catalog while retaining local fields and projecting Record-versus-Definition conflict details. A ChartRecord referenced by multiple definitions disables factual mutations with an explicit copy/detach explanation while leaving title and calculation-definition edits available.
 - The workbench exposes a qualified `chart.edit-saved[instance=...]` native action and the local CLI can resolve an unqualified control ID only when the manifest contains exactly one matching dynamic address. The live Chromium journey creates a chart, cancels a saved edit, reopens it, publishes a definition-only revision, and verifies trace and final snapshot through actual controls.
+- Workspace library summaries expose stable ID, envelope title, and revision. `WorkspaceSession::working_title` owns the editable title while canonical metadata remains on the `ResourceEnvelope`; title-only saves therefore create truthful workspace revisions without moving title into `WorkspaceDocument`.
+- New workspaces use `Untitled Workspace` and the existing one-primary-wheel Current Transits session shape. Open/New requests switch immediately only when safe; otherwise the authoritative read model projects loss reasons and Save-and-switch, Discard-and-switch, and Stay actions.
+- Save-and-switch is enabled only when a workspace save can preserve all outstanding work. Draft charts, dirty chart/resource editors, and temporary display overrides block it, and the application recomputes those blockers when the action executes so a stale prompt cannot silently lose newly created local work.
+- Explicit workspace discard restores the current saved envelope or a fresh unsaved session. Successful Save-and-switch first publishes the source workspace revision and only then activates the target; repository failure clears the deferred target and leaves the current application usable.
+- Demo loading is never initialization behavior. `LoadDemoBundle` is observable pending work that inspects every stable identity, atomically creates only missing resources, leaves compatible existing heads and histories untouched, is idempotent, and rejects deleted or wrong-kind collisions without partial creation.
+- Native workspace controls expose buffered title editing, new/save/discard, stable qualified Open actions, explicit demo loading, and the three switch resolutions. The live control journey proves demo load, Stay, Discard-and-switch, title revision 1 to 2, Save-and-switch, new-workspace defaults, and discard restoration against isolated IndexedDB, the Worker, and XALEN.
 
 ## Blockers
 

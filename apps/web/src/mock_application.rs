@@ -10,7 +10,7 @@ use mirabile_app::{
     FillRole, InspectorReadModel, InstanceId, Label, LibraryChartSummary, LibraryReadModel, Line,
     OpenChartSummary, PendingOperationReadModel, ProjectionVersion, ResourceBindingSummary,
     ResourceEditorReadModel, ResourceId, Revision, Scene, StrokeRole, ViewComputationState,
-    ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel,
+    ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel, WorkspaceSummary,
 };
 
 const CHART_DEFINITION_IDS: [&str; 5] = [
@@ -320,6 +320,7 @@ impl MockState {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn read_model(&self) -> AppReadModel {
         if !matches!(self.status, ApplicationStatus::Ready) {
             let mut model = AppReadModel::initializing();
@@ -368,8 +369,14 @@ impl MockState {
                     .iter()
                     .map(|fixture| fixture.summary.clone())
                     .collect(),
+                workspaces: vec![WorkspaceSummary {
+                    resource_id: parse_resource(WORKSPACE_ID),
+                    title: "Research comparison".into(),
+                    revision: self.workspace.revision,
+                }],
             },
             workspace: WorkspaceReadModel {
+                title: "Research comparison".into(),
                 charts: self.charts.clone(),
                 active_chart: self.active_chart,
                 selected_charts: self.selected_charts.clone(),
@@ -386,6 +393,7 @@ impl MockState {
                 document_revision: Some(self.workspace.revision),
                 document_dirty: self.workspace.dirty,
                 has_temporary_display_override: self.workspace.temporary_display_override,
+                switch_decision: None,
             },
             active_view: Some(ViewReadModel {
                 view_id: active_view.view_id,
@@ -567,6 +575,15 @@ impl MockState {
             | AppIntent::CancelChartEditor => Err(AppError::new(
                 AppErrorKind::Unavailable,
                 "Typed chart authoring is provided by the real application adapter",
+            )),
+            AppIntent::NewWorkspace
+            | AppIntent::OpenWorkspace { .. }
+            | AppIntent::RenameWorkspace { .. }
+            | AppIntent::DiscardWorkspaceChanges
+            | AppIntent::ResolveWorkspaceSwitch { .. }
+            | AppIntent::LoadDemoBundle => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Workspace library management is provided by the real application adapter",
             )),
             AppIntent::StartChartDraft { draft } => {
                 if draft.title.trim().is_empty() {

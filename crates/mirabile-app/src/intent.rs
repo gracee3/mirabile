@@ -1,6 +1,6 @@
 use crate::{
     Angle, AspectId, ChartDraft, ChartMutation, ChartSlotId, InstanceId, PointId, ResourceId,
-    ViewInstanceId,
+    ViewInstanceId, WorkspaceSwitchAction,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -48,6 +48,18 @@ pub enum AppIntent {
     SetWorkspaceAspectSet {
         resource_id: ResourceId,
     },
+    NewWorkspace,
+    OpenWorkspace {
+        resource_id: ResourceId,
+    },
+    RenameWorkspace {
+        title: String,
+    },
+    DiscardWorkspaceChanges,
+    ResolveWorkspaceSwitch {
+        action: WorkspaceSwitchAction,
+    },
+    LoadDemoBundle,
     /// Creates revision one for an unsaved session or persists the next dirty saved revision.
     SaveWorkspace,
     /// Applies a session-only point visibility override to the active view.
@@ -104,6 +116,16 @@ impl AppIntent {
             Self::SetWorkspaceAspectSet { resource_id } => {
                 format!("workspace.aspect-set[{resource_id}]")
             }
+            Self::NewWorkspace => "workspace.new".into(),
+            Self::OpenWorkspace { resource_id } => format!("workspace.open[{resource_id}]"),
+            Self::RenameWorkspace { .. } => "workspace.rename".into(),
+            Self::DiscardWorkspaceChanges => "workspace.discard".into(),
+            Self::ResolveWorkspaceSwitch { action } => match action {
+                WorkspaceSwitchAction::SaveAndSwitch => "workspace.switch.save".into(),
+                WorkspaceSwitchAction::DiscardAndSwitch => "workspace.switch.discard".into(),
+                WorkspaceSwitchAction::Stay => "workspace.switch.stay".into(),
+            },
+            Self::LoadDemoBundle => "demo.load".into(),
             Self::SaveWorkspace => "workspace.save".into(),
             Self::SetTemporaryPointHidden { point_id, hidden } => {
                 format!("display.point[{}].hidden={hidden}", point_id.as_str())

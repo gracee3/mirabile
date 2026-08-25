@@ -66,6 +66,7 @@ run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario smoke --mode con
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario new-chart --mode semantic
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario new-chart-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario saved-chart-control --mode control
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario workspace-lifecycle-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario artifact-smoke --mode semantic
 
 run git diff --check

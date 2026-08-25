@@ -40,8 +40,9 @@ use crate::{
     LibraryChartSummary, LibraryReadModel, OpenChartSummary, PendingOperationReadModel,
     ProjectionVersion, ResourceBindingSummary, ResourceEditorReadModel, StartupCalculationProfile,
     StartupPolicy, ViewComputationState, ViewReadModel, ViewSummary, WorkspaceDocumentBacking,
-    WorkspaceReadModel, WorkspaceSession, blank_workspace_session, current_transits_session,
-    current_unix_millis, workspace_commands::apply_workspace_command,
+    WorkspaceReadModel, WorkspaceSession, WorkspaceSwitchDecisionReadModel, WorkspaceSwitchTarget,
+    blank_workspace_session, current_transits_session, current_unix_millis,
+    workspace_commands::apply_workspace_command,
 };
 #[cfg(feature = "xalen-backend")]
 use mirabile_engine::XalenBackend;
@@ -413,6 +414,18 @@ where
                 selected,
             } => self.set_session_chart_selection(instance_id, selected)?,
             AppIntent::SetActiveView { view_id } => self.set_active_session_view(view_id)?,
+            AppIntent::NewWorkspace => {
+                self.request_workspace_switch(WorkspaceSwitchTarget::New)?;
+            }
+            AppIntent::OpenWorkspace { resource_id } => {
+                self.request_workspace_switch(WorkspaceSwitchTarget::Saved { resource_id })?;
+            }
+            AppIntent::RenameWorkspace { title } => self.rename_workspace(&title)?,
+            AppIntent::DiscardWorkspaceChanges => self.discard_workspace_changes()?,
+            AppIntent::ResolveWorkspaceSwitch { action } => {
+                self.resolve_workspace_switch(action)?;
+            }
+            AppIntent::LoadDemoBundle => self.begin_load_demo_bundle()?,
             AppIntent::SaveWorkspace => self.begin_save_workspace()?,
             AppIntent::SetTemporaryPointHidden { point_id, hidden } => {
                 self.set_temporary_point_hidden(point_id, hidden)?;
@@ -484,6 +497,8 @@ struct RealState {
     views: BTreeMap<ViewInstanceId, ViewRuntime>,
     editor: Option<AspectSetEditor>,
     chart_editor: Option<crate::ChartAuthoringEditor>,
+    workspace_switch: Option<WorkspaceSwitchDecisionReadModel>,
+    pending_workspace_switch: Option<WorkspaceSwitchTarget>,
     cache: ComputationCache,
     pending: VecDeque<PendingWork>,
     inflight: BTreeMap<CalculationRequestId, PendingViewCalculation>,
@@ -567,6 +582,9 @@ enum PendingWork {
     SaveWorkspace {
         expected_revision: Option<Revision>,
         next: Box<ResourceEnvelope<WorkspaceDocument>>,
+    },
+    LoadDemoBundle {
+        resources: Vec<CanonicalResource>,
     },
 }
 

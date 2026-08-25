@@ -351,6 +351,18 @@ enum WhitelistedAction {
     BeginSavedChartEdit {
         instance_id: mirabile_app::InstanceId,
     },
+    NewWorkspace,
+    OpenWorkspace {
+        resource_id: mirabile_app::ResourceId,
+    },
+    RenameWorkspace {
+        title: String,
+    },
+    DiscardWorkspaceChanges,
+    ResolveWorkspaceSwitch {
+        resolution: mirabile_app::WorkspaceSwitchAction,
+    },
+    LoadDemoBundle,
     SaveChartEditor,
     CancelChartEditor,
     SetChartTitle {
@@ -442,6 +454,14 @@ impl WhitelistedAction {
             Self::BeginSavedChartEdit { instance_id } => {
                 AppIntent::BeginSavedChartEdit { instance_id }
             }
+            Self::NewWorkspace => AppIntent::NewWorkspace,
+            Self::OpenWorkspace { resource_id } => AppIntent::OpenWorkspace { resource_id },
+            Self::RenameWorkspace { title } => AppIntent::RenameWorkspace { title },
+            Self::DiscardWorkspaceChanges => AppIntent::DiscardWorkspaceChanges,
+            Self::ResolveWorkspaceSwitch { resolution } => {
+                AppIntent::ResolveWorkspaceSwitch { action: resolution }
+            }
+            Self::LoadDemoBundle => AppIntent::LoadDemoBundle,
             Self::SaveChartEditor => AppIntent::SaveChartEditor,
             Self::CancelChartEditor => AppIntent::CancelChartEditor,
             Self::SetChartTitle { title } => {
