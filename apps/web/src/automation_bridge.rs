@@ -112,7 +112,9 @@ pub(super) fn install(
     set_function(&bridge, "trace", &trace);
     trace.forget();
 
-    let settled = Closure::<dyn Fn() -> bool>::new(move || model.get_untracked().is_settled());
+    let settled = Closure::<dyn Fn() -> bool>::new(move || {
+        model.get_untracked().is_settled() && !coordinator.read_model().running
+    });
     set_function(&bridge, "waitSettled", &settled);
     settled.forget();
 
@@ -150,11 +152,16 @@ pub(super) fn install(
     set_function(&bridge, "execute", &execute);
     execute.forget();
 
-    let replay = Closure::<dyn Fn(String) -> String>::new(|_: String| {
-        json_error(
-            "macro_replay",
-            "macro replay is not enabled until the macro schema phase",
-        )
+    let replay = Closure::<dyn Fn(String) -> String>::new(move |json: String| {
+        let document = match mirabile_app::MacroDocumentV1::from_json(&json) {
+            Ok(document) => document,
+            Err(error) => return json_error("macro_replay", &error.to_string()),
+        };
+        if let Err(error) = coordinator.import_macro(document.clone()) {
+            return json_error("macro_replay", &error.to_string());
+        }
+        coordinator.replay_macro(document);
+        json_ok("macro_replay")
     });
     set_function(&bridge, "replayMacro", &replay);
     replay.forget();

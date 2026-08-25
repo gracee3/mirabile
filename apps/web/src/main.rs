@@ -20,6 +20,8 @@ mod dispatcher;
 mod inspector;
 #[cfg(not(feature = "browser-contract"))]
 mod library;
+#[cfg(not(feature = "browser-contract"))]
+mod macro_panel;
 #[cfg(all(
     not(feature = "browser-contract"),
     any(test, not(target_arch = "wasm32"))

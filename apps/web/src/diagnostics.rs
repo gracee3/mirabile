@@ -4,6 +4,7 @@ use mirabile_app::{
 };
 
 use crate::dispatcher::WorkbenchCoordinator;
+use crate::macro_panel::MacroPanel;
 
 #[component]
 #[allow(clippy::too_many_lines)]
@@ -165,6 +166,7 @@ pub(super) fn Diagnostics(
             <p class="diagnostics-export-status" role="status">
                 {move || export_status.get().unwrap_or_default()}
             </p>
+            <MacroPanel dispatcher />
         </section>
     }
 }
@@ -187,7 +189,11 @@ fn DiagnosticValue(
     }
 }
 
-fn export_json<T: serde::Serialize>(filename: &str, value: &T, status: RwSignal<Option<String>>) {
+pub(super) fn export_json<T: serde::Serialize>(
+    filename: &str,
+    value: &T,
+    status: RwSignal<Option<String>>,
+) {
     match serde_json::to_string_pretty(value)
         .map_err(|error| error.to_string())
         .and_then(|json| download_json(filename, &json))

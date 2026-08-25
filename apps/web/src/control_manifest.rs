@@ -48,6 +48,16 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
             .flatten()
             .and_then(|input| input.dyn_into::<web_sys::HtmlInputElement>().ok());
         let effective_input = input.as_ref().or(nested_input.as_ref());
+        let textarea = element
+            .clone()
+            .dyn_into::<web_sys::HtmlTextAreaElement>()
+            .ok();
+        let nested_textarea = element
+            .query_selector("textarea")
+            .ok()
+            .flatten()
+            .and_then(|textarea| textarea.dyn_into::<web_sys::HtmlTextAreaElement>().ok());
+        let effective_textarea = textarea.as_ref().or(nested_textarea.as_ref());
         let kind = if tag == "BUTTON" {
             ControlKind::Action
         } else if effective_select.is_some() {
@@ -63,6 +73,8 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
         };
         let value = if let Some(select) = effective_select {
             serde_json::Value::String(select.value())
+        } else if let Some(textarea) = effective_textarea {
+            serde_json::Value::String(textarea.value())
         } else if let Some(input) = effective_input {
             if input.type_() == "checkbox" {
                 serde_json::Value::Bool(input.checked())
@@ -74,7 +86,8 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
         };
         let disabled = element.has_attribute("disabled")
             || effective_input.is_some_and(web_sys::HtmlInputElement::disabled)
-            || effective_select.is_some_and(web_sys::HtmlSelectElement::disabled);
+            || effective_select.is_some_and(web_sys::HtmlSelectElement::disabled)
+            || effective_textarea.is_some_and(web_sys::HtmlTextAreaElement::disabled);
         let options = effective_select.map_or_else(Vec::new, |select| {
             (0..select.length())
                 .filter_map(|index| select.item(index))
@@ -101,7 +114,16 @@ pub(super) fn capture() -> Result<mirabile_app::ControlManifest, String> {
             local_buffer: element
                 .get_attribute("data-mirabile-editing")
                 .is_some_and(|value| value == "true")
-                .then(|| nested_input.as_ref().map(web_sys::HtmlInputElement::value))
+                .then(|| {
+                    nested_input
+                        .as_ref()
+                        .map(web_sys::HtmlInputElement::value)
+                        .or_else(|| {
+                            nested_textarea
+                                .as_ref()
+                                .map(web_sys::HtmlTextAreaElement::value)
+                        })
+                })
                 .flatten(),
             locked: element.has_attribute("readonly"),
             editing: element.get_attribute("data-mirabile-editing").as_deref() == Some("true"),

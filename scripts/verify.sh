@@ -70,6 +70,9 @@ run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario workspace-lifecy
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario aspect-set-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario session-slots-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario diagnostics-control --mode control
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-control --mode control
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-failure-control --mode control
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-bridge --mode semantic
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario artifact-smoke --mode semantic
 
 run git diff --check

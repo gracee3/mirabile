@@ -6,7 +6,8 @@ use mirabile_app::ProjectionVersion;
 use mirabile_app::{
     ActionSource, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind,
     AppReadModel, Application, ApplicationActivityReadModel, ApplicationStatus, ControlAddress,
-    ControlId, CoordinatorReadModel, ExecutionOutcome, ExecutionTraceEntry, PendingTransition,
+    ControlId, CoordinatorReadModel, ExecutionOutcome, ExecutionTraceEntry, MacroBindings,
+    MacroCoordinatorState, MacroDocumentV1, MacroError, MacroRecorder, PendingTransition,
     TraceHistory,
 };
 use wasm_bindgen::JsCast;
@@ -29,6 +30,8 @@ struct CoordinatorState {
     running: Rc<Cell<bool>>,
     next_sequence: Rc<Cell<u64>>,
     trace: RwSignal<TraceHistory>,
+    recorder: RwSignal<Option<MacroRecorder>>,
+    macro_document: RwSignal<Option<MacroDocumentV1>>,
 }
 
 impl CoordinatorState {
@@ -120,9 +123,12 @@ impl CoordinatorState {
         }
     }
 
-    async fn execute_action(&self, action: QueuedAction) {
+    async fn execute_action(&self, action: QueuedAction) -> ExecutionOutcome {
         let sequence = self.take_sequence();
         let semantic_intent = action.intent.semantic_summary();
+        let recorded_intent = action.intent.clone();
+        let recorded_origin = action.origin_control.clone();
+        let source = action.source;
         let before = self.model.get_untracked().version;
         let (accepted_projection, settled_projection, pending_transitions, outcome) =
             match self.application.dispatch(action.intent).await {
@@ -144,10 +150,11 @@ impl CoordinatorState {
                     )
                 }
             };
+        let returned_outcome = outcome.clone();
         self.trace.update(|trace| {
             trace.push(ExecutionTraceEntry {
                 sequence,
-                source: action.source,
+                source,
                 origin_control: action.origin_control,
                 semantic_intent,
                 accepted_projection,
@@ -156,6 +163,121 @@ impl CoordinatorState {
                 outcome,
             });
         });
+        if accepted_projection.is_some()
+            && !matches!(source, ActionSource::Macro | ActionSource::System)
+        {
+            self.capture_recorded_action(&recorded_intent, recorded_origin);
+        }
+        returned_outcome
+    }
+
+    fn capture_recorded_action(&self, intent: &AppIntent, origin: Option<ControlAddress>) {
+        let mut failure = None;
+        let model = self.model.get_untracked();
+        self.recorder.update(|recorder| {
+            if let Some(recorder) = recorder
+                && let Err(error) = recorder.capture(intent, origin, &model)
+            {
+                failure = Some(error.to_string());
+            }
+        });
+        if let Some(message) = failure {
+            self.recorder.set(None);
+            self.coordinator.update(|state| {
+                state.macro_state = MacroCoordinatorState::Failed { step: 0, message };
+            });
+        }
+    }
+
+    fn replay(&self, document: MacroDocumentV1) {
+        if let Err(error) = document.validate() {
+            self.fail_macro(0, error.to_string(), None);
+            return;
+        }
+        if self.running.get() {
+            self.coordinator.update(|state| {
+                state.macro_state = MacroCoordinatorState::Failed {
+                    step: 0,
+                    message: "the coordinator is already executing an action".into(),
+                };
+            });
+            return;
+        }
+        self.running.set(true);
+        self.recorder.set(None);
+        let state = self.clone();
+        leptos::task::spawn_local(async move {
+            state.execute_macro(document).await;
+        });
+    }
+
+    async fn execute_macro(&self, document: MacroDocumentV1) {
+        let total = document.steps.len();
+        let mut bindings = MacroBindings::default();
+        for (index, step) in document.steps.into_iter().enumerate() {
+            let step_number = index + 1;
+            self.coordinator.update(|state| {
+                state.running = true;
+                state.current_source = Some(ActionSource::Macro);
+                state.highlighted_control.clone_from(&step.origin_control);
+                state.macro_state = MacroCoordinatorState::Replaying {
+                    step: step_number,
+                    total,
+                };
+            });
+            let intent = match step.action.resolve(&self.model.get_untracked(), &bindings) {
+                Ok(intent) => intent,
+                Err(error) => {
+                    self.fail_macro(step_number, error.to_string(), step.origin_control);
+                    return;
+                }
+            };
+            let outcome = self
+                .execute_action(QueuedAction {
+                    intent,
+                    source: ActionSource::Macro,
+                    origin_control: step.origin_control.clone(),
+                })
+                .await;
+            if !matches!(outcome, ExecutionOutcome::Settled) {
+                self.fail_macro(step_number, outcome_message(&outcome), step.origin_control);
+                return;
+            }
+            if let Some(binding) = step.bind {
+                let result = match step.action.capture_result(&self.model.get_untracked()) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        self.fail_macro(step_number, error.to_string(), step.origin_control);
+                        return;
+                    }
+                };
+                if let Err(error) = bindings.insert(binding, result) {
+                    self.fail_macro(step_number, error.to_string(), step.origin_control);
+                    return;
+                }
+            }
+        }
+        self.coordinator.update(|state| {
+            state.macro_state = MacroCoordinatorState::Idle;
+        });
+        self.drain_queue().await;
+    }
+
+    fn fail_macro(&self, step: usize, message: String, origin: Option<ControlAddress>) {
+        self.running.set(false);
+        self.coordinator.update(|state| {
+            state.running = false;
+            state.current_source = None;
+            state.highlighted_control = origin;
+            state.macro_state = MacroCoordinatorState::Failed { step, message };
+        });
+        if !self.queue.borrow().is_empty() {
+            self.running.set(true);
+            let state = self.clone();
+            leptos::task::spawn_local(async move {
+                state.drain_queue().await;
+            });
+        }
     }
 
     async fn settle(
@@ -223,6 +345,8 @@ impl WorkbenchCoordinator {
                 running: Rc::new(Cell::new(false)),
                 next_sequence: Rc::new(Cell::new(1)),
                 trace: RwSignal::new(TraceHistory::default()),
+                recorder: RwSignal::new(None),
+                macro_document: RwSignal::new(None),
             }),
         }
     }
@@ -268,6 +392,81 @@ impl WorkbenchCoordinator {
     pub(super) fn trace_tracked(self) -> Vec<ExecutionTraceEntry> {
         self.stored
             .with_value(|coordinator| coordinator.trace.get().entries())
+    }
+
+    pub(super) fn start_macro_recording(self, name: String) -> Result<(), MacroError> {
+        let recorder = MacroRecorder::new(name)?;
+        self.stored.with_value(|coordinator| {
+            if coordinator.running.get() {
+                return Err(MacroError::InvalidValue(
+                    "cannot begin recording while the coordinator is running".into(),
+                ));
+            }
+            coordinator.recorder.set(Some(recorder));
+            coordinator.coordinator.update(|state| {
+                state.macro_state = MacroCoordinatorState::Recording;
+            });
+            Ok(())
+        })
+    }
+
+    pub(super) fn stop_macro_recording(self) -> Result<MacroDocumentV1, MacroError> {
+        self.stored.with_value(|coordinator| {
+            let recorder = coordinator
+                .recorder
+                .get_untracked()
+                .ok_or(MacroError::InvalidValue(
+                    "macro recording is not active".into(),
+                ))?;
+            let document = recorder.finish()?;
+            coordinator.recorder.set(None);
+            coordinator.macro_document.set(Some(document.clone()));
+            coordinator.coordinator.update(|state| {
+                state.macro_state = MacroCoordinatorState::Idle;
+            });
+            Ok(document)
+        })
+    }
+
+    pub(super) fn import_macro(self, document: MacroDocumentV1) -> Result<(), MacroError> {
+        document.validate()?;
+        self.stored.with_value(|coordinator| {
+            coordinator.macro_document.set(Some(document));
+            coordinator.coordinator.update(|state| {
+                state.macro_state = MacroCoordinatorState::Idle;
+            });
+        });
+        Ok(())
+    }
+
+    pub(super) fn macro_document(self) -> Option<MacroDocumentV1> {
+        self.stored
+            .with_value(|coordinator| coordinator.macro_document.get_untracked())
+    }
+
+    pub(super) fn clear_macro(self) {
+        self.stored.with_value(|coordinator| {
+            coordinator.recorder.set(None);
+            coordinator.macro_document.set(None);
+            coordinator.coordinator.update(|state| {
+                state.macro_state = MacroCoordinatorState::Idle;
+                state.highlighted_control = None;
+            });
+        });
+    }
+
+    pub(super) fn replay_macro(self, document: MacroDocumentV1) {
+        self.stored
+            .with_value(|coordinator| coordinator.replay(document));
+    }
+}
+
+fn outcome_message(outcome: &ExecutionOutcome) -> String {
+    match outcome {
+        ExecutionOutcome::Settled => "settled".into(),
+        ExecutionOutcome::Rejected { message, .. } | ExecutionOutcome::Failed { message, .. } => {
+            message.clone()
+        }
     }
 }
 

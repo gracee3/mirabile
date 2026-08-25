@@ -1,0 +1,14 @@
+{
+  "name": "macro-bridge",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "replay", "macro": {"schema_version": 1, "name": "Bridge chart", "steps": [
+      {"action": {"action": "begin_new_chart"}, "origin_control": {"control": "chart.new"}, "bind": "$chart1"},
+      {"action": {"action": "set_chart_title", "title": "Bridge Macro Natal"}, "origin_control": {"control": "chart.title"}},
+      {"action": {"action": "save_chart_editor"}, "origin_control": {"control": "chart.editor-save"}}
+    ]}},
+    {"command": "wait", "timeout": 20},
+    {"command": "snapshot", "expect": {"value.chart.title": "Bridge Macro Natal", "value.chart.saved": true, "value.coordinator.running": false, "value.coordinator.macro_state.state": "idle"}},
+    {"command": "trace", "expect": {"value.1.source": "macro", "value.2.source": "macro", "value.3.source": "macro", "value.3.semantic_intent": "chart.editor.save"}}
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "macro-control",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "get", "address": "macro.start", "expect": {"enabled": true}},
+    {"command": "click", "address": "macro.start"},
+    {"command": "get", "address": "macro.stop", "expect": {"enabled": true}},
+    {"command": "click", "address": "chart.new"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.title"},
+    {"command": "set", "address": "chart.title", "value": "Macro Natal"},
+    {"command": "key", "address": "chart.title", "key": "Enter"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.editor-save"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "macro.stop"},
+    {"command": "get", "address": "macro.json", "expect": {"enabled": true, "invalid": false}},
+    {"command": "get", "address": "macro.replay", "expect": {"enabled": true}},
+    {"command": "click", "address": "workspace.new"},
+    {"command": "click", "address": "workspace.switch-discard"},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.workspace.title": "Untitled Workspace", "value.chart.title": "Current Transits", "value.chart.saved": false}},
+    {"command": "click", "address": "macro.replay"},
+    {"command": "wait", "timeout": 20},
+    {"command": "snapshot", "expect": {"value.chart.title": "Macro Natal", "value.chart.saved": true, "value.coordinator.running": false, "value.coordinator.macro_state.state": "idle"}},
+    {"command": "trace", "expect": {"value.8.source": "macro", "value.8.semantic_intent": "chart.editor.save", "value.8.outcome.status": "settled"}}
+  ]
+}

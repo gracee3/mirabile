@@ -178,6 +178,9 @@ def perform(client: CDPClient, command: str, options: dict[str, Any]) -> Any:
         if not source_result.get("ok"):
             raise CDPError(str(source_result.get("error")))
         return bridge_call(client, "execute", json.dumps(request, separators=(",", ":")))
+    if command == "replay":
+        macro = options["macro"]
+        return bridge_call(client, "replayMacro", json.dumps(macro, separators=(",", ":")))
     if command == "wait":
         return wait_settled(client, float(options.get("timeout", 10.0)))
     if command == "dom":

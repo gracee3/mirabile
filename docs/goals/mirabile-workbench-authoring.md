@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 12 - versioned semantic macros
+- Current phase: 13 - shared Level A application scenarios
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -34,7 +34,7 @@
 | 9. Aspect Set authoring | Complete | New/duplicate/saved lifecycle; title and every row; canonical create/CAS save; workspace binding; per-row invalid buffers | `./scripts/check.sh` passes 147 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control full-row journey | Phase 9 commit |
 | 10. Session and slots | Complete | Supported point visibility; complete temporary/durable replacement and promotion; saved/draft slot identity, promotion, and options | `./scripts/check.sh` passes 148 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control session and slot journey | Phase 10 commit |
 | 11. Diagnostics UI | Complete | Dense authoritative application/workspace/chart/view/calculation/coordinator panels; reactive bounded trace; explicit snapshot and trace JSON export | `./scripts/check.sh` passes 148 Rust tests plus 5 Python tests; native/WASM automation checks; live IndexedDB/Worker/XALEN diagnostics and control-manifest journey | Phase 11 commit |
-| 12. Macros | Pending | Record/import/export/replay with bindings and failures | Pending | Pending |
+| 12. Macros | Complete | Versioned typed semantic schema; validated `$bindings` and title resolution; accepted-intent recording; sequential settled replay; import/inspect/export; structured failures and persistent highlights | `./scripts/check.sh` passes 152 Rust tests plus 5 Python tests; native/WASM checks; live control record/reset/replay and failure journeys; live bridge replay against IndexedDB/Worker/XALEN | Phase 12 commit |
 | 13. Level A scenarios | Pending | Shared Mock/Real semantic conformance | Pending | Pending |
 | 14. Level B browser semantics | Pending | Real IndexedDB/Worker/XALEN/peer workflows | Pending | Pending |
 | 15. Level C control E2E | Pending | Native-control golden journeys | Pending | Pending |
@@ -94,6 +94,12 @@
 - Execution trace storage is a reactive bounded signal, so accepted and settled actions update the diagnostics surface without a second state authority. The trace remains noncanonical and local; no background upload, persistence, or remote-control boundary was added.
 - Snapshot and trace export require deliberate native button actions. The shared DOM manifest capture supplies the snapshot's actual native controls in normal browser and automation builds, and the versioned snapshot continues to expose only selected state plus last-good Scene presence.
 - The live diagnostics control journey verifies the export controls, versioned settled snapshot, agent source attribution, semantic intent, settled outcome, coordinator idle state, and full native control enumeration against isolated IndexedDB, the Worker, and XALEN.
+- `MacroDocumentV1` is a bounded version-one schema of typed whitelisted semantic actions. It validates binding syntax and definition order, rejects duplicate or result-less bindings, and resolves pre-existing chart, workspace, Aspect Set, and view titles only when exactly one authoritative match exists.
+- Runtime-created identities use typed `$chartN` and `$resourceN` result bindings. Literal stable identities remain available where appropriate, while the schema has no selector, coordinate, timing, raw JavaScript, or arbitrary application-intent escape hatch.
+- Recording observes only accepted coordinator intents after settlement, retaining optional semantic origin controls while excluding edit mechanics and invalid local buffers. Replayed actions use `ActionSource::Macro`, resolve against the latest authoritative projection, execute FIFO through the coordinator, and settle through `AppReadModel::is_settled()` before the next step.
+- The macro document is noncanonical coordinator state that survives ready-shell remounts without entering workspace resources. Native controls provide record, stop, JSON inspection/import, replay, deliberate export, and clear; replay state and structured step failures are projected in snapshots.
+- Current-step control addresses receive a visual macro highlight. A resolution failure stops replay, preserves the failed step/control and message, leaves the application settled and usable, and never dispatches an unresolved intent.
+- Live isolated-browser journeys prove native record/reset/replay, symbolic chart binding, macro-source trace attribution, bridge replay, and structured missing-title failure with persistent highlighting against IndexedDB, the Worker, and XALEN.
 
 ## Blockers
 

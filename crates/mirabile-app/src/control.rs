@@ -47,6 +47,14 @@ impl ControlId {
     pub const DIAGNOSTICS_EXPORT_TRACE: Self = Self(Cow::Borrowed("diagnostics.export-trace"));
     pub const DRAFT_CANCEL: Self = Self(Cow::Borrowed("draft.cancel"));
     pub const DRAFT_SAVE: Self = Self(Cow::Borrowed("draft.save"));
+    pub const MACRO_CLEAR: Self = Self(Cow::Borrowed("macro.clear"));
+    pub const MACRO_EXPORT: Self = Self(Cow::Borrowed("macro.export"));
+    pub const MACRO_IMPORT: Self = Self(Cow::Borrowed("macro.import"));
+    pub const MACRO_JSON: Self = Self(Cow::Borrowed("macro.json"));
+    pub const MACRO_NAME: Self = Self(Cow::Borrowed("macro.name"));
+    pub const MACRO_REPLAY: Self = Self(Cow::Borrowed("macro.replay"));
+    pub const MACRO_START: Self = Self(Cow::Borrowed("macro.start"));
+    pub const MACRO_STOP: Self = Self(Cow::Borrowed("macro.stop"));
     pub const VIEW_ACTIVATE: Self = Self(Cow::Borrowed("view.activate"));
     pub const VIEW_SLOT: Self = Self(Cow::Borrowed("view.slot"));
     pub const WORKSPACE_SAVE: Self = Self(Cow::Borrowed("workspace.save"));

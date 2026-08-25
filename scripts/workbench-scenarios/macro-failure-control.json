@@ -1,0 +1,13 @@
+{
+  "name": "macro-failure-control",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "set", "address": "macro.json", "value": "{\"schema_version\":1,\"name\":\"Missing chart\",\"steps\":[{\"action\":{\"action\":\"activate_chart\",\"chart\":{\"title\":\"No Such Chart\"}},\"origin_control\":{\"control\":\"chart.new\"}}]}"},
+    {"command": "get", "address": "macro.import", "expect": {"enabled": true}},
+    {"command": "click", "address": "macro.import"},
+    {"command": "click", "address": "macro.replay"},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.application.settled": true, "value.coordinator.running": false, "value.coordinator.macro_state.state": "failed", "value.coordinator.macro_state.step": 1, "value.coordinator.highlighted_control.control": "chart.new"}},
+    {"command": "get", "address": "chart.new", "expect": {"enabled": true}}
+  ]
+}
