@@ -54,6 +54,14 @@ where
                 self.complete_chart_create(instance_id, *record, *definition)
                     .await
             }
+            Some(PendingWork::SaveChartEdit {
+                instance_id,
+                definition_id,
+                batch,
+            }) => {
+                self.complete_saved_chart_save(instance_id, definition_id, batch)
+                    .await
+            }
             Some(PendingWork::SaveWorkspace {
                 expected_revision,
                 next,
@@ -382,6 +390,43 @@ where
             .iter()
             .find(|chart| chart.instance_id() == chart_instance)
         {
+            if let Some(editor) = state
+                .chart_editor
+                .as_ref()
+                .filter(|editor| editor.instance_id() == chart_instance)
+            {
+                let draft = &editor.last_valid;
+                let effective = state.effective_configuration(&draft.calculation, &view)?;
+                let prepared = self
+                    .engine
+                    .resolve(
+                        &draft.record,
+                        &effective.calculation.value,
+                        &effective.displayed_points.value,
+                        &effective.aspected_points.value,
+                    )
+                    .map_err(view_computation_error)?
+                    .with_context(SnapshotContext {
+                        definition: None,
+                        records: Vec::new(),
+                        location_display_name: draft
+                            .record
+                            .location
+                            .as_ref()
+                            .map(|location| location.display_name.clone()),
+                    });
+                return Ok((
+                    prepared,
+                    ViewCalculationPlan {
+                        displayed_points: effective.displayed_points.value,
+                        aspected_points: effective.aspected_points.value,
+                        aspect_set: effective.aspect_set.value,
+                        analysis: effective.analysis.value,
+                        wheel: effective.wheel.value,
+                        theme: effective.theme.value,
+                    },
+                ));
+            }
             let definition_id = workspace_chart.definition;
             let definition = state
                 .catalog

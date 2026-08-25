@@ -431,6 +431,7 @@ impl RealState {
                 ))
             }
             AppIntent::BeginNewChart
+            | AppIntent::BeginSavedChartEdit { .. }
             | AppIntent::ApplyChartMutation(_)
             | AppIntent::SaveChartEditor
             | AppIntent::CancelChartEditor

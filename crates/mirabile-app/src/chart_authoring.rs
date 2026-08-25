@@ -1,8 +1,8 @@
 use mirabile_core::{
-    CalculationSpec, CalendarSpec, ChartRecord, CivilDate, CivilDateTime, CivilTime,
-    CoordinateSystem, CorrectionSpec, EventKind, HouseSystem, Latitude, LocationAssertion,
-    Longitude, Offset, SourceProvenance, SourceType, SubjectInfo, TemporalAssertion,
-    TimeZoneAssertion, ZodiacSpec,
+    CalculationSpec, CalendarSpec, ChartDefinition, ChartRecord, ChartSource, CivilDate,
+    CivilDateTime, CivilTime, CoordinateSystem, CorrectionSpec, EventKind, HouseSystem, Latitude,
+    LocationAssertion, Longitude, Offset, ResourceEnvelope, SourceProvenance, SourceType,
+    SubjectInfo, TemporalAssertion, TimeZoneAssertion, ZodiacSpec,
 };
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +57,21 @@ pub enum ChartEditorState {
     Conflict,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChartConflictComponent {
+    Record,
+    Definition,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ChartEditorConflict {
+    pub component: ChartConflictComponent,
+    pub resource_id: ResourceId,
+    pub expected_revision: Revision,
+    pub actual_revision: Revision,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ChartValidationIssue {
     pub field: String,
@@ -102,6 +117,9 @@ pub struct ChartEditorReadModel {
     pub fields: ChartEditorFieldsReadModel,
     pub validation: Vec<ChartValidationIssue>,
     pub last_valid_preview_present: bool,
+    pub factual_mutations_enabled: bool,
+    pub factual_mutations_disabled_reason: Option<String>,
+    pub conflicts: Vec<ChartEditorConflict>,
 }
 
 #[derive(Clone)]
@@ -111,6 +129,15 @@ pub(crate) struct ChartAuthoringEditor {
     draft: ChartAuthoringDraft,
     pub last_valid: ChartDraft,
     pub validation: Vec<ChartValidationIssue>,
+    saved: Option<SavedChartBases>,
+    pub conflicts: Vec<ChartEditorConflict>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SavedChartBases {
+    pub record: ResourceEnvelope<ChartRecord>,
+    pub definition: ResourceEnvelope<ChartDefinition>,
+    pub shared_record: bool,
 }
 
 impl ChartAuthoringEditor {
@@ -138,6 +165,24 @@ impl ChartAuthoringEditor {
                 corrections,
                 ..CalculationSpec::default()
             },
+            record_template: ChartRecord {
+                event_kind: EventKind::Birth,
+                subject: None,
+                time: TemporalAssertion {
+                    civil_datetime,
+                    calendar: CalendarSpec::ProlepticGregorian,
+                    zone: TimeZoneAssertion::UniversalTime,
+                    disambiguation: None,
+                },
+                location: None,
+                source: SourceProvenance {
+                    description: "Entered in Mirabile Workbench".into(),
+                    source_type: SourceType::UserAssertion,
+                    recorded_by: None,
+                },
+                notes: Vec::new(),
+                life_events: Vec::new(),
+            },
         };
         let last_valid = draft
             .materialize()
@@ -148,7 +193,102 @@ impl ChartAuthoringEditor {
             draft,
             last_valid,
             validation: Vec::new(),
+            saved: None,
+            conflicts: Vec::new(),
         }
+    }
+
+    pub(crate) fn from_saved(
+        instance_id: InstanceId,
+        record: ResourceEnvelope<ChartRecord>,
+        definition: ResourceEnvelope<ChartDefinition>,
+        shared_record: bool,
+    ) -> Result<Self, &'static str> {
+        if !matches!(definition.payload.source, ChartSource::Radix { .. }) {
+            return Err("Derived chart editing remains intentionally deferred");
+        }
+        let timezone = match record.payload.time.zone {
+            TimeZoneAssertion::UniversalTime => ChartTimezone::UniversalTime,
+            TimeZoneAssertion::FixedOffset(offset) => ChartTimezone::FixedOffset(offset),
+            TimeZoneAssertion::NamedZone(_)
+            | TimeZoneAssertion::LocalMeanTime
+            | TimeZoneAssertion::LocalApparentTime
+            | TimeZoneAssertion::Unknown => {
+                return Err(
+                    "This chart uses a timezone mode that Workbench authoring does not yet support",
+                );
+            }
+        };
+        let location = record.payload.location.as_ref();
+        let draft = ChartAuthoringDraft {
+            title: definition.title.clone(),
+            event_kind: record.payload.event_kind.clone(),
+            subject_name: record
+                .payload
+                .subject
+                .as_ref()
+                .map(|subject| subject.display_name.clone()),
+            civil_date: record.payload.time.civil_datetime.date,
+            civil_time: record.payload.time.civil_datetime.time,
+            timezone,
+            location_enabled: location.is_some(),
+            location_name: location
+                .map(|location| location.display_name.clone())
+                .unwrap_or_default(),
+            country_region: location.and_then(|location| location.country_region.clone()),
+            latitude: location.map(|location| location.latitude),
+            longitude: location.map(|location| location.longitude),
+            calculation: definition.payload.calculation.clone(),
+            record_template: record.payload.clone(),
+        };
+        let last_valid = ChartDraft {
+            title: definition.title.clone(),
+            record: record.payload.clone(),
+            calculation: definition.payload.calculation.clone(),
+        };
+        Ok(Self {
+            target: ChartEditorTarget::Saved {
+                instance_id,
+                record_id: record.id,
+                definition_id: definition.id,
+                record_base_revision: record.revision,
+                definition_base_revision: definition.revision,
+            },
+            state: ChartEditorState::Clean,
+            draft,
+            last_valid,
+            validation: Vec::new(),
+            saved: Some(SavedChartBases {
+                record,
+                definition,
+                shared_record,
+            }),
+            conflicts: Vec::new(),
+        })
+    }
+
+    pub(crate) fn saved_bases(&self) -> Option<&SavedChartBases> {
+        self.saved.as_ref()
+    }
+
+    pub(crate) fn factual_mutations_enabled(&self) -> bool {
+        !self.saved.as_ref().is_some_and(|saved| saved.shared_record)
+    }
+
+    pub(crate) const fn is_factual_mutation(mutation: &ChartMutation) -> bool {
+        matches!(
+            mutation,
+            ChartMutation::SetEventKind(_)
+                | ChartMutation::SetSubjectName(_)
+                | ChartMutation::SetCivilDate(_)
+                | ChartMutation::SetCivilTime(_)
+                | ChartMutation::SetTimezone(_)
+                | ChartMutation::SetLocationEnabled(_)
+                | ChartMutation::SetLocationName(_)
+                | ChartMutation::SetCountryRegion(_)
+                | ChartMutation::SetLatitude(_)
+                | ChartMutation::SetLongitude(_)
+        )
     }
 
     pub(crate) fn instance_id(&self) -> InstanceId {
@@ -185,6 +325,7 @@ impl ChartAuthoringEditor {
             }
         }
         self.state = ChartEditorState::Dirty;
+        self.conflicts.clear();
         match self.draft.materialize() {
             Ok(materialized) => {
                 self.validation.clear();
@@ -222,6 +363,12 @@ impl ChartAuthoringEditor {
             },
             validation: self.validation.clone(),
             last_valid_preview_present: true,
+            factual_mutations_enabled: self.factual_mutations_enabled(),
+            factual_mutations_disabled_reason: (!self.factual_mutations_enabled()).then(|| {
+                "This ChartRecord is shared by multiple definitions; copy/detach is required before factual editing"
+                    .into()
+            }),
+            conflicts: self.conflicts.clone(),
         }
     }
 }
@@ -240,6 +387,7 @@ struct ChartAuthoringDraft {
     latitude: Option<Latitude>,
     longitude: Option<Longitude>,
     calculation: CalculationSpec,
+    record_template: ChartRecord,
 }
 
 impl ChartAuthoringDraft {
@@ -298,34 +446,46 @@ impl ChartAuthoringDraft {
             ChartTimezone::UniversalTime => TimeZoneAssertion::UniversalTime,
             ChartTimezone::FixedOffset(offset) => TimeZoneAssertion::FixedOffset(offset),
         };
+        let mut record = self.record_template.clone();
+        record.event_kind = self.event_kind.clone();
+        record.subject = self.subject_name.as_ref().and_then(|name| {
+            (!name.trim().is_empty()).then(|| SubjectInfo {
+                display_name: name.trim().into(),
+                pronouns: self.record_template.subject.as_ref().and_then(|subject| {
+                    (subject.display_name.trim() == name.trim())
+                        .then(|| subject.pronouns.clone())
+                        .flatten()
+                }),
+            })
+        });
+        record.time.civil_datetime = CivilDateTime {
+            date: self.civil_date,
+            time: self.civil_time,
+        };
+        record.time.zone = zone;
+        record.location = location.map(|mut location| {
+            if self
+                .record_template
+                .location
+                .as_ref()
+                .is_some_and(|original| {
+                    original.display_name == location.display_name
+                        && original.country_region == location.country_region
+                        && original.latitude == location.latitude
+                        && original.longitude == location.longitude
+                })
+            {
+                location.atlas_provenance = self
+                    .record_template
+                    .location
+                    .as_ref()
+                    .and_then(|original| original.atlas_provenance.clone());
+            }
+            location
+        });
         Ok(ChartDraft {
             title: self.title.trim().into(),
-            record: ChartRecord {
-                event_kind: self.event_kind.clone(),
-                subject: self.subject_name.as_ref().and_then(|name| {
-                    (!name.trim().is_empty()).then(|| SubjectInfo {
-                        display_name: name.trim().into(),
-                        pronouns: None,
-                    })
-                }),
-                time: TemporalAssertion {
-                    civil_datetime: CivilDateTime {
-                        date: self.civil_date,
-                        time: self.civil_time,
-                    },
-                    calendar: CalendarSpec::ProlepticGregorian,
-                    zone,
-                    disambiguation: None,
-                },
-                location,
-                source: SourceProvenance {
-                    description: "Entered in Mirabile Workbench".into(),
-                    source_type: SourceType::UserAssertion,
-                    recorded_by: None,
-                },
-                notes: Vec::new(),
-                life_events: Vec::new(),
-            },
+            record,
             calculation: self.calculation.clone(),
         })
     }

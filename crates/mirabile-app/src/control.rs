@@ -21,6 +21,7 @@ impl ControlId {
     pub const CHART_CIVIL_DATE: Self = Self(Cow::Borrowed("chart.civil-date"));
     pub const CHART_CIVIL_TIME: Self = Self(Cow::Borrowed("chart.civil-time"));
     pub const CHART_EDITOR_CANCEL: Self = Self(Cow::Borrowed("chart.editor-cancel"));
+    pub const CHART_EDIT_SAVED: Self = Self(Cow::Borrowed("chart.edit-saved"));
     pub const CHART_EDITOR_SAVE: Self = Self(Cow::Borrowed("chart.editor-save"));
     pub const CHART_EVENT_KIND: Self = Self(Cow::Borrowed("chart.event-kind"));
     pub const CHART_FIXED_OFFSET: Self = Self(Cow::Borrowed("chart.fixed-offset"));

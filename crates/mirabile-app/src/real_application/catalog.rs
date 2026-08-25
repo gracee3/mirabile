@@ -37,6 +37,19 @@ impl Catalog {
         }
     }
 
+    pub(super) fn chart_record_reference_count(&self, record_id: ResourceId) -> usize {
+        self.current
+            .values()
+            .filter(|resource| {
+                matches!(
+                    resource,
+                    CanonicalResource::ChartDefinition(definition)
+                        if matches!(definition.payload.source, ChartSource::Radix { record } if record == record_id)
+                )
+            })
+            .count()
+    }
+
     pub(super) fn aspect_set(&self, id: ResourceId) -> Option<&ResourceEnvelope<AspectSet>> {
         match self.current.get(&id) {
             Some(CanonicalResource::AspectSet(value)) => Some(value),

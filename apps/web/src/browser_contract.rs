@@ -8,7 +8,10 @@ use mirabile_core::{
     Angle, AspectId, CanonicalResource, PointId, PointSelector, PointSet, ResourceEnvelope,
     ResourceId, Revision, Timestamp,
 };
-use mirabile_store::{IndexedDbRepository, RepositoryError, ResourceRepository, ResourceState};
+use mirabile_store::{
+    AtomicSaveBatch, IndexedDbRepository, RepositoryError, ResourceRepository, ResourceState,
+    RevisionExpectation,
+};
 
 #[component]
 pub fn BrowserContract() -> impl IntoView {
@@ -187,6 +190,54 @@ async fn run_contract() -> Result<(), String> {
         first.get(batch_first_id).await.map_err(message)?.is_none()
             && first.get(batch_second_id).await.map_err(message)?.is_none(),
         "failed atomic create batch left a partially created resource",
+    )?;
+
+    let save_first = point_resource("Atomic save first");
+    let save_second = point_resource("Atomic save second");
+    let save_first_id = save_first.id();
+    let save_second_id = save_second.id();
+    first
+        .create_batch(vec![save_first.clone(), save_second.clone()])
+        .await
+        .map_err(message)?;
+    let save_first_next = next_point(&save_first, "Atomic save first next", 7)?;
+    let save_second_next = next_point(&save_second, "Atomic save second next", 7)?;
+    first
+        .force_history_key_collision(save_second_id, save_second_next.revision())
+        .await
+        .map_err(message)?;
+    ensure(
+        first
+            .save_batch(AtomicSaveBatch {
+                expectations: vec![
+                    RevisionExpectation {
+                        id: save_first_id,
+                        expected_revision: Revision::INITIAL,
+                    },
+                    RevisionExpectation {
+                        id: save_second_id,
+                        expected_revision: Revision::INITIAL,
+                    },
+                ],
+                changes: vec![save_first_next, save_second_next],
+            })
+            .await
+            .is_err(),
+        "forced atomic save-batch collision unexpectedly succeeded",
+    )?;
+    ensure(
+        matches!(
+            second.get_head(save_first_id).await.map_err(message)?,
+            Some(ResourceState::Present(ref resource))
+                if resource.revision() == Revision::INITIAL
+                    && resource.title() == "Atomic save first"
+        ) && matches!(
+            second.get_head(save_second_id).await.map_err(message)?,
+            Some(ResourceState::Present(ref resource))
+                if resource.revision() == Revision::INITIAL
+                    && resource.title() == "Atomic save second"
+        ),
+        "failed atomic save batch changed at least one current head",
     )?;
 
     run_real_application_reload().await?;

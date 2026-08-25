@@ -19,6 +19,28 @@ pub enum ResourceState {
     Deleted(ResourceTombstone),
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RevisionExpectation {
+    pub id: ResourceId,
+    pub expected_revision: Revision,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AtomicSaveBatch {
+    /// Every identity whose current head participates in the compare-and-swap.
+    /// An expectation without a matching change is compare-only.
+    pub expectations: Vec<RevisionExpectation>,
+    /// The new canonical revisions to publish after every expectation succeeds.
+    pub changes: Vec<CanonicalResource>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RevisionConflict {
+    pub id: ResourceId,
+    pub expected: Revision,
+    pub actual: Revision,
+}
+
 impl ResourceState {
     pub fn id(&self) -> ResourceId {
         match self {
@@ -56,6 +78,12 @@ pub trait ResourceRepository {
         expected_revision: Revision,
         resource: CanonicalResource,
     ) -> Result<(), RepositoryError>;
+
+    /// Atomically compares every expected head and publishes every changed resource.
+    ///
+    /// Compare-only expectations are permitted. The batch is completely preflighted;
+    /// no current head or historical revision is published on any failure.
+    async fn save_batch(&self, batch: AtomicSaveBatch) -> Result<(), RepositoryError>;
 
     async fn get(&self, id: ResourceId) -> Result<Option<CanonicalResource>, RepositoryError>;
 
@@ -99,6 +127,28 @@ pub fn validate_create_batch(resources: &[CanonicalResource]) -> Result<(), Repo
         validate_create(resource)?;
         if !ids.insert(resource.id()) {
             return Err(RepositoryError::DuplicateBatchIdentity(resource.id()));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_save_batch(batch: &AtomicSaveBatch) -> Result<(), RepositoryError> {
+    if batch.expectations.is_empty() {
+        return Err(RepositoryError::EmptySaveBatch);
+    }
+    let mut expectation_ids = std::collections::BTreeSet::new();
+    for expectation in &batch.expectations {
+        if !expectation_ids.insert(expectation.id) {
+            return Err(RepositoryError::DuplicateBatchIdentity(expectation.id));
+        }
+    }
+    let mut change_ids = std::collections::BTreeSet::new();
+    for resource in &batch.changes {
+        if !change_ids.insert(resource.id()) {
+            return Err(RepositoryError::DuplicateBatchIdentity(resource.id()));
+        }
+        if !expectation_ids.contains(&resource.id()) {
+            return Err(RepositoryError::MissingBatchExpectation(resource.id()));
         }
     }
     Ok(())
@@ -172,8 +222,12 @@ pub fn validate_delete(
 pub enum RepositoryError {
     #[error("an atomic create batch must contain at least one resource")]
     EmptyCreateBatch,
-    #[error("resource {0} occurs more than once in an atomic create batch")]
+    #[error("an atomic save batch must contain at least one revision expectation")]
+    EmptySaveBatch,
+    #[error("resource {0} occurs more than once in an atomic batch")]
     DuplicateBatchIdentity(ResourceId),
+    #[error("changed resource {0} has no revision expectation in the atomic save batch")]
+    MissingBatchExpectation(ResourceId),
     #[error("resource {0} already exists")]
     AlreadyExists(ResourceId),
     #[error("resource {0} was not found")]
@@ -187,6 +241,8 @@ pub enum RepositoryError {
         expected: Revision,
         actual: Revision,
     },
+    #[error("atomic save conflicts: {conflicts:?}")]
+    BatchConflict { conflicts: Vec<RevisionConflict> },
     #[error("next revision must be {expected}, got {actual}")]
     NonSequentialRevision {
         expected: Revision,

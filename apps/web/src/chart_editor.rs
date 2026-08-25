@@ -37,10 +37,20 @@ pub(super) fn ChartAuthoring(
     let longitude_buffer = RwSignal::new(String::new());
     let longitude_error = RwSignal::new(None::<String>);
     let disabled = Signal::derive(move || {
-        model
-            .get()
-            .chart_editor
-            .is_some_and(|editor| editor.state == ChartEditorState::Saving)
+        model.get().chart_editor.is_some_and(|editor| {
+            matches!(
+                editor.state,
+                ChartEditorState::Saving | ChartEditorState::Conflict
+            )
+        })
+    });
+    let factual_disabled = Signal::derive(move || {
+        model.get().chart_editor.is_some_and(|editor| {
+            matches!(
+                editor.state,
+                ChartEditorState::Saving | ChartEditorState::Conflict
+            ) || !editor.factual_mutations_enabled
+        })
     });
 
     view! {
@@ -60,6 +70,34 @@ pub(super) fn ChartAuthoring(
                         Some(ControlAddress::new(ControlId::CHART_NEW)),
                     ))
                 />
+                {move || {
+                    let snapshot = model.get();
+                    if snapshot.chart_editor.is_some() {
+                        return None;
+                    }
+                    let instance_id = snapshot.inspector.active_chart.and_then(|chart| {
+                        matches!(chart.persistence, mirabile_app::ChartPersistence::Saved { .. })
+                            .then_some(chart.instance_id)
+                    })?;
+                    let address = ControlAddress::qualified(
+                        ControlId::CHART_EDIT_SAVED,
+                        [("instance", instance_id.to_string())],
+                    )
+                    .expect("saved chart edit address");
+                    let origin = address.clone();
+                    Some(view! {
+                        <ActionControl
+                            address=address.to_string()
+                            label="Edit active chart".into()
+                            disabled=Signal::derive(|| false)
+                            on_activate=Callback::new(move |()| dispatcher.dispatch_from(
+                                AppIntent::BeginSavedChartEdit { instance_id },
+                                ActionSource::Human,
+                                Some(origin.clone()),
+                            ))
+                        />
+                    })
+                }}
             </div>
 
             {move || model.get().chart_editor.map(|editor| {
@@ -67,6 +105,21 @@ pub(super) fn ChartAuthoring(
                 view! {
                     <div class="chart-editor-fields">
                         <p class="revision-line">{format!("{:?} · {} validation issue(s)", editor.state, validation.len())}</p>
+                        {editor.factual_mutations_disabled_reason.map(|reason| view! {
+                            <p class="notice warning" role="status">{reason}</p>
+                        })}
+                        {(!editor.conflicts.is_empty()).then(|| view! {
+                            <ul class="validation-list" role="status">
+                                {editor.conflicts.into_iter().map(|conflict| view! {
+                                    <li>{format!(
+                                        "{:?} conflict: expected {}, current {}",
+                                        conflict.component,
+                                        conflict.expected_revision,
+                                        conflict.actual_revision,
+                                    )}</li>
+                                }).collect_view()}
+                            </ul>
+                        })}
                         <BufferedTextField
                             address=ControlAddress::new(ControlId::CHART_TITLE).to_string()
                             label="Title".into()
@@ -85,7 +138,7 @@ pub(super) fn ChartAuthoring(
                             address=ControlAddress::new(ControlId::CHART_SUBJECT_NAME).to_string()
                             label="Subject name (optional)".into()
                             authoritative=Signal::derive(move || model.get().chart_editor.and_then(|editor| editor.fields.subject_name).unwrap_or_default())
-                            disabled
+                            disabled=factual_disabled
                             buffer=subject_buffer
                             error=subject_error
                             parser=Callback::new(Ok::<String, String>)
@@ -100,7 +153,7 @@ pub(super) fn ChartAuthoring(
                             label="Event kind".into()
                             value=Signal::derive(move || model.get().chart_editor.map_or_else(String::new, |editor| event_kind_value(&editor.fields.event_kind).into()))
                             options=Signal::derive(event_kind_options)
-                            disabled
+                            disabled=factual_disabled
                             on_change=Callback::new(move |value: String| {
                                 if let Some(kind) = parse_event_kind(&value) {
                                     dispatch_mutation(dispatcher, ControlId::CHART_EVENT_KIND, ChartMutation::SetEventKind(kind));
@@ -111,7 +164,7 @@ pub(super) fn ChartAuthoring(
                             address=ControlAddress::new(ControlId::CHART_CIVIL_DATE).to_string()
                             label="Civil date".into()
                             authoritative=Signal::derive(move || model.get().chart_editor.map_or_else(String::new, |editor| format_date(editor.fields.civil_date)))
-                            disabled
+                            disabled=factual_disabled
                             buffer=date_buffer
                             error=date_error
                             parser=Callback::new(|value: String| parse_date(&value).map(format_date))
@@ -125,7 +178,7 @@ pub(super) fn ChartAuthoring(
                             address=ControlAddress::new(ControlId::CHART_CIVIL_TIME).to_string()
                             label="Civil time".into()
                             authoritative=Signal::derive(move || model.get().chart_editor.map_or_else(String::new, |editor| format_time(editor.fields.civil_time)))
-                            disabled
+                            disabled=factual_disabled
                             buffer=time_buffer
                             error=time_error
                             parser=Callback::new(|value: String| parse_time(&value).map(format_time))
@@ -143,7 +196,7 @@ pub(super) fn ChartAuthoring(
                                 ChartTimezone::FixedOffset(_) => "fixed_offset".into(),
                             }))
                             options=Signal::derive(move || timezone_options(&model.get()))
-                            disabled
+                            disabled=factual_disabled
                             on_change=Callback::new(move |value: String| match value.as_str() {
                                 "universal_time" => dispatch_mutation(dispatcher, ControlId::CHART_TIMEZONE, ChartMutation::SetTimezone(ChartTimezone::UniversalTime)),
                                 "fixed_offset" => dispatch_mutation(dispatcher, ControlId::CHART_TIMEZONE, ChartMutation::SetTimezone(ChartTimezone::FixedOffset(Offset::UTC))),
@@ -158,7 +211,7 @@ pub(super) fn ChartAuthoring(
                                     ChartTimezone::FixedOffset(offset) => (offset.seconds() / 60).to_string(),
                                     ChartTimezone::UniversalTime => "0".into(),
                                 }))
-                                disabled
+                                disabled=factual_disabled
                                 buffer=offset_buffer
                                 error=offset_error
                                 parser=Callback::new(|value: String| parse_offset(&value).map(|offset| (offset.seconds() / 60).to_string()))
@@ -173,7 +226,7 @@ pub(super) fn ChartAuthoring(
                             address=ControlAddress::new(ControlId::CHART_LOCATION_ENABLED).to_string()
                             label="Use manual location".into()
                             checked=Signal::derive(move || model.get().chart_editor.is_some_and(|editor| editor.fields.location.enabled))
-                            disabled
+                            disabled=factual_disabled
                             on_change=Callback::new(move |enabled| dispatch_mutation(
                                 dispatcher,
                                 ControlId::CHART_LOCATION_ENABLED,
@@ -185,7 +238,7 @@ pub(super) fn ChartAuthoring(
                                 address=ControlAddress::new(ControlId::CHART_LOCATION_NAME).to_string()
                                 label="Location name".into()
                                 authoritative=Signal::derive(move || model.get().chart_editor.map_or_else(String::new, |editor| editor.fields.location.display_name))
-                                disabled
+                                disabled=factual_disabled
                                 buffer=location_buffer
                                 error=location_error
                                 parser=Callback::new(Ok::<String, String>)
@@ -195,7 +248,7 @@ pub(super) fn ChartAuthoring(
                                 address=ControlAddress::new(ControlId::CHART_LATITUDE).to_string()
                                 label="Latitude".into()
                                 authoritative=Signal::derive(move || model.get().chart_editor.and_then(|editor| editor.fields.location.latitude).map_or_else(String::new, |value| value.degrees().to_string()))
-                                disabled
+                                disabled=factual_disabled
                                 buffer=latitude_buffer
                                 error=latitude_error
                                 parser=Callback::new(|value: String| parse_latitude(&value).map(|value| value.degrees().to_string()))
@@ -209,7 +262,7 @@ pub(super) fn ChartAuthoring(
                                 address=ControlAddress::new(ControlId::CHART_LONGITUDE).to_string()
                                 label="Longitude".into()
                                 authoritative=Signal::derive(move || model.get().chart_editor.and_then(|editor| editor.fields.location.longitude).map_or_else(String::new, |value| value.degrees().to_string()))
-                                disabled
+                                disabled=factual_disabled
                                 buffer=longitude_buffer
                                 error=longitude_error
                                 parser=Callback::new(|value: String| parse_longitude(&value).map(|value| value.degrees().to_string()))

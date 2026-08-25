@@ -561,6 +561,7 @@ impl MockState {
         self.notice = None;
         match intent {
             AppIntent::BeginNewChart
+            | AppIntent::BeginSavedChartEdit { .. }
             | AppIntent::ApplyChartMutation(_)
             | AppIntent::SaveChartEditor
             | AppIntent::CancelChartEditor => Err(AppError::new(

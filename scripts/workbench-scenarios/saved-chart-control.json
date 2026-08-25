@@ -1,0 +1,33 @@
+{
+  "name": "saved-chart-control",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.new"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.title"},
+    {"command": "set", "address": "chart.title", "value": "Saved Edit Fixture"},
+    {"command": "key", "address": "chart.title", "key": "Enter"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.editor-save"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.edit-saved"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.title"},
+    {"command": "set", "address": "chart.title", "value": "Canceled Saved Edit"},
+    {"command": "key", "address": "chart.title", "key": "Enter"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.editor-cancel"},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.chart.title": "Saved Edit Fixture", "value.chart_editor": null}},
+    {"command": "click", "address": "chart.edit-saved"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.title"},
+    {"command": "set", "address": "chart.title", "value": "Published Saved Edit"},
+    {"command": "key", "address": "chart.title", "key": "Enter"},
+    {"command": "wait", "timeout": 15},
+    {"command": "click", "address": "chart.editor-save"},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.chart.saved": true, "value.chart.title": "Published Saved Edit", "value.chart_editor": null}},
+    {"command": "trace"}
+  ]
+}

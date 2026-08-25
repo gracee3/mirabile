@@ -24,7 +24,10 @@ use mirabile_engine::{
 };
 #[cfg(target_arch = "wasm32")]
 use mirabile_store::ResourceTombstone;
-use mirabile_store::{MemoryRepository, RepositoryError, ResourceRepository, ResourceState};
+use mirabile_store::{
+    AtomicSaveBatch, MemoryRepository, RepositoryError, ResourceRepository, ResourceState,
+    RevisionExpectation,
+};
 
 use crate::{
     ActiveChartInspector, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind,
@@ -229,6 +232,13 @@ impl ResourceRepository for IndexedDbRepositorySource {
             .await
     }
 
+    async fn save_batch(
+        &self,
+        batch: mirabile_store::AtomicSaveBatch,
+    ) -> Result<(), RepositoryError> {
+        self.acquire().await?.save_batch(batch).await
+    }
+
     async fn get(&self, id: ResourceId) -> Result<Option<CanonicalResource>, RepositoryError> {
         self.acquire().await?.get(id).await
     }
@@ -376,6 +386,9 @@ where
 
         match intent {
             AppIntent::BeginNewChart => self.begin_new_chart()?,
+            AppIntent::BeginSavedChartEdit { instance_id } => {
+                self.begin_saved_chart_edit(instance_id)?;
+            }
             AppIntent::ApplyChartMutation(mutation) => self.apply_chart_mutation(mutation)?,
             AppIntent::SaveChartEditor => self.begin_save_chart_editor()?,
             AppIntent::CancelChartEditor => self.cancel_chart_editor()?,
@@ -545,6 +558,11 @@ enum PendingWork {
         instance_id: InstanceId,
         record: Box<ResourceEnvelope<ChartRecord>>,
         definition: Box<ResourceEnvelope<ChartDefinition>>,
+    },
+    SaveChartEdit {
+        instance_id: InstanceId,
+        definition_id: ResourceId,
+        batch: AtomicSaveBatch,
     },
     SaveWorkspace {
         expected_revision: Option<Revision>,
@@ -759,13 +777,17 @@ fn initialization_error(context: impl AsRef<str>, error: &RepositoryError) -> Ap
 
 fn repository_app_error(context: &str, error: &RepositoryError) -> AppError {
     let kind = match error {
-        RepositoryError::Conflict { .. } => AppErrorKind::Conflict,
+        RepositoryError::Conflict { .. } | RepositoryError::BatchConflict { .. } => {
+            AppErrorKind::Conflict
+        }
         RepositoryError::NotFound(_) | RepositoryError::ResourceDeleted(_) => {
             AppErrorKind::NotFound
         }
         RepositoryError::AlreadyExists(_)
         | RepositoryError::EmptyCreateBatch
+        | RepositoryError::EmptySaveBatch
         | RepositoryError::DuplicateBatchIdentity(_)
+        | RepositoryError::MissingBatchExpectation(_)
         | RepositoryError::InitialRevisionRequired { .. }
         | RepositoryError::NonSequentialRevision { .. }
         | RepositoryError::IdentityChanged { .. }

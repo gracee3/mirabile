@@ -211,6 +211,13 @@ impl ResourceRepository for SaveFailureRepository {
         self.inner.save(expected_revision, resource).await
     }
 
+    async fn save_batch(
+        &self,
+        batch: mirabile_store::AtomicSaveBatch,
+    ) -> Result<(), RepositoryError> {
+        self.inner.save_batch(batch).await
+    }
+
     async fn get(&self, id: ResourceId) -> Result<Option<CanonicalResource>, RepositoryError> {
         if self.fail_next_get.replace(false) {
             return Err(RepositoryError::Adapter(
@@ -1206,6 +1213,248 @@ fn typed_new_chart_cancel_writes_nothing() {
             .all(|chart| chart.instance_id != instance_id)
     );
     assert_eq!(repository.current_count(), initial_count);
+}
+
+#[test]
+fn saved_chart_definition_only_edit_checks_record_without_revising_it() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    let initial = ready(&application);
+    let ids = demo_ids();
+    let initial_revision_count = repository.revision_count();
+
+    let opened = block_on(application.dispatch(AppIntent::BeginSavedChartEdit {
+        instance_id: ids.chart_instance_a,
+    }))
+    .expect("saved editor opens");
+    let editor = opened
+        .chart_editor
+        .as_ref()
+        .expect("saved editor projection");
+    assert!(matches!(
+        editor.target,
+        crate::ChartEditorTarget::Saved {
+            record_id,
+            definition_id,
+            record_base_revision: Revision::INITIAL,
+            definition_base_revision: Revision::INITIAL,
+            ..
+        } if record_id == ids.chart_record_a && definition_id == ids.chart_definition_a
+    ));
+    settle(&application, opened);
+    let changed = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetTitle("Definition-only title".into()),
+    )))
+    .expect("title mutation");
+    settle(&application, changed);
+    let saving = block_on(application.dispatch(AppIntent::SaveChartEditor))
+        .expect("saved edit begins observable save");
+    assert!(matches!(
+        saving.activity.pending_operations.as_slice(),
+        [PendingOperationReadModel::ChartSave { definition_id }]
+            if *definition_id == ids.chart_definition_a
+    ));
+    let saved = settle(&application, saving);
+    assert!(saved.chart_editor.is_none());
+    assert_eq!(repository.revision_count(), initial_revision_count + 1);
+    let record = block_on(repository.get(ids.chart_record_a))
+        .expect("record read")
+        .expect("record exists");
+    assert_eq!(record.revision(), Revision::INITIAL);
+    assert!(
+        block_on(
+            repository.get_revision(ids.chart_record_a, Revision::new(2).expect("revision two"))
+        )
+        .expect("history read")
+        .is_none()
+    );
+    let definition = block_on(repository.get(ids.chart_definition_a))
+        .expect("definition read")
+        .expect("definition exists");
+    assert_eq!(definition.revision().get(), 2);
+    assert_eq!(definition.title(), "Definition-only title");
+    assert_eq!(
+        initial.workspace.document_revision, saved.workspace.document_revision,
+        "editing chart resources does not invent a workspace revision"
+    );
+}
+
+#[test]
+fn saved_chart_cancel_restores_canonical_preview_without_writes() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    ready(&application);
+    let ids = demo_ids();
+    let revision_count = repository.revision_count();
+    let opened = block_on(application.dispatch(AppIntent::BeginSavedChartEdit {
+        instance_id: ids.chart_instance_a,
+    }))
+    .expect("saved editor opens");
+    settle(&application, opened);
+    let changed = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetTitle("Canceled local title".into()),
+    )))
+    .expect("local edit");
+    settle(&application, changed);
+
+    let canceling =
+        block_on(application.dispatch(AppIntent::CancelChartEditor)).expect("saved edit cancels");
+    let canceled = settle(&application, canceling);
+    assert!(canceled.chart_editor.is_none());
+    assert_eq!(repository.revision_count(), revision_count);
+    assert_eq!(
+        block_on(repository.get(ids.chart_definition_a))
+            .expect("definition read")
+            .expect("definition exists")
+            .title(),
+        "Example Natal"
+    );
+}
+
+#[test]
+fn saved_chart_batch_reports_both_component_conflicts_and_retains_local_editor() {
+    let repository = MemoryRepository::default();
+    let first = demo_application(repository.clone());
+    let second = demo_application(repository.clone());
+    ready(&first);
+    ready(&second);
+    let ids = demo_ids();
+
+    for application in [&first, &second] {
+        let opened = block_on(application.dispatch(AppIntent::BeginSavedChartEdit {
+            instance_id: ids.chart_instance_a,
+        }))
+        .expect("saved editor opens");
+        settle(application, opened);
+    }
+    let first_title = block_on(first.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetTitle("First local title".into()),
+    )))
+    .expect("first title");
+    settle(&first, first_title);
+    let first_record = block_on(first.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetSubjectName(Some("First local subject".into())),
+    )))
+    .expect("first factual edit");
+    settle(&first, first_record);
+
+    let second_title = block_on(second.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetTitle("Second remote title".into()),
+    )))
+    .expect("second title");
+    settle(&second, second_title);
+    let second_record = block_on(second.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetSubjectName(Some("Second remote subject".into())),
+    )))
+    .expect("second factual edit");
+    settle(&second, second_record);
+    let second_save =
+        block_on(second.dispatch(AppIntent::SaveChartEditor)).expect("second save begins");
+    settle(&second, second_save);
+
+    let first_save =
+        block_on(first.dispatch(AppIntent::SaveChartEditor)).expect("first stale save begins");
+    let conflicted = settle(&first, first_save);
+    let editor = conflicted
+        .chart_editor
+        .as_ref()
+        .expect("local editor retained");
+    assert_eq!(editor.state, ChartEditorState::Conflict);
+    assert_eq!(editor.fields.title, "First local title");
+    assert_eq!(editor.conflicts.len(), 2);
+    assert!(
+        !conflicted
+            .availability(AppAction::SaveChartEditor)
+            .is_enabled()
+    );
+    assert!(editor.conflicts.iter().any(|conflict| {
+        conflict.component == crate::ChartConflictComponent::Record
+            && conflict.resource_id == ids.chart_record_a
+    }));
+    assert!(editor.conflicts.iter().any(|conflict| {
+        conflict.component == crate::ChartConflictComponent::Definition
+            && conflict.resource_id == ids.chart_definition_a
+    }));
+    assert_eq!(
+        first
+            .state
+            .borrow()
+            .catalog
+            .chart_definition(ids.chart_definition_a)
+            .expect("refreshed definition")
+            .title,
+        "Second remote title"
+    );
+    let canceling = block_on(first.dispatch(AppIntent::CancelChartEditor))
+        .expect("conflicted editor remains cancelable");
+    let reopened_head = settle(&first, canceling);
+    assert!(reopened_head.chart_editor.is_none());
+    assert_eq!(
+        reopened_head
+            .inspector
+            .active_chart
+            .expect("active chart")
+            .title,
+        "Second remote title"
+    );
+}
+
+#[test]
+fn shared_chart_record_blocks_factual_edits_but_allows_definition_edits() {
+    let repository = MemoryRepository::default();
+    ensure_demo(&repository);
+    let ids = demo_ids();
+    let shared_definition_id = ResourceId::new();
+    block_on(repository.create(CanonicalResource::ChartDefinition(
+        ResourceEnvelope::with_id(
+            shared_definition_id,
+            "Alternate definition",
+            ChartDefinition {
+                source: ChartSource::Radix {
+                    record: ids.chart_record_a,
+                },
+                calculation: CalculationSpec::default(),
+            },
+            Timestamp::from_unix_millis(2),
+        ),
+    )))
+    .expect("shared definition fixture");
+    let application = RealApplication::with_repository_and_policy(
+        repository,
+        StartupPolicy::OpenWorkspace(ids.workspace),
+    );
+    ready(&application);
+    let opened = block_on(application.dispatch(AppIntent::BeginSavedChartEdit {
+        instance_id: ids.chart_instance_a,
+    }))
+    .expect("shared record editor opens");
+    let editor = opened.chart_editor.as_ref().expect("editor");
+    assert!(!editor.factual_mutations_enabled);
+    assert!(editor.factual_mutations_disabled_reason.is_some());
+    settle(&application, opened);
+    let factual = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetSubjectName(Some("Blocked".into())),
+    )));
+    assert!(matches!(
+        factual,
+        Err(AppError {
+            kind: AppErrorKind::Unavailable,
+            ref message,
+        }) if message.contains("shared") && message.contains("copy/detach")
+    ));
+    let definition_only = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetTitle("Allowed definition title".into()),
+    )))
+    .expect("definition-only edit remains allowed");
+    assert_eq!(
+        definition_only
+            .chart_editor
+            .as_ref()
+            .expect("editor")
+            .fields
+            .title,
+        "Allowed definition title"
+    );
 }
 
 #[test]

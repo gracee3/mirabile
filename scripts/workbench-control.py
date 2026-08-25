@@ -71,11 +71,19 @@ def controls(client: CDPClient) -> list[dict[str, Any]]:
 
 
 def get_control(client: CDPClient, address: str) -> dict[str, Any]:
+    available = controls(client)
     matches = [
         control
-        for control in controls(client)
+        for control in available
         if canonical_address(control.get("address")) == address
     ]
+    if not matches and "[" not in address:
+        matches = [
+            control
+            for control in available
+            if isinstance(control.get("address"), dict)
+            and control["address"].get("control") == address
+        ]
     if len(matches) != 1:
         raise CDPError(
             f"expected exactly one control at {address!r}; found {len(matches)}"
@@ -154,12 +162,12 @@ def perform(client: CDPClient, command: str, options: dict[str, Any]) -> Any:
         return get_control(client, str(options["address"]))
     if command in {"click", "set", "select", "check"}:
         address = str(options["address"])
-        get_control(client, address)
+        address = canonical_address(get_control(client, address).get("address"))
         value = options.get("value")
         return client.evaluate(native_expression(address, command, value))
     if command == "key":
         address = str(options["address"])
-        get_control(client, address)
+        address = canonical_address(get_control(client, address).get("address"))
         client.evaluate(native_expression(address, "focus"))
         client.dispatch_key(str(options["key"]))
         return True

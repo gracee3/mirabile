@@ -255,6 +255,8 @@ impl RealState {
             |editor| {
                 if editor.state == crate::ChartEditorState::Saving {
                     disabled("The chart editor is already saving")
+                } else if editor.state == crate::ChartEditorState::Conflict {
+                    disabled("Cancel and reopen the chart to adopt the refreshed component heads")
                 } else if editor.validation.is_empty() {
                     Availability::Enabled
                 } else {

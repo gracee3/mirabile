@@ -74,6 +74,7 @@ impl RealState {
                 pending,
                 super::PendingWork::SaveAspectSet { .. }
                     | super::PendingWork::CreateChart { .. }
+                    | super::PendingWork::SaveChartEdit { .. }
                     | super::PendingWork::SaveWorkspace { .. }
             )
         })
@@ -112,6 +113,11 @@ impl RealState {
             super::PendingWork::SaveWorkspace { next, .. } => {
                 Some(PendingOperationReadModel::WorkspaceSave {
                     resource_id: Some(next.id),
+                })
+            }
+            super::PendingWork::SaveChartEdit { definition_id, .. } => {
+                Some(PendingOperationReadModel::ChartSave {
+                    definition_id: *definition_id,
                 })
             }
             super::PendingWork::CompleteCachedView(_) | super::PendingWork::CreateChart { .. } => {

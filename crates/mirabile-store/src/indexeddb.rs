@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 
 use crate::{
-    RepositoryError, ResourceRepository, ResourceState, ResourceTombstone, resource_from_json,
-    resource_to_json, validate_create, validate_create_batch, validate_delete, validate_save,
+    AtomicSaveBatch, RepositoryError, ResourceRepository, ResourceState, ResourceTombstone,
+    RevisionConflict, resource_from_json, resource_to_json, validate_create, validate_create_batch,
+    validate_delete, validate_save, validate_save_batch,
 };
 
 const CURRENT_STORE: &str = "resources";
@@ -189,6 +190,81 @@ impl ResourceRepository for IndexedDbRepository {
         if let Err(error) = revision_store.add(&json, Some(&revision_key)).await {
             let _ = transaction.abort().await;
             return Err(adapter_error(error));
+        }
+        transaction.done().await.map_err(adapter_error)?;
+        Ok(())
+    }
+
+    async fn save_batch(&self, batch: AtomicSaveBatch) -> Result<(), RepositoryError> {
+        validate_save_batch(&batch)?;
+        let serialized = batch
+            .changes
+            .iter()
+            .map(|resource| resource_to_json(resource).map(|json| (resource, json)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let transaction = self
+            .database
+            .transaction(&[CURRENT_STORE, REVISION_STORE], TransactionMode::ReadWrite)
+            .map_err(adapter_error)?;
+        let current_store = transaction.store(CURRENT_STORE).map_err(adapter_error)?;
+        let mut heads = std::collections::BTreeMap::new();
+        let mut conflicts = Vec::new();
+        for expectation in &batch.expectations {
+            let value = match current_store
+                .get(JsValue::from_str(&expectation.id.to_string()))
+                .await
+                .map_err(adapter_error)?
+            {
+                Some(value) => value,
+                None => {
+                    let _ = transaction.abort().await;
+                    return Err(RepositoryError::NotFound(expectation.id));
+                }
+            };
+            let current = state_from_js_string(&value)?;
+            if current.revision() != expectation.expected_revision {
+                conflicts.push(RevisionConflict {
+                    id: expectation.id,
+                    expected: expectation.expected_revision,
+                    actual: current.revision(),
+                });
+            } else if matches!(current, ResourceState::Deleted(_)) {
+                let _ = transaction.abort().await;
+                return Err(RepositoryError::ResourceDeleted(expectation.id));
+            }
+            heads.insert(expectation.id, current);
+        }
+        if !conflicts.is_empty() {
+            let _ = transaction.abort().await;
+            return Err(RepositoryError::BatchConflict { conflicts });
+        }
+        for (resource, _) in &serialized {
+            let expectation = batch
+                .expectations
+                .iter()
+                .find(|expectation| expectation.id == resource.id())
+                .expect("batch structure was validated");
+            validate_save(
+                heads
+                    .get(&resource.id())
+                    .expect("expected head was preflighted"),
+                expectation.expected_revision,
+                resource,
+            )?;
+        }
+        let revision_store = transaction.store(REVISION_STORE).map_err(adapter_error)?;
+        for (resource, json) in serialized {
+            let value = JsValue::from_str(&json);
+            let current_key = JsValue::from_str(&resource.id().to_string());
+            if let Err(error) = current_store.put(&value, Some(&current_key)).await {
+                let _ = transaction.abort().await;
+                return Err(adapter_error(error));
+            }
+            let history_key = JsValue::from_str(&revision_key(resource.id(), resource.revision()));
+            if let Err(error) = revision_store.add(&value, Some(&history_key)).await {
+                let _ = transaction.abort().await;
+                return Err(adapter_error(error));
+            }
         }
         transaction.done().await.map_err(adapter_error)?;
         Ok(())

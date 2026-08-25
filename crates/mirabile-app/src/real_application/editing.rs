@@ -1,10 +1,11 @@
 use super::{
     AppError, AppErrorKind, AppNotice, AppNoticeKind, AppResult, AspectSet, AspectSetDraftMutation,
-    AspectSetEditor, CalculationRuntime, CanonicalResource, ChartDefinition, ChartEditorState,
-    ChartMutation, ChartSource, DomainValidate, DraftState, InstanceId, PendingWork,
-    RealApplication, RepositoryError, ResourceEnvelope, ResourceId, ResourceRepository, Revision,
-    Timestamp, WorkspaceDocumentChart, conflict_refresh_warning, conjunction, info, not_found,
-    repository_app_error, restore_dirty_editor, success,
+    AspectSetEditor, AtomicSaveBatch, CalculationRuntime, CanonicalResource, ChartDefinition,
+    ChartEditorState, ChartMutation, ChartSource, DomainValidate, DraftState, InstanceId,
+    PendingWork, RealApplication, RepositoryError, ResourceEnvelope, ResourceId,
+    ResourceRepository, Revision, RevisionExpectation, Timestamp, WorkspaceDocumentChart,
+    conflict_refresh_warning, conjunction, info, not_found, repository_app_error,
+    restore_dirty_editor, success,
 };
 
 fn ensure_option_enabled<T: PartialEq>(
@@ -95,6 +96,61 @@ where
         state.advance()
     }
 
+    pub(super) fn begin_saved_chart_edit(&self, instance_id: InstanceId) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        if state.chart_editor.is_some() {
+            return Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Save or cancel the current chart editor before editing another chart",
+            ));
+        }
+        let definition_id = state
+            .session()?
+            .document
+            .chart_instances
+            .iter()
+            .find(|chart| chart.instance_id == instance_id)
+            .map(|chart| chart.definition)
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::NotFound,
+                    format!("Saved chart instance {instance_id} is not open"),
+                )
+            })?;
+        let definition = state
+            .catalog
+            .chart_definition(definition_id)
+            .cloned()
+            .ok_or_else(|| not_found("ChartDefinition", definition_id))?;
+        let record_id = match definition.payload.source {
+            ChartSource::Radix { record } => record,
+            ChartSource::Derived { .. } => {
+                return Err(AppError::new(
+                    AppErrorKind::Unavailable,
+                    "Derived chart editing remains intentionally deferred",
+                ));
+            }
+        };
+        let record = state
+            .catalog
+            .chart_record(record_id)
+            .cloned()
+            .ok_or_else(|| not_found("ChartRecord", record_id))?;
+        let shared_record = state.catalog.chart_record_reference_count(record_id) > 1;
+        let editor =
+            crate::ChartAuthoringEditor::from_saved(instance_id, record, definition, shared_record)
+                .map_err(|message| AppError::new(AppErrorKind::Unavailable, message))?;
+        state.session.as_mut().expect("ready session").active_chart = Some(instance_id);
+        state.chart_editor = Some(editor);
+        self.submit_active_view_refresh(&mut state)?;
+        state.notice = Some(info(if shared_record {
+            "Saved definition editor opened; factual fields are protected because its ChartRecord is shared"
+        } else {
+            "Saved chart editor opened from independent Record and Definition revisions"
+        }));
+        state.advance()
+    }
+
     pub(super) fn apply_chart_mutation(&self, mutation: ChartMutation) -> AppResult<()> {
         let descriptor = self.engine.backend_descriptor();
         let mut state = self.state.borrow_mut();
@@ -110,6 +166,18 @@ where
             .location_complete();
         let capabilities =
             crate::AuthoringCapabilitiesReadModel::from_backend(descriptor, complete_location);
+        if crate::ChartAuthoringEditor::is_factual_mutation(&mutation)
+            && !state
+                .chart_editor
+                .as_ref()
+                .expect("editor was checked")
+                .factual_mutations_enabled()
+        {
+            return Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "This ChartRecord is shared by multiple definitions; copy/detach is required before factual editing",
+            ));
+        }
         match &mutation {
             ChartMutation::SetZodiac(value) => {
                 let mode = match value {
@@ -138,7 +206,7 @@ where
             | ChartMutation::SetLatitude(_)
             | ChartMutation::SetLongitude(_) => {}
         }
-        let (instance_id, materialized) = {
+        let (instance_id, is_new, materialized) = {
             let editor = state.chart_editor.as_mut().expect("editor was checked");
             if editor.state == ChartEditorState::Saving {
                 return Err(AppError::new(
@@ -146,18 +214,30 @@ where
                     "The chart editor cannot change while saving",
                 ));
             }
-            (editor.instance_id(), editor.apply(mutation))
+            if editor.state == ChartEditorState::Conflict {
+                return Err(AppError::new(
+                    AppErrorKind::Conflict,
+                    "Cancel and reopen this chart to adopt the refreshed component heads before editing again",
+                ));
+            }
+            (
+                editor.instance_id(),
+                matches!(editor.target, crate::ChartEditorTarget::New { .. }),
+                editor.apply(mutation),
+            )
         };
         if let Some(materialized) = materialized {
-            let session = state.session.as_mut().expect("ready session");
-            let draft = session
-                .draft_charts
-                .iter_mut()
-                .find(|draft| draft.instance_id == instance_id)
-                .ok_or_else(|| {
-                    AppError::new(AppErrorKind::NotFound, "The chart preview is not open")
-                })?;
-            draft.draft = materialized;
+            if is_new {
+                let session = state.session.as_mut().expect("ready session");
+                let draft = session
+                    .draft_charts
+                    .iter_mut()
+                    .find(|draft| draft.instance_id == instance_id)
+                    .ok_or_else(|| {
+                        AppError::new(AppErrorKind::NotFound, "The chart preview is not open")
+                    })?;
+                draft.draft = materialized;
+            }
             self.submit_active_view_refresh(&mut state)?;
             state.notice = Some(info(
                 "Chart mutation accepted; the authoritative preview is refreshing",
@@ -171,7 +251,7 @@ where
     }
 
     pub(super) fn begin_save_chart_editor(&self) -> AppResult<()> {
-        let instance_id = {
+        let (instance_id, is_new) = {
             let state = self.state.borrow();
             let editor = state.chart_editor.as_ref().ok_or_else(|| {
                 AppError::new(
@@ -185,9 +265,16 @@ where
                     "Complete every invalid chart field before saving",
                 ));
             }
-            editor.instance_id()
+            (
+                editor.instance_id(),
+                matches!(editor.target, crate::ChartEditorTarget::New { .. }),
+            )
         };
-        self.begin_save_chart_draft(instance_id)?;
+        if is_new {
+            self.begin_save_chart_draft(instance_id)?;
+        } else {
+            self.begin_save_saved_chart_editor()?;
+        }
         if let Some(editor) = self.state.borrow_mut().chart_editor.as_mut() {
             editor.state = ChartEditorState::Saving;
         }
@@ -195,7 +282,7 @@ where
     }
 
     pub(super) fn cancel_chart_editor(&self) -> AppResult<()> {
-        let instance_id = self
+        let (instance_id, is_new) = self
             .state
             .borrow()
             .chart_editor
@@ -205,9 +292,184 @@ where
                     AppErrorKind::InvalidIntent,
                     "There is no chart editor to cancel",
                 )
-            })?
-            .instance_id();
-        self.cancel_chart_draft(instance_id)
+            })
+            .map(|editor| {
+                (
+                    editor.instance_id(),
+                    matches!(editor.target, crate::ChartEditorTarget::New { .. }),
+                )
+            })?;
+        if is_new {
+            self.cancel_chart_draft(instance_id)
+        } else {
+            let mut state = self.state.borrow_mut();
+            state.chart_editor = None;
+            self.submit_active_view_refresh(&mut state)?;
+            state.notice = Some(info(
+                "Saved chart edit canceled; canonical Record and Definition remain unchanged",
+            ));
+            state.advance()
+        }
+    }
+
+    fn begin_save_saved_chart_editor(&self) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let (instance_id, bases, draft) = {
+            let editor = state.chart_editor.as_ref().expect("editor was checked");
+            (
+                editor.instance_id(),
+                editor
+                    .saved_bases()
+                    .expect("saved chart target retains saved bases")
+                    .clone(),
+                editor.last_valid.clone(),
+            )
+        };
+        let timestamp = Timestamp::from_unix_millis(state.next_timestamp);
+        let mut changes = Vec::new();
+        if draft.record != bases.record.payload {
+            let next = bases
+                .record
+                .next_with_payload(draft.record, timestamp)
+                .map_err(|error| AppError::new(AppErrorKind::Unavailable, error.to_string()))?;
+            changes.push(CanonicalResource::ChartRecord(next));
+        }
+        let next_definition_payload = ChartDefinition {
+            source: bases.definition.payload.source.clone(),
+            calculation: draft.calculation,
+        };
+        if next_definition_payload != bases.definition.payload
+            || draft.title != bases.definition.title
+        {
+            let mut next = bases
+                .definition
+                .next_with_payload(next_definition_payload, timestamp)
+                .map_err(|error| AppError::new(AppErrorKind::Unavailable, error.to_string()))?;
+            next.title = draft.title;
+            changes.push(CanonicalResource::ChartDefinition(next));
+        }
+        let batch = AtomicSaveBatch {
+            expectations: vec![
+                RevisionExpectation {
+                    id: bases.record.id,
+                    expected_revision: bases.record.revision,
+                },
+                RevisionExpectation {
+                    id: bases.definition.id,
+                    expected_revision: bases.definition.revision,
+                },
+            ],
+            changes,
+        };
+        state.pending.push_back(PendingWork::SaveChartEdit {
+            instance_id,
+            definition_id: bases.definition.id,
+            batch,
+        });
+        state.notice = Some(info(
+            "Comparing both chart component revisions before one atomic saved-chart publication",
+        ));
+        state.advance()
+    }
+
+    pub(super) async fn complete_saved_chart_save(
+        &self,
+        instance_id: InstanceId,
+        _definition_id: ResourceId,
+        batch: AtomicSaveBatch,
+    ) -> AppResult<()> {
+        let result = self.repository.save_batch(batch.clone()).await;
+        match result {
+            Ok(()) => {
+                let mut state = self.state.borrow_mut();
+                let changed = !batch.changes.is_empty();
+                for resource in batch.changes {
+                    state.catalog.insert_current(resource);
+                }
+                if changed {
+                    state.next_timestamp = state.next_timestamp.saturating_add(1);
+                }
+                if state
+                    .chart_editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.instance_id() == instance_id)
+                {
+                    state.chart_editor = None;
+                }
+                self.submit_active_view_refresh(&mut state)?;
+                state.notice = Some(success(if changed {
+                    "Saved chart changes published atomically with both component revisions checked"
+                } else {
+                    "Saved chart was unchanged; both component revisions were verified"
+                }));
+                state.advance()
+            }
+            Err(RepositoryError::BatchConflict { conflicts }) => {
+                let mut refreshed = Vec::new();
+                let mut refresh_failed = false;
+                for conflict in &conflicts {
+                    match self.repository.get(conflict.id).await {
+                        Ok(Some(resource)) => refreshed.push(resource),
+                        Ok(None) | Err(_) => refresh_failed = true,
+                    }
+                }
+                let mut state = self.state.borrow_mut();
+                for resource in refreshed {
+                    state.catalog.insert_current(resource);
+                }
+                if let Some(editor) = state
+                    .chart_editor
+                    .as_mut()
+                    .filter(|editor| editor.instance_id() == instance_id)
+                {
+                    let bases = editor
+                        .saved_bases()
+                        .expect("saved editor retains component bases");
+                    let record_id = bases.record.id;
+                    editor.state = ChartEditorState::Conflict;
+                    editor.conflicts = conflicts
+                        .iter()
+                        .map(|conflict| crate::ChartEditorConflict {
+                            component: if conflict.id == record_id {
+                                crate::ChartConflictComponent::Record
+                            } else {
+                                crate::ChartConflictComponent::Definition
+                            },
+                            resource_id: conflict.id,
+                            expected_revision: conflict.expected,
+                            actual_revision: conflict.actual,
+                        })
+                        .collect();
+                }
+                state.notice = Some(AppNotice {
+                    kind: AppNoticeKind::Conflict,
+                    message: if refresh_failed {
+                        "Saved chart conflict detected; at least one current component head could not be refreshed"
+                            .into()
+                    } else {
+                        "Saved chart conflict detected; current component heads were refreshed while the local editor was retained"
+                            .into()
+                    },
+                });
+                state.advance()
+            }
+            Err(error) => {
+                let failure = repository_app_error("Could not atomically save the chart", &error);
+                let mut state = self.state.borrow_mut();
+                if let Some(editor) = state
+                    .chart_editor
+                    .as_mut()
+                    .filter(|editor| editor.instance_id() == instance_id)
+                {
+                    editor.state = ChartEditorState::Dirty;
+                }
+                state.notice = Some(AppNotice {
+                    kind: AppNoticeKind::Warning,
+                    message: failure.message,
+                });
+                state.advance()
+            }
+        }
     }
 
     pub(super) fn start_chart_draft(&self, draft: crate::ChartDraft) -> AppResult<()> {

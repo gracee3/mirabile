@@ -6,6 +6,9 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppIntent {
     BeginNewChart,
+    BeginSavedChartEdit {
+        instance_id: InstanceId,
+    },
     ApplyChartMutation(ChartMutation),
     SaveChartEditor,
     CancelChartEditor,
@@ -73,6 +76,9 @@ impl AppIntent {
     pub fn semantic_summary(&self) -> String {
         match self {
             Self::BeginNewChart | Self::StartChartDraft { .. } => "chart.begin-new".into(),
+            Self::BeginSavedChartEdit { instance_id } => {
+                format!("chart.begin-saved-edit[{instance_id}]")
+            }
             Self::ApplyChartMutation(mutation) => mutation.semantic_summary(),
             Self::SaveChartEditor => "chart.editor.save".into(),
             Self::CancelChartEditor => "chart.editor.cancel".into(),

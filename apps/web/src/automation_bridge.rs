@@ -348,6 +348,9 @@ struct ExecuteRequest {
 #[serde(tag = "action", rename_all = "snake_case")]
 enum WhitelistedAction {
     BeginNewChart,
+    BeginSavedChartEdit {
+        instance_id: mirabile_app::InstanceId,
+    },
     SaveChartEditor,
     CancelChartEditor,
     SetChartTitle {
@@ -436,6 +439,9 @@ impl WhitelistedAction {
         use mirabile_app::{AppIntent, AspectSetDraftMutation};
         Ok(match self {
             Self::BeginNewChart => AppIntent::BeginNewChart,
+            Self::BeginSavedChartEdit { instance_id } => {
+                AppIntent::BeginSavedChartEdit { instance_id }
+            }
             Self::SaveChartEditor => AppIntent::SaveChartEditor,
             Self::CancelChartEditor => AppIntent::CancelChartEditor,
             Self::SetChartTitle { title } => {

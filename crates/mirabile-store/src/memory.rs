@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use mirabile_core::{CanonicalResource, ResourceId, ResourceKind, Revision, Timestamp};
 
 use crate::{
-    RepositoryError, ResourceRepository, ResourceState, ResourceTombstone, validate_create,
-    validate_create_batch, validate_delete, validate_save,
+    AtomicSaveBatch, RepositoryError, ResourceRepository, ResourceState, ResourceTombstone,
+    RevisionConflict, validate_create, validate_create_batch, validate_delete, validate_save,
+    validate_save_batch,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -82,6 +83,51 @@ impl ResourceRepository for MemoryRepository {
             .history
             .insert((id, resource.revision()), resource.clone());
         state.current.insert(id, resource);
+        Ok(())
+    }
+
+    async fn save_batch(&self, batch: AtomicSaveBatch) -> Result<(), RepositoryError> {
+        validate_save_batch(&batch)?;
+        let mut state = self.state.borrow_mut();
+        let mut conflicts = Vec::new();
+        for expectation in &batch.expectations {
+            let current = state
+                .current
+                .get(&expectation.id)
+                .ok_or(RepositoryError::NotFound(expectation.id))?;
+            if current.revision() != expectation.expected_revision {
+                conflicts.push(RevisionConflict {
+                    id: expectation.id,
+                    expected: expectation.expected_revision,
+                    actual: current.revision(),
+                });
+            } else if matches!(current, ResourceState::Deleted(_)) {
+                return Err(RepositoryError::ResourceDeleted(expectation.id));
+            }
+        }
+        if !conflicts.is_empty() {
+            return Err(RepositoryError::BatchConflict { conflicts });
+        }
+        for resource in &batch.changes {
+            let expectation = batch
+                .expectations
+                .iter()
+                .find(|expectation| expectation.id == resource.id())
+                .expect("batch structure was validated");
+            let current = state
+                .current
+                .get(&resource.id())
+                .expect("expected head was preflighted");
+            validate_save(current, expectation.expected_revision, resource)?;
+        }
+        for resource in batch.changes {
+            let id = resource.id();
+            let resource = ResourceState::Present(resource);
+            state
+                .history
+                .insert((id, resource.revision()), resource.clone());
+            state.current.insert(id, resource);
+        }
         Ok(())
     }
 
@@ -164,6 +210,24 @@ mod tests {
             },
             Timestamp::from_unix_millis(0),
         ))
+    }
+
+    fn next_point_resource(
+        resource: &CanonicalResource,
+        title: &str,
+        timestamp: i64,
+    ) -> CanonicalResource {
+        let CanonicalResource::PointSet(envelope) = resource else {
+            panic!("point set")
+        };
+        let mut next = envelope
+            .next_with_payload(
+                envelope.payload.clone(),
+                Timestamp::from_unix_millis(timestamp),
+            )
+            .expect("next revision");
+        next.title = title.into();
+        CanonicalResource::PointSet(next)
     }
 
     #[test]
@@ -345,6 +409,130 @@ mod tests {
                 Err(RepositoryError::DuplicateBatchIdentity(_))
             ));
             assert_eq!(repository.current_count(), 1);
+        });
+    }
+
+    #[test]
+    fn save_batch_compare_only_conflict_publishes_nothing() {
+        block_on(async {
+            let repository = MemoryRepository::default();
+            let changed_base = point_resource();
+            let compare_base = point_resource();
+            repository
+                .create_batch(vec![changed_base.clone(), compare_base.clone()])
+                .await
+                .expect("create bases");
+            let compare_next = next_point_resource(&compare_base, "Remote compare head", 1);
+            repository
+                .save(Revision::INITIAL, compare_next.clone())
+                .await
+                .expect("advance compare-only head");
+            let changed_next = next_point_resource(&changed_base, "Local changed head", 2);
+
+            let result = repository
+                .save_batch(AtomicSaveBatch {
+                    expectations: vec![
+                        crate::RevisionExpectation {
+                            id: changed_base.id(),
+                            expected_revision: Revision::INITIAL,
+                        },
+                        crate::RevisionExpectation {
+                            id: compare_base.id(),
+                            expected_revision: Revision::INITIAL,
+                        },
+                    ],
+                    changes: vec![changed_next],
+                })
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(RepositoryError::BatchConflict { conflicts })
+                    if conflicts == vec![crate::RevisionConflict {
+                        id: compare_base.id(),
+                        expected: Revision::INITIAL,
+                        actual: compare_next.revision(),
+                    }]
+            ));
+            assert_eq!(
+                repository
+                    .get(changed_base.id())
+                    .await
+                    .expect("read changed base"),
+                Some(changed_base)
+            );
+            assert_eq!(repository.revision_count(), 3);
+        });
+    }
+
+    #[test]
+    fn save_batch_collects_conflicts_and_rejects_malformed_batches() {
+        block_on(async {
+            let repository = MemoryRepository::default();
+            let first = point_resource();
+            let second = point_resource();
+            repository
+                .create_batch(vec![first.clone(), second.clone()])
+                .await
+                .expect("create bases");
+            repository
+                .save(
+                    Revision::INITIAL,
+                    next_point_resource(&first, "First remote", 1),
+                )
+                .await
+                .expect("advance first");
+            repository
+                .save(
+                    Revision::INITIAL,
+                    next_point_resource(&second, "Second remote", 2),
+                )
+                .await
+                .expect("advance second");
+
+            let conflicts = repository
+                .save_batch(AtomicSaveBatch {
+                    expectations: vec![
+                        crate::RevisionExpectation {
+                            id: first.id(),
+                            expected_revision: Revision::INITIAL,
+                        },
+                        crate::RevisionExpectation {
+                            id: second.id(),
+                            expected_revision: Revision::INITIAL,
+                        },
+                    ],
+                    changes: Vec::new(),
+                })
+                .await;
+            assert!(matches!(
+                conflicts,
+                Err(RepositoryError::BatchConflict { conflicts }) if conflicts.len() == 2
+            ));
+
+            let duplicate = crate::RevisionExpectation {
+                id: first.id(),
+                expected_revision: Revision::new(2).expect("revision two"),
+            };
+            assert!(matches!(
+                repository
+                    .save_batch(AtomicSaveBatch {
+                        expectations: vec![duplicate, duplicate],
+                        changes: Vec::new(),
+                    })
+                    .await,
+                Err(RepositoryError::DuplicateBatchIdentity(id)) if id == first.id()
+            ));
+            assert!(matches!(
+                repository
+                    .save_batch(AtomicSaveBatch {
+                        expectations: vec![duplicate],
+                        changes: vec![next_point_resource(&second, "Unmatched", 3)],
+                    })
+                    .await,
+                Err(RepositoryError::MissingBatchExpectation(id)) if id == second.id()
+            ));
+            assert_eq!(repository.revision_count(), 4);
         });
     }
 }

@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 7 - saved chart editing and atomic CAS batches
+- Current phase: 8 - workspace management and explicit demo loading
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -29,7 +29,7 @@
 | 4. Automation tooling | Complete | Non-default query-gated bridge; isolated IndexedDB override; loopback-only standard-library CDP client/CLI; scenario and failure artifacts | Native/WASM feature checks; Python contract tests; live semantic smoke and expected-failure artifact smoke | Phase 4 commit |
 | 5. Authoring capabilities | Complete | Provider-neutral zodiac/coordinate/point/house support and default correction metadata; contextual app options with disabled reasons | `./scripts/check.sh` passes 129 Rust tests plus 4 Python tests; native/WASM feature checks | Phase 5 commit |
 | 6. New chart authoring | Complete | Typed application-owned editor/defaults; partial-location validation; last-valid preview; native controls; cancel/no-write; atomic create and slot promotion | `./scripts/check.sh` passes 133 Rust tests plus 5 Python tests; native/WASM automation checks; live semantic and actual-control XALEN journeys | Phase 6 commit |
-| 7. Saved chart editing | In progress | Atomic CAS batch, conflict projection, shared-record guard | Pending | Pending |
+| 7. Saved chart editing | Complete | Atomic compare-only/write CAS batch; separate Record/Definition bases; saved preview/cancel/save; structured two-component conflicts; shared-record protection | `./scripts/check.sh` passes 139 Rust tests plus 5 Python tests; native/WASM checks; IndexedDB rollback contract; live visible-control saved edit/cancel/save journey | Phase 7 commit |
 | 8. Workspace management | Pending | Library/new/open/rename/save/discard/switch and explicit demos | Pending | Pending |
 | 9. Aspect Set authoring | Pending | Full-row lifecycle editor | Pending | Pending |
 | 10. Session and slots | Pending | Inspectable temporary/durable display and slot state | Pending | Pending |
@@ -70,6 +70,11 @@
 - The private authoring draft can retain an enabled but incomplete manual location. Structured field validation is projected while the last valid aggregate and Scene remain authoritative; house selection is location-gated and removing a required location cannot leak a runtime-invalid chart into save.
 - Beginning a chart creates only session state, assigns its stable instance to the active required slot as a preview overlay, and writes nothing. Cancel removes it without writes. Save creates Record and Definition through one atomic batch, promotes the same slot assignment, updates library/workspace projections, and leaves workspace membership explicitly dirty.
 - The feature-gated bridge whitelists the same typed chart actions. Live semantic and native-control journeys exercise XALEN defaults, incomplete application validation, an invalid local numeric buffer, Enter commits, capability-gated Equal houses, settlement, trace origins, atomic save, and a final screenshot using only semantic control addresses.
+- `AtomicSaveBatch` carries unique revision expectations and changed canonical resources. Expectations may be compare-only; Memory preflights the complete batch before mutation, and IndexedDB performs expectation reads, current-head writes, and historical insertions in one two-store transaction. Conflicts identify every stale resource, and a forced second history-key failure proves neither current head advances.
+- Saved chart editors retain distinct Record and Definition envelopes and revisions plus the complete original factual record as a template. Definition-only edits compare the Record head without creating a meaningless Record revision, while record provenance, calendar/disambiguation, notes, life events, and unchanged atlas metadata remain intact.
+- Saved previews are application-owned overlays: cancel drops the overlay and recalculates from the canonical catalog without writes. Save is observable `ChartSave` work, checks both component bases, publishes only changed components, and advances every success, conflict, or failure into a settled recoverable projection.
+- Batch conflicts refresh discoverable component heads into the catalog while retaining local fields and projecting Record-versus-Definition conflict details. A ChartRecord referenced by multiple definitions disables factual mutations with an explicit copy/detach explanation while leaving title and calculation-definition edits available.
+- The workbench exposes a qualified `chart.edit-saved[instance=...]` native action and the local CLI can resolve an unqualified control ID only when the manifest contains exactly one matching dynamic address. The live Chromium journey creates a chart, cancels a saved edit, reopens it, publishes a definition-only revision, and verifies trace and final snapshot through actual controls.
 
 ## Blockers
 
