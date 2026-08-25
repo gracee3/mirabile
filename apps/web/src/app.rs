@@ -12,6 +12,7 @@ use mirabile_app::{
 use crate::mock_application::MockApplication;
 use crate::{
     commands::{CommandId, command_for_key, metadata},
+    diagnostics::Diagnostics,
     dispatcher::{WorkbenchCoordinator, event_target_is_text_entry, execute_command},
     inspector::Inspector,
     view_host::ViewHost,
@@ -166,7 +167,10 @@ fn ReadyShell(
 
         <div class="workstation">
             <WorkspaceRail model dispatcher />
-            <ViewHost model />
+            <div class="center-workbench">
+                <ViewHost model />
+                <Diagnostics model dispatcher />
+            </div>
             <Inspector model dispatcher invalid_aspect_buffers />
         </div>
     }

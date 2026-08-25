@@ -28,7 +28,7 @@ struct CoordinatorState {
     queue: Rc<RefCell<VecDeque<QueuedAction>>>,
     running: Rc<Cell<bool>>,
     next_sequence: Rc<Cell<u64>>,
-    trace: Rc<RefCell<TraceHistory>>,
+    trace: RwSignal<TraceHistory>,
 }
 
 impl CoordinatorState {
@@ -67,28 +67,32 @@ impl CoordinatorState {
             Ok(updated) => {
                 let accepted = updated.version;
                 let (settled, transitions, outcome) = self.settle(updated).await;
-                self.trace.borrow_mut().push(ExecutionTraceEntry {
-                    sequence,
-                    source: ActionSource::System,
-                    origin_control: None,
-                    semantic_intent: "application.initialize".into(),
-                    accepted_projection: Some(accepted),
-                    settled_projection: settled,
-                    pending_transitions: transitions,
-                    outcome,
+                self.trace.update(|trace| {
+                    trace.push(ExecutionTraceEntry {
+                        sequence,
+                        source: ActionSource::System,
+                        origin_control: None,
+                        semantic_intent: "application.initialize".into(),
+                        accepted_projection: Some(accepted),
+                        settled_projection: settled,
+                        pending_transitions: transitions,
+                        outcome,
+                    });
                 });
             }
             Err(error) => {
                 publish_application_error(self.model, error.clone());
-                self.trace.borrow_mut().push(ExecutionTraceEntry {
-                    sequence,
-                    source: ActionSource::System,
-                    origin_control: None,
-                    semantic_intent: "application.initialize".into(),
-                    accepted_projection: None,
-                    settled_projection: before,
-                    pending_transitions: Vec::new(),
-                    outcome: failure_outcome(&error),
+                self.trace.update(|trace| {
+                    trace.push(ExecutionTraceEntry {
+                        sequence,
+                        source: ActionSource::System,
+                        origin_control: None,
+                        semantic_intent: "application.initialize".into(),
+                        accepted_projection: None,
+                        settled_projection: before,
+                        pending_transitions: Vec::new(),
+                        outcome: failure_outcome(&error),
+                    });
                 });
             }
         }
@@ -140,15 +144,17 @@ impl CoordinatorState {
                     )
                 }
             };
-        self.trace.borrow_mut().push(ExecutionTraceEntry {
-            sequence,
-            source: action.source,
-            origin_control: action.origin_control,
-            semantic_intent,
-            accepted_projection,
-            settled_projection,
-            pending_transitions,
-            outcome,
+        self.trace.update(|trace| {
+            trace.push(ExecutionTraceEntry {
+                sequence,
+                source: action.source,
+                origin_control: action.origin_control,
+                semantic_intent,
+                accepted_projection,
+                settled_projection,
+                pending_transitions,
+                outcome,
+            });
         });
     }
 
@@ -216,7 +222,7 @@ impl WorkbenchCoordinator {
                 queue: Rc::new(RefCell::new(VecDeque::new())),
                 running: Rc::new(Cell::new(false)),
                 next_sequence: Rc::new(Cell::new(1)),
-                trace: Rc::new(RefCell::new(TraceHistory::default())),
+                trace: RwSignal::new(TraceHistory::default()),
             }),
         }
     }
@@ -249,9 +255,19 @@ impl WorkbenchCoordinator {
             .with_value(|coordinator| coordinator.coordinator.get_untracked())
     }
 
+    pub(super) fn read_model_tracked(self) -> CoordinatorReadModel {
+        self.stored
+            .with_value(|coordinator| coordinator.coordinator.get())
+    }
+
     pub(super) fn trace(self) -> Vec<ExecutionTraceEntry> {
         self.stored
-            .with_value(|coordinator| coordinator.trace.borrow().entries())
+            .with_value(|coordinator| coordinator.trace.get_untracked().entries())
+    }
+
+    pub(super) fn trace_tracked(self) -> Vec<ExecutionTraceEntry> {
+        self.stored
+            .with_value(|coordinator| coordinator.trace.get().entries())
     }
 }
 

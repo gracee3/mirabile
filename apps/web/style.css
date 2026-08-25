@@ -261,6 +261,127 @@ kbd {
   min-height: 0;
 }
 
+.center-workbench {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: minmax(20rem, 1fr) minmax(12rem, 17rem);
+}
+
+.diagnostics-dock {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+  background: #07111b;
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.diagnostics-heading,
+.diagnostics-actions,
+.diagnostic-value,
+.trace-row {
+  display: flex;
+  align-items: center;
+}
+
+.diagnostics-heading {
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.diagnostics-heading h2 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.diagnostics-actions {
+  gap: 0.4rem;
+}
+
+.diagnostics-actions .button {
+  min-height: 1.85rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.62rem;
+}
+
+.diagnostics-grid {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+
+.diagnostic-panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  padding: 0.55rem;
+  background: #091724;
+}
+
+.diagnostic-panel h3 {
+  margin-bottom: 0.4rem;
+  color: var(--cyan);
+  font-size: 0.67rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.diagnostic-value {
+  min-width: 0;
+  justify-content: space-between;
+  gap: 0.55rem;
+  padding: 0.1rem 0;
+  font-size: 0.62rem;
+}
+
+.diagnostic-value > span {
+  flex: 0 0 auto;
+  color: var(--faint);
+}
+
+.diagnostic-value strong,
+.diagnostic-value code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-panel {
+  grid-column: 1 / -1;
+  max-height: 8.5rem;
+  overflow: auto;
+}
+
+.trace-row {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.16rem 0;
+  color: var(--faint);
+  font-size: 0.59rem;
+  grid-template-columns: 2rem minmax(10rem, 1fr) 4rem minmax(5rem, auto);
+}
+
+.trace-row code {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostics-export-status {
+  min-height: 0.8rem;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
 .chart-rail,
 .inspector {
   overflow-y: auto;
@@ -839,6 +960,7 @@ input[type="text"] {
   .workstation {
     grid-template-columns: minmax(14rem, 17rem) minmax(26rem, 1fr) minmax(17rem, 19rem);
   }
+
 }
 
 @media (max-width: 850px) {
@@ -870,6 +992,18 @@ input[type="text"] {
     height: auto;
     min-height: 0;
     grid-template-columns: 1fr;
+  }
+
+  .center-workbench {
+    display: block;
+  }
+
+  .diagnostics-dock {
+    max-height: none;
+  }
+
+  .diagnostics-grid {
+    grid-template-columns: 1fr 1fr;
   }
 
   .chart-rail,

@@ -42,6 +42,9 @@ impl ControlId {
     pub const CHART_ZODIAC: Self = Self(Cow::Borrowed("chart.zodiac"));
     pub const DISPLAY_POINT: Self = Self(Cow::Borrowed("display.point"));
     pub const DISPLAY_PROMOTE: Self = Self(Cow::Borrowed("display.promote"));
+    pub const DIAGNOSTICS_EXPORT_SNAPSHOT: Self =
+        Self(Cow::Borrowed("diagnostics.export-snapshot"));
+    pub const DIAGNOSTICS_EXPORT_TRACE: Self = Self(Cow::Borrowed("diagnostics.export-trace"));
     pub const DRAFT_CANCEL: Self = Self(Cow::Borrowed("draft.cancel"));
     pub const DRAFT_SAVE: Self = Self(Cow::Borrowed("draft.save"));
     pub const VIEW_ACTIVATE: Self = Self(Cow::Borrowed("view.activate"));

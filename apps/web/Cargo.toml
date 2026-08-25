@@ -25,10 +25,13 @@ serde.workspace = true
 serde_json.workspace = true
 wasm-bindgen.workspace = true
 web-sys = { workspace = true, features = [
+    "Blob",
+    "BlobPropertyBag",
     "DedicatedWorkerGlobalScope",
     "Document",
     "Element",
     "HtmlElement",
+    "HtmlAnchorElement",
     "HtmlInputElement",
     "HtmlOptionElement",
     "HtmlOptionsCollection",
@@ -36,6 +39,7 @@ web-sys = { workspace = true, features = [
     "MessageEvent",
     "NodeList",
     "UrlSearchParams",
+    "Url",
     "Window",
     "console",
 ] }

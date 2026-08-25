@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 11 - dense diagnostics and deliberate exports
+- Current phase: 12 - versioned semantic macros
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -33,7 +33,7 @@
 | 8. Workspace management | Complete | Workspace summaries/title metadata; typed new/open/rename/save/discard; loss-reasoned Save/Discard/Stay switching; explicit idempotent atomic demo loading | `./scripts/check.sh` passes 145 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control lifecycle | Phase 8 commit |
 | 9. Aspect Set authoring | Complete | New/duplicate/saved lifecycle; title and every row; canonical create/CAS save; workspace binding; per-row invalid buffers | `./scripts/check.sh` passes 147 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control full-row journey | Phase 9 commit |
 | 10. Session and slots | Complete | Supported point visibility; complete temporary/durable replacement and promotion; saved/draft slot identity, promotion, and options | `./scripts/check.sh` passes 148 Rust tests plus 5 Python tests; native/WASM checks; live IndexedDB/Worker/XALEN visible-control session and slot journey | Phase 10 commit |
-| 11. Diagnostics UI | Pending | Dense diagnostics, trace, deliberate JSON export | Pending | Pending |
+| 11. Diagnostics UI | Complete | Dense authoritative application/workspace/chart/view/calculation/coordinator panels; reactive bounded trace; explicit snapshot and trace JSON export | `./scripts/check.sh` passes 148 Rust tests plus 5 Python tests; native/WASM automation checks; live IndexedDB/Worker/XALEN diagnostics and control-manifest journey | Phase 11 commit |
 | 12. Macros | Pending | Record/import/export/replay with bindings and failures | Pending | Pending |
 | 13. Level A scenarios | Pending | Shared Mock/Real semantic conformance | Pending | Pending |
 | 14. Level B browser semantics | Pending | Real IndexedDB/Worker/XALEN/peer workflows | Pending | Pending |
@@ -90,6 +90,10 @@
 - Slot projections expose the effective chart, durable chart, draft overlay, saved definition identity or draft promotion requirement, and every option with enabled state and reason. Required slots retain an inspectable disabled Unassigned option instead of silently omitting it.
 - Automation snapshots include point visibility and slot provenance without Scene contents. The constrained scenario runner now follows numeric array segments in dotted expectation paths, enabling exact machine assertions over those versioned snapshot structures.
 - Native supported-point toggles and explicit display promotion route through the coordinator. The live control journey proves temporary hide, durable promotion, new-chart draft assignment, atomic chart creation, saved-definition slot promotion, option reasons, settlement, and trace against isolated IndexedDB, the Worker, and XALEN.
+- The center workbench now projects dense application, workspace, chart/view, calculation, coordinator, and recent-trace diagnostics directly from the authoritative read model and coordinator signals. Calculation identity includes backend, engine, Worker protocol, request and cache keys, while Scene contents remain absent.
+- Execution trace storage is a reactive bounded signal, so accepted and settled actions update the diagnostics surface without a second state authority. The trace remains noncanonical and local; no background upload, persistence, or remote-control boundary was added.
+- Snapshot and trace export require deliberate native button actions. The shared DOM manifest capture supplies the snapshot's actual native controls in normal browser and automation builds, and the versioned snapshot continues to expose only selected state plus last-good Scene presence.
+- The live diagnostics control journey verifies the export controls, versioned settled snapshot, agent source attribution, semantic intent, settled outcome, coordinator idle state, and full native control enumeration against isolated IndexedDB, the Worker, and XALEN.
 
 ## Blockers
 

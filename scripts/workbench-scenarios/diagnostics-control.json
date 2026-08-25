@@ -1,0 +1,13 @@
+{
+  "name": "diagnostics-control",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "get", "address": "diagnostics.export-snapshot", "expect": {"enabled": true, "kind": "action"}},
+    {"command": "get", "address": "diagnostics.export-trace", "expect": {"enabled": true, "kind": "action"}},
+    {"command": "execute", "source": "agent", "request": {"action": {"action": "rename_workspace", "title": "Diagnostics Workspace"}}},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.schema_version": 1, "value.application.status": "ready", "value.application.settled": true, "value.workspace.title": "Diagnostics Workspace", "value.coordinator.running": false, "value.recent_trace.1.source": "agent", "value.recent_trace.1.semantic_intent": "workspace.rename", "value.recent_trace.1.outcome.status": "settled"}},
+    {"command": "trace", "expect": {"value.1.source": "agent", "value.1.semantic_intent": "workspace.rename", "value.1.outcome.status": "settled"}},
+    {"command": "controls"}
+  ]
+}

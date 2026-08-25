@@ -11,6 +11,10 @@ mod chart_editor;
 #[cfg(not(feature = "browser-contract"))]
 mod commands;
 #[cfg(not(feature = "browser-contract"))]
+mod control_manifest;
+#[cfg(not(feature = "browser-contract"))]
+mod diagnostics;
+#[cfg(not(feature = "browser-contract"))]
 mod dispatcher;
 #[cfg(not(feature = "browser-contract"))]
 mod inspector;
