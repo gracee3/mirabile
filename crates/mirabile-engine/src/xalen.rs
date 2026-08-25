@@ -9,14 +9,14 @@ use xalen_houses::{GeoLocation, HouseSystem as XalenHouseSystem, compute_houses}
 use xalen_time::{DeltaTModel, FIRST_LEAP_SECOND_JD, JdUTC, JulianDay as _};
 
 use crate::{
-    BackendCalculationProvenance, BackendCapabilities, BackendCapability, BackendDescriptor,
-    BackendFingerprint, CalculationBackend, CalculationBackendError,
-    CalculationBackendErrorCategory, CalculationBackendResult, CelestialBackendFingerprint,
-    CelestialCalculationProvenance, CelestialCapabilities, CelestialPositionsResult,
-    DerivedPointsResult, EphemerisModelIdentity, EphemerisModelKind, HouseBackendFingerprint,
-    HouseCalculationProvenance, HouseCalculationResult, HouseCapabilities, ImplementationIdentity,
-    ResolvedCalculationRequest, TimeBackendFingerprint, TimeModelIdentity,
-    TimeScaleConversionProvenance, ZodiacCalculationRequest,
+    BackendAuthoringCapabilities, BackendCalculationProvenance, BackendCapabilities,
+    BackendCapability, BackendDescriptor, BackendFingerprint, CalculationBackend,
+    CalculationBackendError, CalculationBackendErrorCategory, CalculationBackendResult,
+    CelestialBackendFingerprint, CelestialCalculationProvenance, CelestialCapabilities,
+    CelestialPositionsResult, DerivedPointsResult, EphemerisModelIdentity, EphemerisModelKind,
+    HouseBackendFingerprint, HouseCalculationProvenance, HouseCalculationResult, HouseCapabilities,
+    ImplementationIdentity, ResolvedCalculationRequest, TimeBackendFingerprint, TimeModelIdentity,
+    TimeScaleConversionProvenance, ZodiacCalculationRequest, ZodiacMode,
 };
 
 const XALEN_VERSION: &str = "0.6.0";
@@ -144,6 +144,11 @@ impl CalculationBackend for XalenBackend {
                     supported_systems: vec![HouseSystem::Equal, HouseSystem::Placidus],
                 }),
                 derived: None,
+            },
+            authoring: BackendAuthoringCapabilities {
+                supported_zodiac_modes: vec![ZodiacMode::Tropical],
+                supported_coordinate_systems: vec![CoordinateSystem::Geocentric],
+                default_corrections: Self::apparent_corrections(),
             },
         }
     }

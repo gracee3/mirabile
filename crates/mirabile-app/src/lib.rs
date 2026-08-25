@@ -35,8 +35,10 @@ pub use workspace_session::*;
 
 // Stable identity/value types cross the application boundary without frontend-specific aliases.
 pub use mirabile_core::{
-    Angle, AspectId, ChartSlotId, InstanceId, PointId, ResourceId, Revision, ViewInstanceId,
+    Angle, AspectId, ChartSlotId, CoordinateSystem, CorrectionSpec, HouseSystem, InstanceId,
+    PointId, ResourceId, Revision, ViewInstanceId,
 };
+pub use mirabile_engine::ZodiacMode;
 
 // Scene is the current stable, astrology-free presentation boundary.
 pub use mirabile_engine::{Circle, FillRole, Glyph, Label, Line, Path, Scene, StrokeRole};

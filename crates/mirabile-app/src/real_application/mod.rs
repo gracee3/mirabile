@@ -30,14 +30,15 @@ use crate::{
     ActiveChartInspector, AppAction, AppError, AppErrorKind, AppIntent, AppNotice, AppNoticeKind,
     AppReadModel, AppResult, Application, ApplicationActivityReadModel, ApplicationStatus,
     AspectDraftValue, AspectSetDraftMutation, AspectSetDraftReadModel, AspectSetSummary,
-    Availability, BindingSourceSummary, CalculationDiagnosticsReadModel, CalculationRuntime,
-    CalculationRuntimeError, ChartPersistence, ChartSlotAssignment, CommandCapability, DraftState,
-    ImplementationIdentityReadModel, InlineCalculationRuntime, InspectorReadModel,
-    LibraryChartSummary, LibraryReadModel, OpenChartSummary, PendingOperationReadModel,
-    ProjectionVersion, ResourceBindingSummary, ResourceEditorReadModel, StartupCalculationProfile,
-    StartupPolicy, ViewComputationState, ViewReadModel, ViewSummary, WorkspaceDocumentBacking,
-    WorkspaceReadModel, WorkspaceSession, blank_workspace_session, current_transits_session,
-    current_unix_millis, workspace_commands::apply_workspace_command,
+    AuthoringCapabilitiesReadModel, Availability, BindingSourceSummary,
+    CalculationDiagnosticsReadModel, CalculationRuntime, CalculationRuntimeError, ChartPersistence,
+    ChartSlotAssignment, CommandCapability, DraftState, ImplementationIdentityReadModel,
+    InlineCalculationRuntime, InspectorReadModel, LibraryChartSummary, LibraryReadModel,
+    OpenChartSummary, PendingOperationReadModel, ProjectionVersion, ResourceBindingSummary,
+    ResourceEditorReadModel, StartupCalculationProfile, StartupPolicy, ViewComputationState,
+    ViewReadModel, ViewSummary, WorkspaceDocumentBacking, WorkspaceReadModel, WorkspaceSession,
+    blank_workspace_session, current_transits_session, current_unix_millis,
+    workspace_commands::apply_workspace_command,
 };
 #[cfg(feature = "xalen-backend")]
 use mirabile_engine::XalenBackend;

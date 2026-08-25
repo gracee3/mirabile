@@ -272,7 +272,7 @@ fn command_title(
 
 #[cfg(target_arch = "wasm32")]
 const fn application_label() -> &'static str {
-    "Real application · deterministic provider"
+    "Real application · local calculation worker"
 }
 
 #[cfg(not(target_arch = "wasm32"))]

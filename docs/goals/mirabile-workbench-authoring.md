@@ -5,7 +5,7 @@
 - Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
 - Branch: `goal/mirabile-workbench-authoring`
 - Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: 5 - provider-neutral authoring capabilities
+- Current phase: 6 - new chart authoring
 - Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
 - Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
 
@@ -27,8 +27,8 @@
 | 2. Semantic observation | Complete | Validated ControlId/ControlAddress, manifest/snapshot DTOs, bounded trace, calculation diagnostics, FIFO coordinator | `./scripts/check.sh` passes 125 tests, strict Clippy, formatting, and diff checks | Phase 2 commit |
 | 3. Workbench controls | Complete | Native panel/disclosure/field/select/toggle/action/status palette; buffered text/number/date/time semantics; semantic DOM instrumentation | Native and WASM checks; `./scripts/check.sh` passes 127 tests, strict Clippy, formatting, and diff checks | Phase 3 commit |
 | 4. Automation tooling | Complete | Non-default query-gated bridge; isolated IndexedDB override; loopback-only standard-library CDP client/CLI; scenario and failure artifacts | Native/WASM feature checks; Python contract tests; live semantic smoke and expected-failure artifact smoke | Phase 4 commit |
-| 5. Authoring capabilities | In progress | Provider-neutral supported/default options | Pending | Pending |
-| 6. New chart authoring | Pending | Typed editor, preview/cancel/atomic create | Pending | Pending |
+| 5. Authoring capabilities | Complete | Provider-neutral zodiac/coordinate/point/house support and default correction metadata; contextual app options with disabled reasons | `./scripts/check.sh` passes 129 Rust tests plus 4 Python tests; native/WASM feature checks | Phase 5 commit |
+| 6. New chart authoring | In progress | Typed editor, preview/cancel/atomic create | Pending | Pending |
 | 7. Saved chart editing | Pending | Atomic CAS batch, conflict projection, shared-record guard | Pending | Pending |
 | 8. Workspace management | Pending | Library/new/open/rename/save/discard/switch and explicit demos | Pending | Pending |
 | 9. Aspect Set authoring | Pending | Full-row lifecycle editor | Pending | Pending |
@@ -63,6 +63,9 @@
 - `workbench-automation` is a non-default web feature and still requires `mirabileAutomation=1` plus a validated `mirabile-workbench-e2e-*` or `mirabile-workbench-dev-*` IndexedDB name. Normal builds continue to open `mirabile`.
 - The versioned browser bridge exposes only snapshot, manifest, typed execution, settlement, trace, one-shot action source, and the reserved macro replay entrypoint. The CLI exposes stable JSON commands and native semantic-address interaction without an arbitrary-evaluate command.
 - The reusable standard-library CDP client rejects non-loopback endpoints. Live Chromium smoke covers IndexedDB initialization, Worker/XALEN settlement, semantic dispatch, snapshot, controls, and trace; the expected-failure smoke preserves all eight required artifacts.
+- Backend descriptors now carry provider-neutral authoring support for zodiac modes and coordinate systems plus the provider's default correction profile; existing point and house capability metadata remains authoritative. The application projects every finite zodiac, coordinate, house, and timezone choice with contextual enabled state and a reason for every disabled choice.
+- XALEN truth is Tropical, Geocentric, Sun through Jupiter, NoHouses everywhere, and Equal/Placidus only with complete location. Sidereal, Whole Sign, Topocentric, Heliocentric, named zones, Local Mean Time, and Local Apparent Time remain visibly deferred or unsupported; its all-enabled apparent-place correction profile is application data rather than a browser choice.
+- Machine snapshots include the cohesive authoring capability projection. The inaccurate deterministic-provider browser label was replaced with a provider-neutral local-worker description.
 
 ## Blockers
 

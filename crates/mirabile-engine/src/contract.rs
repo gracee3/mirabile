@@ -184,6 +184,21 @@ pub struct DerivedCapabilities {
     pub supported_formula_ids: BTreeSet<String>,
 }
 
+/// Provider-neutral choices that an authoring surface may safely offer.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZodiacMode {
+    Tropical,
+    Sidereal,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BackendAuthoringCapabilities {
+    pub supported_zodiac_modes: Vec<ZodiacMode>,
+    pub supported_coordinate_systems: Vec<CoordinateSystem>,
+    pub default_corrections: CorrectionSpec,
+}
+
 /// One backend descriptor may advertise any combination of responsibilities.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BackendCapabilities {
@@ -196,6 +211,7 @@ pub struct BackendCapabilities {
 pub struct BackendDescriptor {
     pub fingerprint: BackendFingerprint,
     pub capabilities: BackendCapabilities,
+    pub authoring: BackendAuthoringCapabilities,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

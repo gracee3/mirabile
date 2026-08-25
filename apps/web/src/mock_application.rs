@@ -5,12 +5,12 @@ use mirabile_app::{
     ActiveChartInspector, Angle, AppAction, AppError, AppErrorKind, AppIntent, AppNotice,
     AppNoticeKind, AppReadModel, AppResult, Application, ApplicationActivityReadModel,
     ApplicationStatus, AspectDraftValue, AspectId, AspectSetDraftMutation, AspectSetDraftReadModel,
-    AspectSetSummary, Availability, BindingSourceSummary, ChartPersistence, ChartSlotAssignment,
-    ChartSlotId, Circle, CommandCapability, DraftState, FillRole, InspectorReadModel, InstanceId,
-    Label, LibraryChartSummary, LibraryReadModel, Line, OpenChartSummary,
-    PendingOperationReadModel, ProjectionVersion, ResourceBindingSummary, ResourceEditorReadModel,
-    ResourceId, Revision, Scene, StrokeRole, ViewComputationState, ViewInstanceId, ViewReadModel,
-    ViewSummary, WorkspaceReadModel,
+    AspectSetSummary, AuthoringCapabilitiesReadModel, Availability, BindingSourceSummary,
+    ChartPersistence, ChartSlotAssignment, ChartSlotId, Circle, CommandCapability, DraftState,
+    FillRole, InspectorReadModel, InstanceId, Label, LibraryChartSummary, LibraryReadModel, Line,
+    OpenChartSummary, PendingOperationReadModel, ProjectionVersion, ResourceBindingSummary,
+    ResourceEditorReadModel, ResourceId, Revision, Scene, StrokeRole, ViewComputationState,
+    ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel,
 };
 
 const CHART_DEFINITION_IDS: [&str; 5] = [
@@ -359,6 +359,7 @@ impl MockState {
             status: self.status.clone(),
             activity: self.activity_read_model(),
             calculation: None,
+            authoring: AuthoringCapabilitiesReadModel::default(),
             library: LibraryReadModel {
                 charts: self.library_charts.clone(),
                 aspect_sets: self

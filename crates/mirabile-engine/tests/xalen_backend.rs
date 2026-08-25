@@ -12,7 +12,7 @@ use mirabile_core::{
 use mirabile_engine::{
     BackendCapability, CalcKey, CalculationBackend, CalculationBackendErrorCategory,
     CalculationEngine, CalculationOutcome, CalculationRequestId, CalculationWorkerRequest,
-    DeterministicBackend, ImplementationIdentity, WorkerProtocolVersion, XalenBackend,
+    DeterministicBackend, ImplementationIdentity, WorkerProtocolVersion, XalenBackend, ZodiacMode,
     execute_calculation_request,
 };
 use xalen_ephem::{Almanac, Body};
@@ -200,6 +200,18 @@ fn descriptor_is_narrow_stable_and_provider_neutral() {
             .into_iter()
             .map(|id| PointId::new(id).expect("point ID"))
             .collect()
+    );
+    assert_eq!(
+        descriptor.authoring.supported_zodiac_modes,
+        vec![ZodiacMode::Tropical]
+    );
+    assert_eq!(
+        descriptor.authoring.supported_coordinate_systems,
+        vec![CoordinateSystem::Geocentric]
+    );
+    assert_eq!(
+        descriptor.authoring.default_corrections,
+        apparent_corrections()
     );
 }
 

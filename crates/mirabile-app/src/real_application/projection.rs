@@ -1,10 +1,11 @@
 use super::{
     ActiveChartInspector, AppAction, AppError, AppErrorKind, AppReadModel, AppResult,
-    ApplicationStatus, Availability, CalculationDiagnosticsReadModel, CalculationRuntime,
-    ChartPersistence, ChartSlotAssignment, CommandCapability, ConfigurationLayer, DraftState,
-    ImplementationIdentityReadModel, InspectorReadModel, LibraryReadModel, OpenChartSummary,
-    RealApplication, RealState, ResourceEditorReadModel, ResourceRepository, ViewComputationState,
-    ViewInstanceId, ViewReadModel, ViewSummary, WorkerProtocolVersion, WorkspaceReadModel,
+    ApplicationStatus, AuthoringCapabilitiesReadModel, Availability,
+    CalculationDiagnosticsReadModel, CalculationRuntime, ChartPersistence, ChartSlotAssignment,
+    CommandCapability, ConfigurationLayer, DraftState, ImplementationIdentityReadModel,
+    InspectorReadModel, LibraryReadModel, OpenChartSummary, RealApplication, RealState,
+    ResourceEditorReadModel, ResourceRepository, ViewComputationState, ViewInstanceId,
+    ViewReadModel, ViewSummary, WorkerProtocolVersion, WorkspaceReadModel,
     aspect_editor_read_model, binding_summary, capability, chart_record_subtitle, disabled,
     resolve_typed_binding, view_title,
 };
@@ -17,6 +18,8 @@ where
     pub(super) fn read_model(&self) -> AppResult<AppReadModel> {
         let state = self.state.borrow();
         let mut model = state.read_model()?;
+        model.authoring =
+            AuthoringCapabilitiesReadModel::from_backend(self.engine.backend_descriptor(), false);
         model.calculation = Some(self.calculation_diagnostics(&state));
         Ok(model)
     }
@@ -158,6 +161,7 @@ impl RealState {
             status: self.status.clone(),
             activity: self.activity_read_model(),
             calculation: None,
+            authoring: AuthoringCapabilitiesReadModel::default(),
             library: LibraryReadModel {
                 charts: library_charts,
                 aspect_sets: self.catalog.aspect_set_summaries()?,

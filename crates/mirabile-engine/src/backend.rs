@@ -8,11 +8,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BackendCalculationProvenance, BackendCapabilities, BackendDescriptor, BackendFingerprint,
-    CalculationBackendResult, CelestialBackendFingerprint, CelestialCalculationProvenance,
-    CelestialCapabilities, CelestialPositionsResult, DerivedPointsResult, EphemerisModelIdentity,
-    EphemerisModelKind, HouseBackendFingerprint, HouseCalculationProvenance,
-    HouseCalculationResult, HouseCapabilities, ImplementationIdentity, ResolvedCalculationRequest,
+    BackendAuthoringCapabilities, BackendCalculationProvenance, BackendCapabilities,
+    BackendDescriptor, BackendFingerprint, CalculationBackendResult, CelestialBackendFingerprint,
+    CelestialCalculationProvenance, CelestialCapabilities, CelestialPositionsResult,
+    DerivedPointsResult, EphemerisModelIdentity, EphemerisModelKind, HouseBackendFingerprint,
+    HouseCalculationProvenance, HouseCalculationResult, HouseCapabilities, ImplementationIdentity,
+    ResolvedCalculationRequest, ZodiacMode,
 };
 
 pub trait CalculationBackend {
@@ -139,6 +140,11 @@ impl CalculationBackend for DeterministicBackend {
                     supported_systems: vec![HouseSystem::Equal],
                 }),
                 derived: None,
+            },
+            authoring: BackendAuthoringCapabilities {
+                supported_zodiac_modes: vec![ZodiacMode::Tropical],
+                supported_coordinate_systems: vec![CoordinateSystem::Geocentric],
+                default_corrections: CorrectionSpec::default(),
             },
         }
     }

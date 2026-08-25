@@ -1,9 +1,11 @@
 use std::fmt;
 
+use mirabile_core::{CoordinateSystem, CorrectionSpec, HouseSystem};
+use mirabile_engine::{BackendDescriptor, ZodiacMode};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Angle, AppError, AspectId, CalculationDiagnosticsReadModel, ChartSlotId, InstanceId,
+    Angle, AppError, AspectId, CalculationDiagnosticsReadModel, ChartSlotId, InstanceId, PointId,
     ResourceId, Revision, Scene, ViewInstanceId,
 };
 
@@ -13,6 +15,7 @@ pub struct AppReadModel {
     pub status: ApplicationStatus,
     pub activity: ApplicationActivityReadModel,
     pub calculation: Option<CalculationDiagnosticsReadModel>,
+    pub authoring: AuthoringCapabilitiesReadModel,
     pub library: LibraryReadModel,
     pub workspace: WorkspaceReadModel,
     pub active_view: Option<ViewReadModel>,
@@ -29,6 +32,7 @@ impl AppReadModel {
             status: ApplicationStatus::Initializing,
             activity: ApplicationActivityReadModel::initializing(),
             calculation: None,
+            authoring: AuthoringCapabilitiesReadModel::default(),
             library: LibraryReadModel::default(),
             workspace: WorkspaceReadModel::default(),
             active_view: None,
@@ -51,6 +55,175 @@ impl AppReadModel {
     /// The sole public predicate for authoritative application settlement.
     pub const fn is_settled(&self) -> bool {
         self.activity.settled
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AuthoringOption<T> {
+    pub value: T,
+    pub label: String,
+    pub enabled: bool,
+    pub disabled_reason: Option<String>,
+}
+
+impl<T> AuthoringOption<T> {
+    fn enabled(value: T, label: impl Into<String>) -> Self {
+        Self {
+            value,
+            label: label.into(),
+            enabled: true,
+            disabled_reason: None,
+        }
+    }
+
+    fn disabled(value: T, label: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            value,
+            label: label.into(),
+            enabled: false,
+            disabled_reason: Some(reason.into()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimezoneAuthoringMode {
+    UniversalTime,
+    FixedOffset,
+    NamedZone,
+    LocalMeanTime,
+    LocalApparentTime,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AuthoringCapabilitiesReadModel {
+    pub zodiac_modes: Vec<AuthoringOption<ZodiacMode>>,
+    pub coordinate_systems: Vec<AuthoringOption<CoordinateSystem>>,
+    pub house_systems: Vec<AuthoringOption<HouseSystem>>,
+    pub timezone_modes: Vec<AuthoringOption<TimezoneAuthoringMode>>,
+    pub points: Vec<AuthoringOption<PointId>>,
+    pub default_corrections: CorrectionSpec,
+}
+
+impl AuthoringCapabilitiesReadModel {
+    #[allow(clippy::too_many_lines)]
+    pub fn from_backend(descriptor: &BackendDescriptor, complete_location: bool) -> Self {
+        let supports_zodiac = |mode| descriptor.authoring.supported_zodiac_modes.contains(&mode);
+        let supports_coordinates = |system| {
+            descriptor
+                .authoring
+                .supported_coordinate_systems
+                .contains(&system)
+        };
+        let supported_houses = descriptor
+            .capabilities
+            .houses
+            .as_ref()
+            .map(|houses| houses.supported_systems.as_slice())
+            .unwrap_or_default();
+        let zodiac_modes = [
+            (ZodiacMode::Tropical, "Tropical"),
+            (ZodiacMode::Sidereal, "Sidereal"),
+        ]
+        .into_iter()
+        .map(|(mode, label)| {
+            if supports_zodiac(mode) {
+                AuthoringOption::enabled(mode, label)
+            } else {
+                AuthoringOption::disabled(
+                    mode,
+                    label,
+                    "The active calculation provider does not support this zodiac mode",
+                )
+            }
+        })
+        .collect();
+        let coordinate_systems = [
+            (CoordinateSystem::Geocentric, "Geocentric"),
+            (CoordinateSystem::Topocentric, "Topocentric"),
+            (CoordinateSystem::Heliocentric, "Heliocentric"),
+        ]
+        .into_iter()
+        .map(|(system, label)| {
+            if supports_coordinates(system) {
+                AuthoringOption::enabled(system, label)
+            } else {
+                AuthoringOption::disabled(
+                    system,
+                    label,
+                    "The active calculation provider does not support this coordinate system",
+                )
+            }
+        })
+        .collect();
+        let house_systems = [
+            (HouseSystem::NoHouses, "No houses"),
+            (HouseSystem::Equal, "Equal"),
+            (HouseSystem::Placidus, "Placidus"),
+            (HouseSystem::WholeSign, "Whole Sign"),
+        ]
+        .into_iter()
+        .map(|(system, label)| {
+            if system == HouseSystem::NoHouses {
+                AuthoringOption::enabled(system, label)
+            } else if !supported_houses.contains(&system) {
+                AuthoringOption::disabled(
+                    system,
+                    label,
+                    "The active calculation provider does not support this house system",
+                )
+            } else if !complete_location {
+                AuthoringOption::disabled(
+                    system,
+                    label,
+                    "A complete manual location is required for houses",
+                )
+            } else {
+                AuthoringOption::enabled(system, label)
+            }
+        })
+        .collect();
+        let deferred_timezone =
+            "This timezone mode is deferred until a provider-backed authoring workflow exists";
+        let timezone_modes = vec![
+            AuthoringOption::enabled(TimezoneAuthoringMode::UniversalTime, "Universal Time"),
+            AuthoringOption::enabled(TimezoneAuthoringMode::FixedOffset, "Fixed offset"),
+            AuthoringOption::disabled(
+                TimezoneAuthoringMode::NamedZone,
+                "Named zone",
+                deferred_timezone,
+            ),
+            AuthoringOption::disabled(
+                TimezoneAuthoringMode::LocalMeanTime,
+                "Local Mean Time",
+                deferred_timezone,
+            ),
+            AuthoringOption::disabled(
+                TimezoneAuthoringMode::LocalApparentTime,
+                "Local Apparent Time",
+                deferred_timezone,
+            ),
+        ];
+        let points = descriptor
+            .capabilities
+            .celestial
+            .as_ref()
+            .into_iter()
+            .flat_map(|celestial| celestial.supported_points.iter().cloned())
+            .map(|point| {
+                let label = point.as_str().replace('-', " ");
+                AuthoringOption::enabled(point, label)
+            })
+            .collect();
+        Self {
+            zodiac_modes,
+            coordinate_systems,
+            house_systems,
+            timezone_modes,
+            points,
+            default_corrections: descriptor.authoring.default_corrections.clone(),
+        }
     }
 }
 
@@ -445,6 +618,80 @@ mod tests {
         assert_eq!(
             availability.disabled_reason(),
             Some("Begin an edit before saving")
+        );
+    }
+
+    #[test]
+    fn backend_authoring_projection_is_contextual_and_truthful() {
+        use mirabile_engine::{CalculationBackend as _, DeterministicBackend};
+
+        let descriptor = DeterministicBackend.descriptor();
+        let locationless = AuthoringCapabilitiesReadModel::from_backend(&descriptor, false);
+        assert!(
+            locationless
+                .zodiac_modes
+                .iter()
+                .find(|option| option.value == ZodiacMode::Tropical)
+                .is_some_and(|option| option.enabled)
+        );
+        assert!(
+            locationless
+                .zodiac_modes
+                .iter()
+                .find(|option| option.value == ZodiacMode::Sidereal)
+                .is_some_and(|option| !option.enabled && option.disabled_reason.is_some())
+        );
+        assert!(
+            locationless
+                .house_systems
+                .iter()
+                .find(|option| option.value == HouseSystem::Equal)
+                .is_some_and(|option| !option.enabled)
+        );
+        let located = AuthoringCapabilitiesReadModel::from_backend(&descriptor, true);
+        assert!(
+            located
+                .house_systems
+                .iter()
+                .find(|option| option.value == HouseSystem::Equal)
+                .is_some_and(|option| option.enabled)
+        );
+        assert_eq!(located.default_corrections, CorrectionSpec::default());
+    }
+
+    #[cfg(feature = "xalen-backend")]
+    #[test]
+    fn xalen_authoring_projection_exposes_only_supported_provider_choices() {
+        use mirabile_engine::{CalculationBackend as _, XalenBackend};
+
+        let capabilities =
+            AuthoringCapabilitiesReadModel::from_backend(&XalenBackend.descriptor(), true);
+        assert_eq!(
+            capabilities
+                .points
+                .iter()
+                .map(|option| option.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["jupiter", "mars", "mercury", "moon", "sun", "venus"]
+        );
+        assert!(
+            capabilities
+                .house_systems
+                .iter()
+                .any(|option| { option.value == HouseSystem::Placidus && option.enabled })
+        );
+        assert!(capabilities.house_systems.iter().any(|option| {
+            option.value == HouseSystem::WholeSign
+                && !option.enabled
+                && option.disabled_reason.is_some()
+        }));
+        assert_eq!(
+            capabilities.default_corrections,
+            CorrectionSpec {
+                aberration: true,
+                light_time: true,
+                nutation: true,
+            }
         );
     }
 }
