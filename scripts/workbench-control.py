@@ -214,6 +214,9 @@ def perform(client: CDPClient, command: str, options: dict[str, Any]) -> Any:
         path = Path(str(options["path"]))
         client.screenshot(path)
         return {"path": str(path)}
+    if command == "reload":
+        client.evaluate("location.reload()")
+        return {"reloaded": True}
     raise CDPError(f"unknown command {command!r}")
 
 
@@ -315,6 +318,7 @@ def parser() -> argparse.ArgumentParser:
     wait.add_argument("--timeout", type=float, default=10.0)
     screenshot = subcommands.add_parser("screenshot")
     screenshot.add_argument("path")
+    subcommands.add_parser("reload")
     run = subcommands.add_parser("run")
     run.add_argument("scenario")
     run.add_argument("--artifacts")

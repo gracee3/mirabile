@@ -1,0 +1,47 @@
+{
+  "name": "resource-authoring-control",
+  "steps": [
+    {"command": "wait", "timeout": 20},
+
+    {"command": "click", "address": "resource.new[kind=pointset]"},
+    {"command": "set", "address": "resource.title[kind=pointset]", "value": "Cockpit Points"},
+    {"command": "set", "address": "resource.tags[kind=pointset]", "value": "cockpit, e2e"},
+    {"command": "check", "address": "resource.point[kind=pointset,point=sun]", "value": true},
+    {"command": "click", "address": "resource.save[kind=pointset]"},
+    {"command": "wait", "timeout": 20},
+
+    {"command": "click", "address": "resource.new[kind=analysisprofile]"},
+    {"command": "set", "address": "resource.title[kind=analysisprofile]", "value": "Cockpit Analysis"},
+    {"command": "check", "address": "resource.analysis.patterns[kind=analysisprofile]", "value": true},
+    {"command": "set", "address": "resource.analysis.maximum-hits[kind=analysisprofile]", "value": "25"},
+    {"command": "click", "address": "resource.save[kind=analysisprofile]"},
+    {"command": "wait", "timeout": 20},
+
+    {"command": "click", "address": "resource.new[kind=wheeltemplate]"},
+    {"command": "set", "address": "resource.title[kind=wheeltemplate]", "value": "Cockpit Wheel"},
+    {"command": "check", "address": "resource.wheel.field[field=zodiac-labels,kind=wheeltemplate]", "value": false},
+    {"command": "set", "address": "resource.wheel.field[field=aspect-radius,kind=wheeltemplate]", "value": "0.72"},
+    {"command": "click", "address": "resource.save[kind=wheeltemplate]"},
+    {"command": "wait", "timeout": 20},
+
+    {"command": "click", "address": "resource.new[kind=viewdocument]"},
+    {"command": "set", "address": "resource.title[kind=viewdocument]", "value": "Cockpit View"},
+    {"command": "set", "address": "resource.view.width[kind=viewdocument]", "value": "1200"},
+    {"command": "set", "address": "resource.view.height[kind=viewdocument]", "value": "800"},
+    {"command": "click", "address": "resource.save[kind=viewdocument]"},
+    {"command": "wait", "timeout": 20},
+
+    {"command": "click", "address": "resource.new[kind=theme]"},
+    {"command": "set", "address": "resource.title[kind=theme]", "value": "Cockpit Theme"},
+    {"command": "set", "address": "resource.theme.color[field=accent,kind=theme]", "value": "#44cce8"},
+    {"command": "click", "address": "resource.save[kind=theme]"},
+    {"command": "wait", "timeout": 20},
+
+    {"command": "click", "address": "resource.new[kind=querydefinition]"},
+    {"command": "set", "address": "resource.title[kind=querydefinition]", "value": "Cockpit Query"},
+    {"command": "set", "address": "resource.query.description[kind=querydefinition]", "value": "Persisted only; execution deferred"},
+    {"command": "click", "address": "resource.save[kind=querydefinition]"},
+    {"command": "wait", "timeout": 20},
+    {"command": "snapshot", "expect": {"value.application.status": "ready", "value.application.settled": true}}
+  ]
+}

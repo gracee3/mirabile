@@ -71,6 +71,8 @@ run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario aspect-set-contr
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario session-slots-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario diagnostics-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario cockpit-manifest-control --mode control
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario resource-authoring-control --mode control
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario history-delete-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-failure-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-bridge --mode semantic

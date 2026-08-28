@@ -1,0 +1,21 @@
+{
+  "name": "history-delete-control",
+  "steps": [
+    {"command": "wait", "timeout": 20},
+    {"command": "click", "address": "workspace.load-demo"},
+    {"command": "wait", "timeout": 20},
+    {"command": "click", "address": "repository.select[resource=13000000-0000-4000-8000-000000000002]"},
+    {"command": "get", "address": "repository.delete", "expect": {"enabled": true}},
+    {"command": "get", "address": "repository.confirm-delete", "expect": {"enabled": false, "disabled_reason": "First deletion confirmation is required"}},
+    {"command": "click", "address": "repository.delete"},
+    {"command": "get", "address": "repository.confirm-delete", "expect": {"enabled": true}},
+    {"command": "click", "address": "repository.confirm-delete"},
+    {"command": "wait", "timeout": 20},
+    {"command": "get", "address": "repository.delete", "expect": {"enabled": false, "disabled_reason": "Select a present resource before deletion"}},
+    {"command": "reload"},
+    {"command": "wait", "timeout": 20},
+    {"command": "click", "address": "repository.select[resource=13000000-0000-4000-8000-000000000002]"},
+    {"command": "get", "address": "repository.delete", "expect": {"enabled": false, "disabled_reason": "Select a present resource before deletion"}},
+    {"command": "snapshot", "expect": {"value.application.status": "ready", "value.application.settled": true}}
+  ]
+}

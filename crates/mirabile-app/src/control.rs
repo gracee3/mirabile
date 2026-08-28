@@ -74,6 +74,8 @@ impl ControlId {
     pub const RESOURCE_VIEW_WIDTH: Self = Self(Cow::Borrowed("resource.view.width"));
     pub const RESOURCE_VIEW_HEIGHT: Self = Self(Cow::Borrowed("resource.view.height"));
     pub const RESOURCE_QUERY_DESCRIPTION: Self = Self(Cow::Borrowed("resource.query.description"));
+    pub const RESOURCE_POINT: Self = Self(Cow::Borrowed("resource.point"));
+    pub const RESOURCE_WHEEL_FIELD: Self = Self(Cow::Borrowed("resource.wheel.field"));
     pub const BINDING_MODE: Self = Self(Cow::Borrowed("binding.mode"));
     pub const BINDING_RESOURCE: Self = Self(Cow::Borrowed("binding.resource"));
     pub const BINDING_REVISION: Self = Self(Cow::Borrowed("binding.revision"));

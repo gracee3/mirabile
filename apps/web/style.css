@@ -1334,4 +1334,12 @@ input[type="text"] {
   .wheel-scene {
     max-height: none;
   }
+
+  .binding-row {
+    grid-template-columns: 1fr;
+  }
+
+  .delete-actions .button {
+    width: 100%;
+  }
 }

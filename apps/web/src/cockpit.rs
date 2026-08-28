@@ -298,6 +298,7 @@ fn ResourceLaboratory(
                     </div>
                     {move || model.get().resource_editor.drafts.into_iter().find(|draft| draft.kind == kind).map(|draft| {
                         let resource_id = draft.resource_id;
+                        let address_resource = (!matches!(draft.state, DraftState::New)).then_some(resource_id).flatten();
                         let title_dispatcher = dispatcher;
                         let description_dispatcher = dispatcher;
                         let tags_dispatcher = dispatcher;
@@ -309,32 +310,32 @@ fn ResourceLaboratory(
                                 <span class="draft-state">{format!("{:?}", draft.state)}</span>
                                 <label>"Title"<input type="text" prop:value=draft.title
                                     data-mirabile-control=ControlId::RESOURCE_TITLE.to_string()
-                                    data-mirabile-address=resource_address(ControlId::RESOURCE_TITLE, kind, resource_id)
+                                    data-mirabile-address=resource_address(ControlId::RESOURCE_TITLE, kind, address_resource)
                                     data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true"
                                     on:change=move |event| dispatch_metadata(title_dispatcher, kind, ResourceMetadataMutation::SetTitle(event_target_value(&event))) /></label>
                                 <label>"Description"<textarea prop:value=draft.description.unwrap_or_default()
                                     data-mirabile-control=ControlId::RESOURCE_DESCRIPTION.to_string()
-                                    data-mirabile-address=resource_address(ControlId::RESOURCE_DESCRIPTION, kind, resource_id)
+                                    data-mirabile-address=resource_address(ControlId::RESOURCE_DESCRIPTION, kind, address_resource)
                                     data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true"
                                     on:change=move |event| { let value=event_target_value(&event); dispatch_metadata(description_dispatcher, kind, ResourceMetadataMutation::SetDescription((!value.trim().is_empty()).then_some(value))); } /></label>
                                 <label>"Tags"<input type="text" prop:value=draft.tags.join(", ")
                                     data-mirabile-control=ControlId::RESOURCE_TAGS.to_string()
-                                    data-mirabile-address=resource_address(ControlId::RESOURCE_TAGS, kind, resource_id)
+                                    data-mirabile-address=resource_address(ControlId::RESOURCE_TAGS, kind, address_resource)
                                     data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true"
                                     on:change=move |event| dispatch_metadata(tags_dispatcher, kind, ResourceMetadataMutation::SetTags(event_target_value(&event).split(',').map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned).collect())) /></label>
-                                <PayloadEditor kind value=draft.value.clone() dispatcher />
+                                <PayloadEditor kind value=draft.value.clone() point_options=model.get().authoring.points dispatcher />
                                 <p class="persisted-label">{payload_summary(&draft.value)}</p>
                                 <div class="draft-actions">
                                     <button type="button" class="button primary" disabled=!save_enabled
                                         data-mirabile-control=ControlId::RESOURCE_SAVE.to_string()
-                                        data-mirabile-address=resource_address(ControlId::RESOURCE_SAVE, kind, resource_id)
+                                        data-mirabile-address=resource_address(ControlId::RESOURCE_SAVE, kind, address_resource)
                                         data-mirabile-kind=ControlKind::Action.as_str()
                                         data-mirabile-enabled=save_enabled.to_string()
                                         data-mirabile-disabled-reason=(!save_enabled).then_some("Draft has no saveable changes")
                                         on:click=move |_| save_dispatcher.dispatch(AppIntent::SaveResourceDraft { kind })>"Save"</button>
                                     <button type="button" class="button secondary"
                                         data-mirabile-control=ControlId::RESOURCE_CANCEL.to_string()
-                                        data-mirabile-address=resource_address(ControlId::RESOURCE_CANCEL, kind, resource_id)
+                                        data-mirabile-address=resource_address(ControlId::RESOURCE_CANCEL, kind, address_resource)
                                         data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true"
                                         on:click=move |_| cancel_dispatcher.dispatch(AppIntent::CancelResourceDraft { kind })>"Cancel"</button>
                                 </div>
@@ -383,11 +384,28 @@ fn parameter_status(status: &mirabile_app::ParameterStatus) -> String {
 fn PayloadEditor(
     kind: ResourceDraftKind,
     value: mirabile_app::ResourceDraftValueReadModel,
+    point_options: Vec<mirabile_app::AuthoringOption<mirabile_app::PointId>>,
     dispatcher: WorkbenchCoordinator,
 ) -> impl IntoView {
     use mirabile_app::ResourceDraftValueReadModel as Value;
 
     match value {
+        Value::PointSet(point_set) => {
+            view! { <fieldset class="payload-fields point-fields"><legend>"Point selectors"</legend>
+                {point_options.into_iter().map(|option| {
+                    let point_id=option.value.clone();
+                    let checked=point_set.points.iter().any(|selector| matches!(selector, mirabile_app::PointSelector::Point(point) if point == &point_id));
+                    let base=point_set.clone();
+                    let address=ControlAddress::qualified(ControlId::RESOURCE_POINT, [("kind", "pointset"), ("point", point_id.as_str())]).expect("point resource address").to_string();
+                    view! { <label class="checkbox-field"><input type="checkbox" prop:checked=checked disabled=!option.enabled
+                        data-mirabile-control=ControlId::RESOURCE_POINT.to_string()
+                        data-mirabile-address=address data-mirabile-kind=ControlKind::Checkbox.as_str()
+                        data-mirabile-enabled=option.enabled.to_string() data-mirabile-disabled-reason=option.disabled_reason
+                        on:change=move |event| { let mut points=base.points.clone(); points.retain(|selector| !matches!(selector, mirabile_app::PointSelector::Point(point) if point == &point_id)); if event_target_checked(&event) { points.push(mirabile_app::PointSelector::Point(point_id.clone())); } dispatch_payload(dispatcher, ResourceMutation::PointSet(PointSetMutation::SetPoints(points))); } />{option.label}</label> }
+                }).collect_view()}
+                <small>"Category selectors are preserved. Direct provider points use these native checkboxes."</small>
+            </fieldset> }.into_any()
+        }
         Value::AnalysisProfile(profile) => {
             let applying = profile.clone();
             let patterns = profile.clone();
@@ -429,6 +447,30 @@ fn PayloadEditor(
                         data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true"
                         on:change=move |event| { let mut next=base.clone(); let value=event_target_value(&event); match field { "background" => next.background=value, "foreground" => next.foreground=value, "muted" => next.muted=value, "accent" => next.accent=value, _ => next.aspect_color=value } dispatch_payload(dispatcher, ResourceMutation::Theme(ThemeMutation::SetTheme(next))); } /></label> }
                 }).collect_view()}
+            </fieldset> }.into_any()
+        }
+        Value::WheelTemplate(template) => {
+            let fields = [
+                ("Show house cusps", "house-cusps", template.houses.show_cusps),
+                ("Show house numbers", "house-numbers", template.houses.show_numbers),
+                ("Show zodiac boundaries", "zodiac-boundaries", template.zodiac.show_boundaries),
+                ("Show zodiac labels", "zodiac-labels", template.zodiac.show_labels),
+                ("Show degrees", "label-degrees", template.labels.show_degrees),
+                ("Show retrograde", "label-retrograde", template.labels.show_retrograde),
+            ];
+            let radius=template.clone();
+            view! { <fieldset class="payload-fields"><legend>"Wheel geometry and display"</legend>
+                {fields.into_iter().map(|(label, field, checked)| { let base=template.clone(); view! { <label class="checkbox-field"><input type="checkbox" prop:checked=checked
+                    data-mirabile-control=ControlId::RESOURCE_WHEEL_FIELD.to_string()
+                    data-mirabile-address=qualified_resource_address(ControlId::RESOURCE_WHEEL_FIELD, kind, "field", field)
+                    data-mirabile-kind=ControlKind::Toggle.as_str() data-mirabile-enabled="true"
+                    on:change=move |event| { let mut next=base.clone(); let value=event_target_checked(&event); match field { "house-cusps" => next.houses.show_cusps=value, "house-numbers" => next.houses.show_numbers=value, "zodiac-boundaries" => next.zodiac.show_boundaries=value, "zodiac-labels" => next.zodiac.show_labels=value, "label-degrees" => next.labels.show_degrees=value, _ => next.labels.show_retrograde=value } dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::SetTemplateFields(next))); } />{label}</label> } }).collect_view()}
+                <label>"Aspect field radius"<input type="number" min="0.01" step="0.01" prop:value=template.aspect_field.radius
+                    data-mirabile-control=ControlId::RESOURCE_WHEEL_FIELD.to_string()
+                    data-mirabile-address=qualified_resource_address(ControlId::RESOURCE_WHEEL_FIELD, kind, "field", "aspect-radius")
+                    data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true"
+                    on:change=move |event| if let Ok(value)=event_target_value(&event).parse() { let mut next=radius.clone(); next.aspect_field.radius=value; dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::SetTemplateFields(next))); } /></label>
+                <small>{format!("{} stable ring row(s)", template.rings.len())}</small>
             </fieldset> }.into_any()
         }
         Value::ViewDocument(document) => {
