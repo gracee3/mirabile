@@ -6,7 +6,7 @@
   2026-08-28 after squash-merging PR #1)
 - Branch: `goal/mirabile-control-cockpit`
 - Worktree: `/home/emmy/mirabile` (the existing checkout; no additional worktree or Cargo target)
-- Current phase: 4 - complete modeled fields and editors
+- Current phase: 8 - handoff and feature PR
 - Delivery: focused commits pushed regularly; open a feature PR but do not merge it
 - Fast baseline: `./scripts/check.sh` passes 155 Rust tests and 5 Python tests, strict
   Clippy, formatting, and staged plus unstaged diff checks
@@ -37,10 +37,10 @@
 | 2. Repository and inventory | Complete | Present/deleted heads; selected-resource revisions; inventories for all ten canonical resource types | 157 Rust tests; WASM check; IndexedDB browser contract; `./scripts/check.sh` | `85bfead` |
 | 3. General typed drafts | Complete | Typed mutations, lifecycle/conflict projections, one draft per type, stable nested item IDs | 161 Rust tests; 5 Python tests; strict Clippy; `./scripts/check.sh` | `4aae865` |
 | 4. Complete editors | In progress | Metadata plus initial native typed payload fields; chart/workspace and typed list-builder completion remains | Native and browser authoring coverage | Pending |
-| 5. Bindings and outputs | In progress | Writable Follow/Pinned/Inline bindings, provider-neutral tables, provenance, parameter status, and last-good retention | Focused binding and last-good regressions | Pending |
-| 6. Cockpit composition | In progress | Document-height eight-section cockpit, sticky search/fold controls, and semantic addresses | WASM build and responsive captures | Pending |
-| 7. History and deletion | In progress | Revision inspection plus reference-aware two-step deletion, tombstones, and stale-delete conflicts; browser reload journey remains | Store/application deletion tests | Pending |
-| 8. Handoff | Pending | Viewport captures, docs, full gates, pushed feature PR left open | T14 acceptance matrix and remote verification | Pending |
+| 5. Bindings and outputs | Complete | Writable Follow/Pinned/Inline bindings, provider-neutral tables, provenance, parameter status, and last-good retention | Focused binding and last-good regressions | `8b2b44e` |
+| 6. Cockpit composition | Complete | Document-height eight-section cockpit, sticky navigation/search/fold controls, and semantic addresses | Cockpit manifest plus four responsive captures | `534a277`, `057c5e3` |
+| 7. History and deletion | Complete | Revision inspection, reference-aware two-step deletion, tombstones, stale-delete conflicts, and reload | Store/application tests plus browser reload journey | `8b2b44e`, `057c5e3` |
+| 8. Handoff | In progress | Viewport captures, docs, final gates, pushed feature PR left open | T14 acceptance matrix and remote verification | Pending |
 
 ## Phase records
 
@@ -157,6 +157,40 @@
 - Screenshot: `target/workbench-e2e-cockpit-manifest-control.png` (untracked).
 - Next action: complete remaining typed list builders, add history/delete browser reload coverage,
   capture the final responsive matrix, and run the final repository gates.
+
+### Final handoff checkpoint
+
+- SHA before the final evidence-only documentation commit:
+  `057c5e353fd81b3c55e17ea6fbf3e1f83fa452cb`. The feature branch is pushed to
+  `origin/goal/mirabile-control-cockpit`.
+- `./scripts/check.sh` passes 164 Rust tests and 5 Python tests with formatting, strict Clippy,
+  staged and unstaged diff checks. The focused XALEN suite includes the independent JPL/Swiss
+  known-answer radix and passes as part of that gate.
+- Browser journeys passing: `cockpit-manifest-control`, `resource-authoring-control`,
+  `history-delete-control` including IndexedDB reload, `diagnostics-control`, and
+  `workspace-lifecycle-control`. Existing journeys remain in `scripts/verify.sh`; the three new
+  journeys are now part of that script.
+- Normal non-automation acceptance initialized the Worker/XALEN application, waited for settlement,
+  loaded the demo bundle through the native `workspace.load-demo` control, and reported zero
+  console errors or uncaught exceptions. A data favicon prevents a browser-generated 404 from
+  polluting console acceptance.
+- Final untracked captures:
+  - `target/control-cockpit-final/cockpit-1600x1000.png` (captured 1600x857)
+  - `target/control-cockpit-final/cockpit-1366x768.png` (captured 1366x625)
+  - `target/control-cockpit-final/cockpit-t14-1920x1080.png` (captured 1920x937)
+  - `target/control-cockpit-final/cockpit-800x700.png` (captured 800x557)
+  - `target/control-cockpit-final/normal-demo-t14-1920x1080.png`
+- Disk checkpoint: 11,262,078,976 bytes free (10.49 GiB displayed from the exact byte count) and
+  `target/` is 13,618,344,201 bytes. The required greater-than-15-GiB threshold is short by at least
+  4,844,048,384 bytes (4.51 GiB), so `scripts/verify.sh` was intentionally not run and its complete
+  matrix is not claimed.
+- Persisted-only/deferred boundary: Query Definitions are authorable and preserve typed ASTs, but
+  execution remains deferred. Non-wheel View Objects and derived chart recipes remain canonical
+  persisted data without runtime rendering/calculation. The generalized contracts and stable nested
+  IDs are implemented, while the cockpit currently exposes native builders for metadata, direct
+  Point Set membership, Analysis Profile values, Wheel Template display/geometry, View Document
+  page geometry, Theme colors, and Query description; additional nested object/query/recipe row
+  builders remain follow-up UI depth and are not represented as runtime support.
 
 ## Acceptance checklist
 
