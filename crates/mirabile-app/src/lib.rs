@@ -14,6 +14,7 @@ mod intent;
 mod macro_model;
 mod read_model;
 mod real_application;
+mod resource_draft;
 mod runtime;
 mod startup;
 #[cfg(target_arch = "wasm32")]
@@ -31,6 +32,7 @@ pub use intent::*;
 pub use macro_model::*;
 pub use read_model::*;
 pub use real_application::*;
+pub use resource_draft::*;
 pub use runtime::*;
 pub use startup::*;
 #[cfg(target_arch = "wasm32")]

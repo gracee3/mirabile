@@ -1,6 +1,6 @@
 use crate::{
-    Angle, AspectId, ChartDraft, ChartMutation, ChartSlotId, InstanceId, PointId, ResourceId,
-    ViewInstanceId, WorkspaceSwitchAction,
+    Angle, AspectId, ChartDraft, ChartMutation, ChartSlotId, InstanceId, PointId,
+    ResourceDraftKind, ResourceId, ResourceMutation, ViewInstanceId, WorkspaceSwitchAction,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -80,6 +80,19 @@ pub enum AppIntent {
     SelectRepositoryResource {
         resource_id: ResourceId,
     },
+    BeginResourceEdit {
+        resource_id: ResourceId,
+    },
+    BeginResourceCreate {
+        kind: ResourceDraftKind,
+    },
+    ApplyResourceMutation(Box<ResourceMutation>),
+    SaveResourceDraft {
+        kind: ResourceDraftKind,
+    },
+    CancelResourceDraft {
+        kind: ResourceDraftKind,
+    },
     UpdateAspectSetDraft(AspectSetDraftMutation),
     SaveDraft,
     CancelDraft,
@@ -150,6 +163,15 @@ impl AppIntent {
             Self::SelectRepositoryResource { resource_id } => {
                 format!("repository.select[{resource_id}]")
             }
+            Self::BeginResourceEdit { resource_id } => {
+                format!("resource.begin-edit[{resource_id}]")
+            }
+            Self::BeginResourceCreate { kind } => format!("resource.begin-new[{kind:?}]"),
+            Self::ApplyResourceMutation(mutation) => {
+                format!("resource.mutate[{:?}]", mutation.kind())
+            }
+            Self::SaveResourceDraft { kind } => format!("resource.save[{kind:?}]"),
+            Self::CancelResourceDraft { kind } => format!("resource.cancel[{kind:?}]"),
             Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetTitle(_)) => {
                 "aspect.title.set".into()
             }

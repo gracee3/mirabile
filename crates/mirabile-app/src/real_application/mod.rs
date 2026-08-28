@@ -57,6 +57,7 @@ mod configuration;
 mod editing;
 mod hydration;
 mod projection;
+mod resource_editing;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -456,6 +457,15 @@ where
             AppIntent::SelectRepositoryResource { resource_id } => {
                 self.select_repository_resource(resource_id).await?;
             }
+            AppIntent::BeginResourceEdit { resource_id } => {
+                self.begin_resource_edit(resource_id)?;
+            }
+            AppIntent::BeginResourceCreate { kind } => self.begin_resource_create(kind)?,
+            AppIntent::ApplyResourceMutation(mutation) => {
+                self.apply_resource_mutation(*mutation)?;
+            }
+            AppIntent::SaveResourceDraft { kind } => self.begin_save_resource_draft(kind)?,
+            AppIntent::CancelResourceDraft { kind } => self.cancel_resource_draft(kind)?,
             AppIntent::UpdateAspectSetDraft(mutation) => {
                 self.update_aspect_set_draft(mutation)?;
             }
@@ -520,6 +530,7 @@ struct RealState {
     editor: Option<AspectSetEditor>,
     chart_editor: Option<crate::ChartAuthoringEditor>,
     repository_selection: Option<RepositorySelection>,
+    resource_drafts: BTreeMap<crate::ResourceDraftKind, resource_editing::GenericResourceDraft>,
     workspace_switch: Option<WorkspaceSwitchDecisionReadModel>,
     pending_workspace_switch: Option<WorkspaceSwitchTarget>,
     cache: ComputationCache,
@@ -597,6 +608,11 @@ enum PendingWork {
     SaveAspectSet {
         expected_revision: Option<Revision>,
         next: ResourceEnvelope<AspectSet>,
+    },
+    SaveTypedResource {
+        kind: crate::ResourceDraftKind,
+        expected_revision: Option<Revision>,
+        next: Box<CanonicalResource>,
     },
     CreateChart {
         instance_id: InstanceId,

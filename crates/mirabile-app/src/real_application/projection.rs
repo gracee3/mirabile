@@ -217,6 +217,11 @@ impl RealState {
                     .as_ref()
                     .map(aspect_editor_read_model)
                     .transpose()?,
+                drafts: self
+                    .resource_drafts
+                    .values()
+                    .map(super::resource_editing::GenericResourceDraft::read_model)
+                    .collect(),
             },
             capabilities: self.capabilities(),
             notice: self.notice.clone(),

@@ -474,6 +474,7 @@ impl MockState {
                         maximum_orb: editor.conjunction_orb,
                     }],
                 }),
+                drafts: Vec::new(),
             },
             capabilities: self.capabilities(),
             notice: self.notice.clone(),
@@ -655,6 +656,14 @@ impl MockState {
             AppIntent::SelectRepositoryResource { .. } => Err(AppError::new(
                 AppErrorKind::Unavailable,
                 "Repository inspection is provided by the real application adapter",
+            )),
+            AppIntent::BeginResourceEdit { .. }
+            | AppIntent::BeginResourceCreate { .. }
+            | AppIntent::ApplyResourceMutation(_)
+            | AppIntent::SaveResourceDraft { .. }
+            | AppIntent::CancelResourceDraft { .. } => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Typed resource editing is provided by the real application adapter",
             )),
             AppIntent::StartChartDraft { draft } => {
                 if draft.title.trim().is_empty() {

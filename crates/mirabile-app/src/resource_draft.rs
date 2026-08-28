@@ -1,0 +1,360 @@
+use std::fmt;
+
+use mirabile_core::{
+    AnalysisProfile, AspectDefinition, CalculationSpec, ChartSlot, ChartSource, EventKind,
+    LifeEvent, LocationAssertion, Note, PageLayout, PointSelector, QueryExpr, ResourceId,
+    ResourceKind, RingSpec, SourceProvenance, SubjectInfo, TemporalAssertion, Theme, ViewInstance,
+    ViewObject, WheelTemplate, WorkspaceDocumentChart, WorkspaceProfile,
+};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct DraftItemId(Uuid);
+
+impl DraftItemId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for DraftItemId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for DraftItemId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceDraftKind {
+    ChartRecord,
+    ChartDefinition,
+    PointSet,
+    AspectSet,
+    AnalysisProfile,
+    WheelTemplate,
+    ViewDocument,
+    Theme,
+    QueryDefinition,
+    WorkspaceDocument,
+}
+
+impl ResourceDraftKind {
+    pub const ALL: [Self; 10] = [
+        Self::ChartRecord,
+        Self::ChartDefinition,
+        Self::PointSet,
+        Self::AspectSet,
+        Self::AnalysisProfile,
+        Self::WheelTemplate,
+        Self::ViewDocument,
+        Self::Theme,
+        Self::QueryDefinition,
+        Self::WorkspaceDocument,
+    ];
+
+    pub const fn resource_kind(self) -> ResourceKind {
+        match self {
+            Self::ChartRecord => ResourceKind::ChartRecord,
+            Self::ChartDefinition => ResourceKind::ChartDefinition,
+            Self::PointSet => ResourceKind::PointSet,
+            Self::AspectSet => ResourceKind::AspectSet,
+            Self::AnalysisProfile => ResourceKind::AnalysisProfile,
+            Self::WheelTemplate => ResourceKind::WheelTemplate,
+            Self::ViewDocument => ResourceKind::ViewDocument,
+            Self::Theme => ResourceKind::Theme,
+            Self::QueryDefinition => ResourceKind::QueryDefinition,
+            Self::WorkspaceDocument => ResourceKind::WorkspaceDocument,
+        }
+    }
+}
+
+impl TryFrom<ResourceKind> for ResourceDraftKind {
+    type Error = ResourceKind;
+
+    fn try_from(kind: ResourceKind) -> Result<Self, Self::Error> {
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.resource_kind() == kind)
+            .ok_or(kind)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ResourceMetadataMutation {
+    SetTitle(String),
+    SetDescription(Option<String>),
+    SetTags(Vec<String>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ResourceMutation {
+    ChartRecord(ChartRecordMutation),
+    ChartDefinition(ChartDefinitionMutation),
+    PointSet(PointSetMutation),
+    AspectSet(AspectSetMutation),
+    AnalysisProfile(AnalysisProfileMutation),
+    WheelTemplate(WheelTemplateMutation),
+    ViewDocument(ViewDocumentMutation),
+    Theme(ThemeMutation),
+    QueryDefinition(QueryDefinitionMutation),
+    WorkspaceDocument(WorkspaceDocumentMutation),
+}
+
+impl ResourceMutation {
+    pub const fn kind(&self) -> ResourceDraftKind {
+        match self {
+            Self::ChartRecord(_) => ResourceDraftKind::ChartRecord,
+            Self::ChartDefinition(_) => ResourceDraftKind::ChartDefinition,
+            Self::PointSet(_) => ResourceDraftKind::PointSet,
+            Self::AspectSet(_) => ResourceDraftKind::AspectSet,
+            Self::AnalysisProfile(_) => ResourceDraftKind::AnalysisProfile,
+            Self::WheelTemplate(_) => ResourceDraftKind::WheelTemplate,
+            Self::ViewDocument(_) => ResourceDraftKind::ViewDocument,
+            Self::Theme(_) => ResourceDraftKind::Theme,
+            Self::QueryDefinition(_) => ResourceDraftKind::QueryDefinition,
+            Self::WorkspaceDocument(_) => ResourceDraftKind::WorkspaceDocument,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ChartRecordMutation {
+    Metadata(ResourceMetadataMutation),
+    SetEventKind(EventKind),
+    SetSubject(Option<SubjectInfo>),
+    SetTime(TemporalAssertion),
+    SetLocation(Option<LocationAssertion>),
+    SetSource(SourceProvenance),
+    Notes(DraftListMutation<Note>),
+    LifeEvents(DraftListMutation<LifeEvent>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ChartDefinitionMutation {
+    Metadata(ResourceMetadataMutation),
+    SetSource(ChartSource),
+    SetCalculation(CalculationSpec),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PointSetMutation {
+    Metadata(ResourceMetadataMutation),
+    SetPoints(Vec<PointSelector>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AspectSetMutation {
+    Metadata(ResourceMetadataMutation),
+    SetAspects(Vec<AspectDefinition>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AnalysisProfileMutation {
+    Metadata(ResourceMetadataMutation),
+    SetProfile(AnalysisProfile),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum WheelTemplateMutation {
+    Metadata(ResourceMetadataMutation),
+    Rings(DraftListMutation<RingSpec>),
+    SetTemplateFields(WheelTemplate),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ViewDocumentMutation {
+    Metadata(ResourceMetadataMutation),
+    SetChartSlots(Vec<ChartSlot>),
+    Objects(DraftListMutation<ViewObject>),
+    SetLayout(PageLayout),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ThemeMutation {
+    Metadata(ResourceMetadataMutation),
+    SetTheme(Theme),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum QueryDefinitionMutation {
+    Metadata(ResourceMetadataMutation),
+    SetDescription(Option<String>),
+    SetExpression(QueryExpr),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkspaceDocumentMutation {
+    Metadata(ResourceMetadataMutation),
+    SetChartInstances(Vec<WorkspaceDocumentChart>),
+    SetViews(Vec<ViewInstance>),
+    SetProfile(Box<WorkspaceProfile>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DraftListMutation<T> {
+    Insert {
+        after: Option<DraftItemId>,
+        value: T,
+    },
+    Update {
+        item_id: DraftItemId,
+        value: T,
+    },
+    Remove {
+        item_id: DraftItemId,
+    },
+    Move {
+        item_id: DraftItemId,
+        before: Option<DraftItemId>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StableDraftList<T> {
+    items: Vec<StableDraftItem<T>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StableDraftItem<T> {
+    pub id: DraftItemId,
+    pub value: T,
+}
+
+impl<T: Clone> StableDraftList<T> {
+    pub fn from_canonical(values: &[T]) -> Self {
+        Self {
+            items: values
+                .iter()
+                .cloned()
+                .map(|value| StableDraftItem {
+                    id: DraftItemId::new(),
+                    value,
+                })
+                .collect(),
+        }
+    }
+
+    pub fn canonical_values(&self) -> Vec<T> {
+        self.items.iter().map(|item| item.value.clone()).collect()
+    }
+
+    pub fn items(&self) -> &[StableDraftItem<T>] {
+        &self.items
+    }
+
+    pub fn apply(&mut self, mutation: DraftListMutation<T>) -> Result<(), &'static str> {
+        match mutation {
+            DraftListMutation::Insert { after, value } => {
+                let index = after.map_or(Ok(0), |after| {
+                    self.items
+                        .iter()
+                        .position(|item| item.id == after)
+                        .map(|index| index + 1)
+                        .ok_or("Draft list insertion anchor was not found")
+                })?;
+                self.items.insert(
+                    index,
+                    StableDraftItem {
+                        id: DraftItemId::new(),
+                        value,
+                    },
+                );
+            }
+            DraftListMutation::Update { item_id, value } => {
+                self.items
+                    .iter_mut()
+                    .find(|item| item.id == item_id)
+                    .ok_or("Draft list item was not found")?
+                    .value = value;
+            }
+            DraftListMutation::Remove { item_id } => {
+                let index = self
+                    .items
+                    .iter()
+                    .position(|item| item.id == item_id)
+                    .ok_or("Draft list item was not found")?;
+                self.items.remove(index);
+            }
+            DraftListMutation::Move { item_id, before } => {
+                if before == Some(item_id) {
+                    return Ok(());
+                }
+                let index = self
+                    .items
+                    .iter()
+                    .position(|item| item.id == item_id)
+                    .ok_or("Draft list item was not found")?;
+                let item = self.items.remove(index);
+                let destination = before.map_or(Ok(self.items.len()), |before| {
+                    self.items
+                        .iter()
+                        .position(|item| item.id == before)
+                        .ok_or("Draft list move target was not found")
+                })?;
+                self.items.insert(destination, item);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DraftItemAddressReadModel {
+    pub collection: String,
+    pub item_id: DraftItemId,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResourceDraftConflictReadModel {
+    pub resource_id: ResourceId,
+    pub expected_revision: crate::Revision,
+    pub actual_revision: crate::Revision,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn draft_kinds_match_exactly_the_canonical_payload_set() {
+        assert_eq!(ResourceDraftKind::ALL.len(), 10);
+        assert_eq!(
+            ResourceDraftKind::ALL.map(ResourceDraftKind::resource_kind),
+            mirabile_core::CanonicalResource::KINDS
+        );
+    }
+
+    #[test]
+    fn stable_list_ids_survive_update_and_reordering_but_not_persistence() {
+        let mut list = StableDraftList::from_canonical(&["first".to_owned(), "second".to_owned()]);
+        let first = list.items()[0].id;
+        let second = list.items()[1].id;
+        list.apply(DraftListMutation::Update {
+            item_id: first,
+            value: "updated".into(),
+        })
+        .expect("update");
+        list.apply(DraftListMutation::Move {
+            item_id: second,
+            before: Some(first),
+        })
+        .expect("move");
+        assert_eq!(list.items()[0].id, second);
+        assert_eq!(list.items()[1].id, first);
+        assert_eq!(
+            list.canonical_values(),
+            vec!["second".to_owned(), "updated".to_owned()]
+        );
+        let json = serde_json::to_string(&list.canonical_values()).expect("canonical JSON");
+        assert!(!json.contains(&first.to_string()));
+        assert!(!json.contains(&second.to_string()));
+    }
+}

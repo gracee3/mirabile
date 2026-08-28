@@ -46,6 +46,14 @@ where
                 expected_revision,
                 next,
             }) => self.complete_aspect_set_save(expected_revision, next).await,
+            Some(PendingWork::SaveTypedResource {
+                kind,
+                expected_revision,
+                next,
+            }) => {
+                self.complete_typed_resource_save(kind, expected_revision, *next)
+                    .await
+            }
             Some(PendingWork::CreateChart {
                 instance_id,
                 record,

@@ -16,6 +16,7 @@ impl Default for RealState {
             editor: None,
             chart_editor: None,
             repository_selection: None,
+            resource_drafts: BTreeMap::new(),
             workspace_switch: None,
             pending_workspace_switch: None,
             cache: ComputationCache::default(),
@@ -76,6 +77,7 @@ impl RealState {
             matches!(
                 pending,
                 super::PendingWork::SaveAspectSet { .. }
+                    | super::PendingWork::SaveTypedResource { .. }
                     | super::PendingWork::CreateChart { .. }
                     | super::PendingWork::SaveChartEdit { .. }
                     | super::PendingWork::SaveWorkspace { .. }
@@ -112,6 +114,11 @@ impl RealState {
             super::PendingWork::SaveAspectSet { next, .. } => {
                 Some(PendingOperationReadModel::ResourceSave {
                     resource_id: next.id,
+                })
+            }
+            super::PendingWork::SaveTypedResource { next, .. } => {
+                Some(PendingOperationReadModel::ResourceSave {
+                    resource_id: next.id(),
                 })
             }
             super::PendingWork::SaveWorkspace { next, .. } => {

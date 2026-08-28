@@ -17,7 +17,10 @@ use mirabile_engine::{
 };
 use mirabile_store::ResourceTombstone;
 
-use crate::{demo_ids, demo_resources};
+use crate::{
+    PointSetMutation, ResourceDraftKind, ResourceMetadataMutation, ResourceMutation,
+    TypedResourceDraftReadModel, demo_ids, demo_resources,
+};
 
 use super::*;
 
@@ -362,6 +365,165 @@ fn initialization_projects_all_canonical_inventories_and_repository_heads() {
         RepositoryRevisionState::Deleted { deleted_at }
             if deleted_at == tombstone.deleted_at
     ));
+}
+
+#[test]
+fn typed_resource_draft_saves_conflicts_cancels_and_reloads() {
+    let repository = MemoryRepository::default();
+    let original = CanonicalResource::PointSet(ResourceEnvelope::new(
+        "Original points",
+        PointSet {
+            points: vec![PointSelector::Point(PointId::new("sun").expect("point"))],
+        },
+        Timestamp::from_unix_millis(1),
+    ));
+    let resource_id = original.id();
+    block_on(repository.create(original.clone())).expect("seed point set");
+    let application = RealApplication::with_repository(repository.clone());
+    let model = ready(&application);
+
+    let opened = block_on(application.dispatch(AppIntent::BeginResourceEdit { resource_id }))
+        .expect("open typed draft");
+    assert!(opened.version > model.version);
+    assert!(matches!(
+        opened.resource_editor.drafts.as_slice(),
+        [TypedResourceDraftReadModel {
+            kind: ResourceDraftKind::PointSet,
+            state: DraftState::Clean {
+                revision: Revision::INITIAL
+            },
+            ..
+        }]
+    ));
+    let dirty = block_on(
+        application.dispatch(AppIntent::ApplyResourceMutation(Box::new(
+            ResourceMutation::PointSet(PointSetMutation::Metadata(
+                ResourceMetadataMutation::SetTitle("Edited points".into()),
+            )),
+        ))),
+    )
+    .expect("mutate typed draft");
+    assert!(matches!(
+        dirty.resource_editor.drafts[0].state,
+        DraftState::Dirty {
+            base_revision: Revision::INITIAL
+        }
+    ));
+    assert_eq!(
+        block_on(repository.get(resource_id))
+            .expect("repository read")
+            .expect("resource")
+            .title(),
+        "Original points"
+    );
+
+    let saving = block_on(application.dispatch(AppIntent::SaveResourceDraft {
+        kind: ResourceDraftKind::PointSet,
+    }))
+    .expect("begin typed save");
+    assert!(!saving.is_settled());
+    let saved = settle(&application, saving);
+    assert_eq!(saved.resource_editor.drafts[0].title, "Edited points");
+    assert!(matches!(
+        saved.resource_editor.drafts[0].state,
+        DraftState::Clean { revision } if revision.get() == 2
+    ));
+
+    let reloaded = ready(&RealApplication::with_repository(repository.clone()));
+    let inventory = reloaded
+        .resources
+        .inventories
+        .iter()
+        .find(|inventory| inventory.kind == ResourceKind::PointSet)
+        .expect("point inventory");
+    assert_eq!(inventory.resources[0].title, "Edited points");
+    assert_eq!(inventory.resources[0].revision.get(), 2);
+
+    block_on(
+        application.dispatch(AppIntent::ApplyResourceMutation(Box::new(
+            ResourceMutation::PointSet(PointSetMutation::Metadata(
+                ResourceMetadataMutation::SetTitle("Local conflict".into()),
+            )),
+        ))),
+    )
+    .expect("local conflicting edit");
+    let remote_head = block_on(repository.get(resource_id))
+        .expect("remote read")
+        .expect("remote head");
+    let mut remote_next = remote_head
+        .next_revision(Timestamp::from_unix_millis(5))
+        .expect("remote revision");
+    remote_next.set_title("Remote conflict".into());
+    block_on(repository.save(remote_head.revision(), remote_next)).expect("remote save");
+    let saving = block_on(application.dispatch(AppIntent::SaveResourceDraft {
+        kind: ResourceDraftKind::PointSet,
+    }))
+    .expect("begin stale save");
+    let conflicted = settle(&application, saving);
+    assert!(matches!(
+        conflicted.resource_editor.drafts[0].state,
+        DraftState::Conflict {
+            base_revision,
+            remote_revision
+        } if base_revision.get() == 2 && remote_revision.get() == 3
+    ));
+    assert_eq!(conflicted.resource_editor.drafts[0].title, "Local conflict");
+
+    let canceled = block_on(application.dispatch(AppIntent::CancelResourceDraft {
+        kind: ResourceDraftKind::PointSet,
+    }))
+    .expect("cancel conflicted draft");
+    assert!(canceled.resource_editor.drafts.is_empty());
+}
+
+#[test]
+fn typed_resource_creation_publishes_each_independent_canonical_payload() {
+    let repository = MemoryRepository::default();
+    let application = RealApplication::with_repository(repository.clone());
+    let mut model = ready(&application);
+    let independent = [
+        ResourceDraftKind::PointSet,
+        ResourceDraftKind::AnalysisProfile,
+        ResourceDraftKind::WheelTemplate,
+        ResourceDraftKind::ViewDocument,
+        ResourceDraftKind::Theme,
+        ResourceDraftKind::QueryDefinition,
+    ];
+    for kind in independent {
+        model = block_on(application.dispatch(AppIntent::BeginResourceCreate { kind }))
+            .expect("begin typed create");
+        let draft = model
+            .resource_editor
+            .drafts
+            .iter()
+            .find(|draft| draft.kind == kind)
+            .expect("created draft projection");
+        assert_eq!(draft.state, DraftState::New);
+        let creating = block_on(application.dispatch(AppIntent::SaveResourceDraft { kind }))
+            .expect("begin create save");
+        assert!(matches!(
+            creating
+                .resource_editor
+                .drafts
+                .iter()
+                .find(|draft| draft.kind == kind)
+                .expect("creating draft")
+                .state,
+            DraftState::Creating
+        ));
+        model = settle(&application, creating);
+    }
+    assert_eq!(repository.current_count(), independent.len());
+    for kind in independent {
+        let inventory = model
+            .resources
+            .inventories
+            .iter()
+            .find(|inventory| inventory.kind == kind.resource_kind())
+            .expect("inventory group");
+        assert_eq!(inventory.resources.len(), 1);
+        assert_eq!(inventory.resources[0].revision, Revision::INITIAL);
+    }
 }
 
 fn settle<R, C>(application: &RealApplication<R, C>, mut model: AppReadModel) -> AppReadModel

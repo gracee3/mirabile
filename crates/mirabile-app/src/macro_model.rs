@@ -421,7 +421,12 @@ impl SemanticActionV1 {
             AppIntent::StartChartDraft { .. }
             | AppIntent::SaveChartDraft { .. }
             | AppIntent::CancelChartDraft { .. }
-            | AppIntent::SelectRepositoryResource { .. } => {
+            | AppIntent::SelectRepositoryResource { .. }
+            | AppIntent::BeginResourceEdit { .. }
+            | AppIntent::BeginResourceCreate { .. }
+            | AppIntent::ApplyResourceMutation(_)
+            | AppIntent::SaveResourceDraft { .. }
+            | AppIntent::CancelResourceDraft { .. } => {
                 return Err(MacroError::UnsupportedIntent(intent.semantic_summary()));
             }
         })

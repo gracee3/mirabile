@@ -607,6 +607,19 @@ pub enum BindingSourceSummary {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ResourceEditorReadModel {
     pub aspect_set: Option<AspectSetDraftReadModel>,
+    pub drafts: Vec<TypedResourceDraftReadModel>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TypedResourceDraftReadModel {
+    pub kind: crate::ResourceDraftKind,
+    pub resource_id: Option<ResourceId>,
+    pub title: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub state: DraftState,
+    pub conflicts: Vec<crate::ResourceDraftConflictReadModel>,
+    pub nested_items: Vec<crate::DraftItemAddressReadModel>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
