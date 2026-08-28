@@ -11,6 +11,7 @@ use mirabile_app::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::mock_application::MockApplication;
 use crate::{
+    cockpit::Cockpit,
     commands::{CommandId, command_for_key, metadata},
     diagnostics::Diagnostics,
     dispatcher::{WorkbenchCoordinator, event_target_is_text_entry, execute_command},
@@ -170,7 +171,9 @@ fn ReadyShell(
             )}
         </div>
 
-        <div class="workstation">
+        <Cockpit model dispatcher />
+
+        <div class="workstation" aria-label="Live workspace, preview, and diagnostics controls">
             <WorkspaceRail model dispatcher />
             <div class="center-workbench">
                 <ViewHost model />

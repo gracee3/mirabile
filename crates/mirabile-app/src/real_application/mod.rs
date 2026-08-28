@@ -558,6 +558,8 @@ struct RepositorySelection {
 #[derive(Clone)]
 struct ViewRuntime {
     scene: Option<Scene>,
+    semantic_calculation: Option<mirabile_engine::CalculationValue>,
+    semantic_analysis: Option<mirabile_engine::ChartAnalysis>,
     computation: ViewComputationState,
     expected: Option<ExpectedCalculation>,
     last_expected: Option<ExpectedCalculation>,
@@ -567,6 +569,8 @@ impl Default for ViewRuntime {
     fn default() -> Self {
         Self {
             scene: None,
+            semantic_calculation: None,
+            semantic_analysis: None,
             computation: ViewComputationState::Loading,
             expected: None,
             last_expected: None,

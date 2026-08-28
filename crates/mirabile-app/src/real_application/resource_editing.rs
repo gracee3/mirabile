@@ -72,6 +72,7 @@ impl GenericResourceDraft {
             state: self.state.clone(),
             conflicts: self.conflicts.clone(),
             nested_items: self.nested.addresses(),
+            value: crate::ResourceDraftValueReadModel::from(&self.draft),
         }
     }
 

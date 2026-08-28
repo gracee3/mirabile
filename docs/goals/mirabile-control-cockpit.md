@@ -36,9 +36,9 @@
 | 1. Baseline and goal | Complete | Correct and merge PR #1; capture disk, normal application, console, display, and screenshot baseline | `./scripts/check.sh`; clean fast-forwarded `main`; normal non-automation XALEN initialization | `774d54c` |
 | 2. Repository and inventory | Complete | Present/deleted heads; selected-resource revisions; inventories for all ten canonical resource types | 157 Rust tests; WASM check; IndexedDB browser contract; `./scripts/check.sh` | `85bfead` |
 | 3. General typed drafts | Complete | Typed mutations, lifecycle/conflict projections, one draft per type, stable nested item IDs | 161 Rust tests; 5 Python tests; strict Clippy; `./scripts/check.sh` | `4aae865` |
-| 4. Complete editors | In progress | Chart/workspace completion and every modeled resource editor | Native and browser authoring coverage | Pending |
-| 5. Bindings and outputs | Pending | Follow/Pinned/Inline controls; point/house/angle/aspect/provenance tables; parameter status | Focused binding, last-good, and coverage tests | Pending |
-| 6. Cockpit composition | Pending | Document-height expanded cockpit, sticky navigation/search/fold controls, semantic addresses | Responsive control-manifest journeys | Pending |
+| 4. Complete editors | In progress | Metadata plus initial native typed payload fields; chart/workspace and typed list-builder completion remains | Native and browser authoring coverage | Pending |
+| 5. Bindings and outputs | In progress | Provider-neutral semantic tables, provenance, parameter status, and last-good retention are implemented; writable bindings remain | Focused last-good regression | Pending |
+| 6. Cockpit composition | In progress | Document-height eight-section cockpit, sticky search/fold controls, and semantic addresses | WASM build and responsive captures | Pending |
 | 7. History and deletion | Pending | Revision inspection, reference-aware two-step deletion, tombstones, stale-delete conflicts, reload | Store/application/browser history-delete tests | Pending |
 | 8. Handoff | Pending | Viewport captures, docs, full gates, pushed feature PR left open | T14 acceptance matrix and remote verification | Pending |
 
@@ -115,6 +115,27 @@
 - Blockers: none.
 - Next action: expose complete typed draft values and native editors for every modeled field while
   retaining the composite chart and workspace session paths.
+
+### Cockpit/output checkpoint - phases 4 through 6 in progress
+
+- The normal page is document-height and begins with an expanded eight-section cockpit. Its sticky
+  search/navigation bar, Expand All, and Collapse All state remain local to the web adapter. Search
+  filters section titles plus canonical resource titles and tags; all ten inventories stay mounted
+  when no search is active.
+- Always-mounted editors expose consistent title, description, and tags plus native controls for
+  analysis switches/limits, theme colors, view page geometry, and query description. Query AST
+  execution is explicitly deferred. Remaining per-row list builders and complete chart/workspace
+  fields are not yet marked complete.
+- `AppReadModel` now owns explicit `Live`, `Persisted`, `ReadOnly`, and reason-bearing `Unavailable`
+  parameter coverage. It also projects provider-neutral point, house, angle, aspect, and calculation
+  provenance rows. Successful calculation output is retained beside the last-good Scene and remains
+  projected after refresh failure.
+- Current screenshot: `target/control-cockpit-phase4/normal-app-1600x1000.png` (untracked; captured
+  viewport 1600x857). Initial shell capture reported zero console errors.
+- Focused validation: typed resource lifecycle and last-good semantic retention tests pass; WASM
+  and strict Clippy are rerun at this checkpoint before commit.
+- Blockers: none. Next action: complete reference-aware deletion, writable binding controls, and
+  remaining typed payload builders before responsive browser journeys.
 
 ## Acceptance checklist
 

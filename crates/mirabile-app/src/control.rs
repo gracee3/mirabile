@@ -55,6 +55,26 @@ impl ControlId {
     pub const MACRO_REPLAY: Self = Self(Cow::Borrowed("macro.replay"));
     pub const MACRO_START: Self = Self(Cow::Borrowed("macro.start"));
     pub const MACRO_STOP: Self = Self(Cow::Borrowed("macro.stop"));
+    pub const COCKPIT_SEARCH: Self = Self(Cow::Borrowed("cockpit.search"));
+    pub const COCKPIT_EXPAND_ALL: Self = Self(Cow::Borrowed("cockpit.expand-all"));
+    pub const COCKPIT_COLLAPSE_ALL: Self = Self(Cow::Borrowed("cockpit.collapse-all"));
+    pub const RESOURCE_NEW: Self = Self(Cow::Borrowed("resource.new"));
+    pub const RESOURCE_EDIT: Self = Self(Cow::Borrowed("resource.edit"));
+    pub const RESOURCE_TITLE: Self = Self(Cow::Borrowed("resource.title"));
+    pub const RESOURCE_DESCRIPTION: Self = Self(Cow::Borrowed("resource.description"));
+    pub const RESOURCE_TAGS: Self = Self(Cow::Borrowed("resource.tags"));
+    pub const RESOURCE_SAVE: Self = Self(Cow::Borrowed("resource.save"));
+    pub const RESOURCE_CANCEL: Self = Self(Cow::Borrowed("resource.cancel"));
+    pub const RESOURCE_ANALYSIS_APPLYING: Self =
+        Self(Cow::Borrowed("resource.analysis.applying-state"));
+    pub const RESOURCE_ANALYSIS_PATTERNS: Self = Self(Cow::Borrowed("resource.analysis.patterns"));
+    pub const RESOURCE_ANALYSIS_MAXIMUM_HITS: Self =
+        Self(Cow::Borrowed("resource.analysis.maximum-hits"));
+    pub const RESOURCE_THEME_COLOR: Self = Self(Cow::Borrowed("resource.theme.color"));
+    pub const RESOURCE_VIEW_WIDTH: Self = Self(Cow::Borrowed("resource.view.width"));
+    pub const RESOURCE_VIEW_HEIGHT: Self = Self(Cow::Borrowed("resource.view.height"));
+    pub const RESOURCE_QUERY_DESCRIPTION: Self = Self(Cow::Borrowed("resource.query.description"));
+    pub const REPOSITORY_SELECT: Self = Self(Cow::Borrowed("repository.select"));
     pub const VIEW_ACTIVATE: Self = Self(Cow::Borrowed("view.activate"));
     pub const VIEW_SLOT: Self = Self(Cow::Borrowed("view.slot"));
     pub const WORKSPACE_SAVE: Self = Self(Cow::Borrowed("workspace.save"));

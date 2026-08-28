@@ -2858,6 +2858,8 @@ fn failed_real_refresh_keeps_last_good_scene() {
     let fail_next = Rc::clone(&backend.fail_next);
     let application = demo_backend_application(repository, backend);
     let initial = ready(&application);
+    let original_semantic = initial.semantic_output.clone();
+    assert!(!original_semantic.points.is_empty());
     let original = initial.active_view.unwrap().scene.expect("initial Scene");
     let opened = block_on(application.dispatch(AppIntent::OpenChart {
         definition_id: demo_ids().chart_definition_b,
@@ -2890,6 +2892,7 @@ fn failed_real_refresh_keeps_last_good_scene() {
         block_on(application.wait_for_update(refreshing.version)).expect("failure is projected");
     let failed_view = failed.active_view.expect("active view");
     assert_eq!(failed_view.scene, Some(original));
+    assert_eq!(failed.semantic_output, original_semantic);
     assert!(matches!(
         failed_view.computation,
         ViewComputationState::Failed(AppError {

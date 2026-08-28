@@ -9,6 +9,8 @@ mod browser_contract;
 #[cfg(not(feature = "browser-contract"))]
 mod chart_editor;
 #[cfg(not(feature = "browser-contract"))]
+mod cockpit;
+#[cfg(not(feature = "browser-contract"))]
 mod commands;
 #[cfg(not(feature = "browser-contract"))]
 mod control_manifest;

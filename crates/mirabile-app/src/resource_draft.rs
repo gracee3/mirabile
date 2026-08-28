@@ -1,10 +1,12 @@
 use std::fmt;
 
 use mirabile_core::{
-    AnalysisProfile, AspectDefinition, CalculationSpec, ChartSlot, ChartSource, EventKind,
-    LifeEvent, LocationAssertion, Note, PageLayout, PointSelector, QueryExpr, ResourceId,
-    ResourceKind, RingSpec, SourceProvenance, SubjectInfo, TemporalAssertion, Theme, ViewInstance,
-    ViewObject, WheelTemplate, WorkspaceDocumentChart, WorkspaceProfile,
+    AnalysisProfile, AspectDefinition, AspectSet, CalculationSpec, CanonicalResource,
+    ChartDefinition, ChartRecord, ChartSlot, ChartSource, EventKind, LifeEvent, LocationAssertion,
+    Note, PageLayout, PointSelector, PointSet, QueryDefinition, QueryExpr, ResourceId,
+    ResourceKind, RingSpec, SourceProvenance, SubjectInfo, TemporalAssertion, Theme, ViewDocument,
+    ViewInstance, ViewObject, WheelTemplate, WorkspaceDocument, WorkspaceDocumentChart,
+    WorkspaceProfile,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -121,6 +123,50 @@ impl ResourceMutation {
             Self::Theme(_) => ResourceDraftKind::Theme,
             Self::QueryDefinition(_) => ResourceDraftKind::QueryDefinition,
             Self::WorkspaceDocument(_) => ResourceDraftKind::WorkspaceDocument,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "resource_type", content = "value", rename_all = "snake_case")]
+pub enum ResourceDraftValueReadModel {
+    ChartRecord(ChartRecord),
+    ChartDefinition(ChartDefinition),
+    PointSet(PointSet),
+    AspectSet(AspectSet),
+    AnalysisProfile(AnalysisProfile),
+    WheelTemplate(WheelTemplate),
+    ViewDocument(ViewDocument),
+    Theme(Theme),
+    QueryDefinition(QueryDefinition),
+    WorkspaceDocument(WorkspaceDocument),
+}
+
+impl From<&CanonicalResource> for ResourceDraftValueReadModel {
+    fn from(resource: &CanonicalResource) -> Self {
+        match resource {
+            CanonicalResource::ChartRecord(envelope) => Self::ChartRecord(envelope.payload.clone()),
+            CanonicalResource::ChartDefinition(envelope) => {
+                Self::ChartDefinition(envelope.payload.clone())
+            }
+            CanonicalResource::PointSet(envelope) => Self::PointSet(envelope.payload.clone()),
+            CanonicalResource::AspectSet(envelope) => Self::AspectSet(envelope.payload.clone()),
+            CanonicalResource::AnalysisProfile(envelope) => {
+                Self::AnalysisProfile(envelope.payload.clone())
+            }
+            CanonicalResource::WheelTemplate(envelope) => {
+                Self::WheelTemplate(envelope.payload.clone())
+            }
+            CanonicalResource::ViewDocument(envelope) => {
+                Self::ViewDocument(envelope.payload.clone())
+            }
+            CanonicalResource::Theme(envelope) => Self::Theme(envelope.payload.clone()),
+            CanonicalResource::QueryDefinition(envelope) => {
+                Self::QueryDefinition(envelope.payload.clone())
+            }
+            CanonicalResource::WorkspaceDocument(envelope) => {
+                Self::WorkspaceDocument(envelope.payload.clone())
+            }
         }
     }
 }

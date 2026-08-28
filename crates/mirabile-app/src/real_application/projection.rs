@@ -32,6 +32,8 @@ where
         }
         model.authoring = authoring;
         model.calculation = Some(self.calculation_diagnostics(&state));
+        model.parameters = parameter_coverage(&model);
+        model.semantic_output = semantic_output(&state);
         Ok(model)
     }
 
@@ -223,6 +225,8 @@ impl RealState {
                     .map(super::resource_editing::GenericResourceDraft::read_model)
                     .collect(),
             },
+            parameters: Vec::new(),
+            semantic_output: crate::SemanticOutputReadModel::default(),
             capabilities: self.capabilities(),
             notice: self.notice.clone(),
         })
@@ -536,5 +540,166 @@ impl RealState {
             capability(AppAction::PromoteWorkspaceDisplay, promote_display),
             capability(AppAction::RefreshView, refresh),
         ]
+    }
+}
+
+fn parameter_coverage(model: &AppReadModel) -> Vec<crate::ParameterCoverageReadModel> {
+    use crate::{ParameterCoverageReadModel as Entry, ParameterStatus as Status};
+    let chart_status = if model.chart_editor.is_some() {
+        Status::Live
+    } else {
+        Status::Unavailable {
+            reason: "Open or create a chart to edit factual and calculation parameters".into(),
+        }
+    };
+    [
+        ("chart facts", chart_status.clone()),
+        ("calculation parameters", chart_status),
+        ("workspace composition", Status::Live),
+        ("point sets", Status::Persisted),
+        ("aspect sets", Status::Live),
+        ("analysis profiles", Status::Persisted),
+        ("wheel templates", Status::Persisted),
+        ("view documents", Status::Persisted),
+        ("themes", Status::Persisted),
+        ("query definitions", Status::Persisted),
+        (
+            "query execution",
+            Status::Unavailable {
+                reason: "Query execution is deferred; typed definitions remain persistable".into(),
+            },
+        ),
+        ("calculation provenance", Status::ReadOnly),
+    ]
+    .into_iter()
+    .map(|(parameter, status)| Entry {
+        parameter: parameter.into(),
+        status,
+    })
+    .collect()
+}
+
+#[allow(clippy::too_many_lines)]
+fn semantic_output(state: &RealState) -> crate::SemanticOutputReadModel {
+    use crate::{
+        ProvenanceEntryReadModel, SemanticAngleReadModel, SemanticAspectReadModel,
+        SemanticHouseReadModel, SemanticOutputReadModel, SemanticPointReadModel,
+    };
+    let Some(runtime) = state
+        .session
+        .as_ref()
+        .and_then(|session| session.active_view)
+        .and_then(|view_id| state.views.get(&view_id))
+    else {
+        return SemanticOutputReadModel {
+            unavailable_reason: Some("No active view has calculated output".into()),
+            ..Default::default()
+        };
+    };
+    if runtime.last_expected.is_none() {
+        return SemanticOutputReadModel {
+            unavailable_reason: Some("The active view has not completed a calculation".into()),
+            ..Default::default()
+        };
+    }
+    let Some(calculation) = runtime.semantic_calculation.as_ref() else {
+        return SemanticOutputReadModel {
+            unavailable_reason: Some("No last-good semantic calculation is available".into()),
+            ..Default::default()
+        };
+    };
+    let mut points =
+        calculation
+            .celestial_positions
+            .iter()
+            .map(|(point_id, point)| SemanticPointReadModel {
+                point_id: point_id.clone(),
+                longitude_degrees: point.longitude.degrees(),
+                latitude_degrees: point.latitude.degrees(),
+                speed_degrees_per_day: point.speed_longitude.as_degrees_per_day(),
+                retrograde: point.retrograde,
+                derived: false,
+            })
+            .chain(calculation.derived_points.iter().map(|(point_id, point)| {
+                SemanticPointReadModel {
+                    point_id: point_id.clone(),
+                    longitude_degrees: point.longitude.degrees(),
+                    latitude_degrees: point.latitude.degrees(),
+                    speed_degrees_per_day: point.speed_longitude.as_degrees_per_day(),
+                    retrograde: point.retrograde,
+                    derived: true,
+                }
+            }))
+            .collect::<Vec<_>>();
+    points.sort_by(|lhs, rhs| lhs.point_id.cmp(&rhs.point_id));
+    let houses = calculation
+        .houses
+        .as_ref()
+        .map(|houses| {
+            houses
+                .cusps
+                .iter()
+                .enumerate()
+                .map(|(index, cusp)| SemanticHouseReadModel {
+                    number: index + 1,
+                    cusp_degrees: cusp.degrees(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let angles = [
+        ("Ascendant", calculation.angles.ascendant),
+        ("Midheaven", calculation.angles.midheaven),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| {
+        value.map(|value| SemanticAngleReadModel {
+            name: name.into(),
+            longitude_degrees: value.degrees(),
+        })
+    })
+    .collect();
+    let aspects = runtime
+        .semantic_analysis
+        .as_ref()
+        .map(|analysis| {
+            analysis
+                .aspects
+                .iter()
+                .map(|aspect| SemanticAspectReadModel {
+                    lhs: aspect.lhs.clone(),
+                    rhs: aspect.rhs.clone(),
+                    aspect: aspect.aspect.clone(),
+                    separation_degrees: aspect.separation.degrees(),
+                    orb_degrees: aspect.orb.degrees(),
+                    applying: aspect.applying,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let provenance = &calculation.provenance;
+    SemanticOutputReadModel {
+        points,
+        houses,
+        angles,
+        aspects,
+        provenance: vec![
+            ProvenanceEntryReadModel {
+                responsibility: "Mirabile calculation engine".into(),
+                implementation: provenance.mirabile.calculation_engine.id.clone(),
+                detail: provenance.mirabile.timezone_data_version.clone(),
+            },
+            ProvenanceEntryReadModel {
+                responsibility: "Backend".into(),
+                implementation: provenance.backend.id.clone(),
+                detail: provenance.backend.version.clone(),
+            },
+            ProvenanceEntryReadModel {
+                responsibility: "Celestial positions".into(),
+                implementation: provenance.celestial.implementation.id.clone(),
+                detail: format!("{:?}", provenance.celestial.coordinates),
+            },
+        ],
+        unavailable_reason: None,
     }
 }

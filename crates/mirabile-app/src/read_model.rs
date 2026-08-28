@@ -24,6 +24,8 @@ pub struct AppReadModel {
     pub active_view: Option<ViewReadModel>,
     pub inspector: InspectorReadModel,
     pub resource_editor: ResourceEditorReadModel,
+    pub parameters: Vec<ParameterCoverageReadModel>,
+    pub semantic_output: SemanticOutputReadModel,
     pub capabilities: Vec<CommandCapability>,
     pub notice: Option<AppNotice>,
 }
@@ -44,6 +46,8 @@ impl AppReadModel {
             active_view: None,
             inspector: InspectorReadModel::default(),
             resource_editor: ResourceEditorReadModel::default(),
+            parameters: Vec::new(),
+            semantic_output: SemanticOutputReadModel::default(),
             capabilities: Vec::new(),
             notice: None,
         }
@@ -62,6 +66,69 @@ impl AppReadModel {
     pub const fn is_settled(&self) -> bool {
         self.activity.settled
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ParameterStatus {
+    Live,
+    Persisted,
+    ReadOnly,
+    Unavailable { reason: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParameterCoverageReadModel {
+    pub parameter: String,
+    pub status: ParameterStatus,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SemanticOutputReadModel {
+    pub points: Vec<SemanticPointReadModel>,
+    pub houses: Vec<SemanticHouseReadModel>,
+    pub angles: Vec<SemanticAngleReadModel>,
+    pub aspects: Vec<SemanticAspectReadModel>,
+    pub provenance: Vec<ProvenanceEntryReadModel>,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticPointReadModel {
+    pub point_id: PointId,
+    pub longitude_degrees: f64,
+    pub latitude_degrees: f64,
+    pub speed_degrees_per_day: f64,
+    pub retrograde: bool,
+    pub derived: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticHouseReadModel {
+    pub number: usize,
+    pub cusp_degrees: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticAngleReadModel {
+    pub name: String,
+    pub longitude_degrees: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticAspectReadModel {
+    pub lhs: PointId,
+    pub rhs: PointId,
+    pub aspect: AspectId,
+    pub separation_degrees: f64,
+    pub orb_degrees: f64,
+    pub applying: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProvenanceEntryReadModel {
+    pub responsibility: String,
+    pub implementation: String,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -610,7 +677,7 @@ pub struct ResourceEditorReadModel {
     pub drafts: Vec<TypedResourceDraftReadModel>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TypedResourceDraftReadModel {
     pub kind: crate::ResourceDraftKind,
     pub resource_id: Option<ResourceId>,
@@ -620,6 +687,7 @@ pub struct TypedResourceDraftReadModel {
     pub state: DraftState,
     pub conflicts: Vec<crate::ResourceDraftConflictReadModel>,
     pub nested_items: Vec<crate::DraftItemAddressReadModel>,
+    pub value: crate::ResourceDraftValueReadModel,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

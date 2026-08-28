@@ -476,6 +476,8 @@ impl MockState {
                 }),
                 drafts: Vec::new(),
             },
+            parameters: Vec::new(),
+            semantic_output: mirabile_app::SemanticOutputReadModel::default(),
             capabilities: self.capabilities(),
             notice: self.notice.clone(),
         }
