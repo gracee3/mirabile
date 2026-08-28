@@ -814,6 +814,7 @@ impl RealState {
             | AppIntent::BeginDeleteResource { .. }
             | AppIntent::ConfirmDeleteResource { .. }
             | AppIntent::SetWorkspaceBinding { .. }
+            | AppIntent::ApplyWorkspaceComposition(_)
             | AppIntent::BeginResourceEdit { .. }
             | AppIntent::BeginResourceCreate { .. }
             | AppIntent::ApplyResourceMutation(_)

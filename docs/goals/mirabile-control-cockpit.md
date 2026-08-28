@@ -269,9 +269,13 @@ Reconciliation snapshot on 2026-08-28:
     Derived-recipe controls now cover Transit
     date/time/location, Harmonic radix/factor, Relocation radix/location, and ordered Composite
     charts/method; full temporal/location provenance remains part of the field-ledger pass.
-  - Workspace Document has typed chart/view lists and profile replacement, but its canonical editor
-    does not yet expose complete chart membership, view composition, document bindings, per-slot
-    assignments, rotation, hidden points, and every profile binding.
+  - Active workspace composition now routes through `WorkspaceSession`: the cockpit can add/remove
+    and order saved charts and views, add Follow-bound ViewDocuments with application-owned IDs and
+    required-slot defaults, edit durable rotation and hidden points, use the existing typed slot
+    assignments, and change all seven profile bindings plus the active ViewDocument binding. A
+    focused native test proves domain equality after save/reopen, while
+    `workspace-composition-control` performs the same visible-control sequence through IndexedDB.
+    Structural-selector macro coverage for these new mutations remains incomplete.
 - Fresh gate evidence for `b2292ef`: `./scripts/check.sh` passed; focused
   `cockpit-manifest-control`, `resource-authoring-control`, and `nested-builder-control` journeys
   passed; and the complete `./scripts/verify.sh` passed, including native, XALEN known-answer,
@@ -282,6 +286,10 @@ Reconciliation snapshot on 2026-08-28:
   focused-build growth was 273,978,930 bytes, so the required threshold was the 18,253,611,008-byte
   floor and passed by 8,564,367,360 bytes. Post-verification measurements are 25,188,667,392 bytes
   available and 15,676,665,382 bytes in `target/`; no cleanup was performed.
+- Workspace-composition checkpoint: 84 `mirabile-app` tests and strict focused Clippy pass; the new
+  browser journey passes create/add/order/rotate/hide/save/reload/remove through semantic controls.
+  The post-journey disk snapshot is 23,125,602,304 bytes available with 16,293,625,214 bytes in the
+  repository-local `target/`.
 - Next action: finish the controls listed above, add field-level native and browser assertions that
   cannot be satisfied by registry declarations alone, rerun the disk gate and full verification,
   and only then mark PR #2 ready and perform the squash-merge/branch handoff.

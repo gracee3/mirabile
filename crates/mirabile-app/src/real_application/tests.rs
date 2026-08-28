@@ -640,6 +640,150 @@ fn generalized_workspace_binding_preserves_follow_pinned_and_inline_modes() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
+fn workspace_composition_is_ordered_durable_and_application_validated() {
+    let repository = MemoryRepository::default();
+    ensure_demo(&repository);
+    let workspace = demo_resources()
+        .into_iter()
+        .find_map(|resource| match resource {
+            CanonicalResource::WorkspaceDocument(document) => Some(document.payload),
+            _ => None,
+        })
+        .expect("demo workspace");
+    let ResourceBinding::Inline {
+        value: view_document,
+    } = workspace.views[0].document.clone()
+    else {
+        panic!("demo view document is inline");
+    };
+    let view_resource = ResourceEnvelope::new(
+        "Reusable workspace view",
+        view_document,
+        Timestamp::from_unix_millis(2),
+    );
+    let view_resource_id = view_resource.id;
+    block_on(repository.create(CanonicalResource::ViewDocument(view_resource)))
+        .expect("seed canonical view document");
+
+    let application = RealApplication::with_repository_and_policy(
+        repository.clone(),
+        StartupPolicy::OpenWorkspace(demo_ids().workspace),
+    );
+    let initial = ready(&application);
+    let original_view = initial.workspace.active_view.expect("active view");
+    let original_chart = initial.workspace.active_chart.expect("active chart");
+
+    let opened = block_on(application.dispatch(AppIntent::OpenChart {
+        definition_id: demo_ids().chart_definition_b,
+    }))
+    .expect("open second chart");
+    let opened = settle(&application, opened);
+    let second_chart = opened
+        .workspace
+        .charts
+        .iter()
+        .find(|chart| chart.instance_id != original_chart)
+        .expect("second chart")
+        .instance_id;
+    let moved = block_on(application.dispatch(AppIntent::ApplyWorkspaceComposition(
+        crate::WorkspaceCompositionMutation::MoveChart {
+            instance_id: original_chart,
+            before: None,
+        },
+    )))
+    .expect("move chart");
+    assert_eq!(moved.workspace.charts[0].instance_id, second_chart);
+    assert_eq!(moved.workspace.charts[1].instance_id, original_chart);
+
+    let added = block_on(application.dispatch(AppIntent::ApplyWorkspaceComposition(
+        crate::WorkspaceCompositionMutation::AddView {
+            document: crate::WorkspaceBindingSelection::Follow {
+                resource_id: view_resource_id,
+            },
+        },
+    )))
+    .expect("add view");
+    let added = settle(&application, added);
+    let new_view = added.workspace.active_view.expect("new view is active");
+    assert_ne!(new_view, original_view);
+    assert_eq!(added.workspace.views.len(), 2);
+    assert!(
+        added
+            .active_view
+            .as_ref()
+            .expect("new active view")
+            .slots
+            .iter()
+            .any(|slot| slot.required && slot.chart == Some(second_chart))
+    );
+
+    let rotated = block_on(application.dispatch(AppIntent::ApplyWorkspaceComposition(
+        crate::WorkspaceCompositionMutation::SetRotation {
+            view_id: new_view,
+            rotation: Some(angle(42.5)),
+        },
+    )))
+    .expect("set durable rotation");
+    let rotated = settle(&application, rotated);
+    assert_eq!(
+        rotated.workspace.views[1]
+            .rotation
+            .expect("rotation")
+            .degrees(),
+        42.5
+    );
+    let sun = PointId::new("sun").expect("point");
+    let hidden = block_on(application.dispatch(AppIntent::ApplyWorkspaceComposition(
+        crate::WorkspaceCompositionMutation::SetPointHidden {
+            view_id: new_view,
+            point_id: sun.clone(),
+            hidden: true,
+        },
+    )))
+    .expect("hide point durably");
+    let hidden = settle(&application, hidden);
+    assert!(hidden.workspace.views[1].hidden_points.contains(&sun));
+
+    let moved_view = block_on(application.dispatch(AppIntent::ApplyWorkspaceComposition(
+        crate::WorkspaceCompositionMutation::MoveView {
+            view_id: original_view,
+            before: None,
+        },
+    )))
+    .expect("move view");
+    assert_eq!(moved_view.workspace.views[0].view_id, new_view);
+    let saved = block_on(application.dispatch(AppIntent::SaveWorkspace)).expect("begin save");
+    let saved = settle(&application, saved);
+    assert!(!saved.workspace.document_dirty);
+
+    let reopened_application = RealApplication::with_repository_and_policy(
+        repository,
+        StartupPolicy::OpenWorkspace(demo_ids().workspace),
+    );
+    let reopened = ready(&reopened_application);
+    assert_eq!(reopened.workspace.charts[0].instance_id, second_chart);
+    assert_eq!(reopened.workspace.views[0].view_id, new_view);
+    assert_eq!(
+        reopened.workspace.views[0]
+            .rotation
+            .expect("persisted rotation")
+            .degrees(),
+        42.5
+    );
+    assert!(reopened.workspace.views[0].hidden_points.contains(&sun));
+
+    let removed = block_on(
+        reopened_application.dispatch(AppIntent::ApplyWorkspaceComposition(
+            crate::WorkspaceCompositionMutation::RemoveView { view_id: new_view },
+        )),
+    )
+    .expect("remove view");
+    assert_eq!(removed.workspace.views.len(), 1);
+    assert_eq!(removed.workspace.active_view, Some(original_view));
+}
+
+#[test]
 fn typed_resource_creation_publishes_each_independent_canonical_payload() {
     let repository = MemoryRepository::default();
     let application = RealApplication::with_repository(repository.clone());

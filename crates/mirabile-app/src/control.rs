@@ -218,6 +218,14 @@ impl ControlId {
     pub const WORKSPACE_SWITCH_SAVE: Self = Self(Cow::Borrowed("workspace.switch-save"));
     pub const WORKSPACE_SWITCH_STAY: Self = Self(Cow::Borrowed("workspace.switch-stay"));
     pub const WORKSPACE_TITLE: Self = Self(Cow::Borrowed("workspace.title"));
+    pub const WORKSPACE_CHART_MOVE: Self = Self(Cow::Borrowed("workspace.chart.move"));
+    pub const WORKSPACE_CHART_ADD: Self = Self(Cow::Borrowed("workspace.chart.add"));
+    pub const WORKSPACE_CHART_REMOVE: Self = Self(Cow::Borrowed("workspace.chart.remove"));
+    pub const WORKSPACE_VIEW_ADD: Self = Self(Cow::Borrowed("workspace.view.add"));
+    pub const WORKSPACE_VIEW_MOVE: Self = Self(Cow::Borrowed("workspace.view.move"));
+    pub const WORKSPACE_VIEW_REMOVE: Self = Self(Cow::Borrowed("workspace.view.remove"));
+    pub const WORKSPACE_VIEW_ROTATION: Self = Self(Cow::Borrowed("workspace.view.rotation"));
+    pub const WORKSPACE_VIEW_POINT: Self = Self(Cow::Borrowed("workspace.view.point"));
 
     pub fn new(value: impl Into<String>) -> Result<Self, ControlAddressError> {
         let value = value.into();

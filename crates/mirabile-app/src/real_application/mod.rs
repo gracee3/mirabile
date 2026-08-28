@@ -428,6 +428,9 @@ where
             AppIntent::SetWorkspaceBinding { slot, selection } => {
                 self.set_workspace_binding(slot, selection)?;
             }
+            AppIntent::ApplyWorkspaceComposition(mutation) => {
+                self.apply_workspace_composition(mutation)?;
+            }
             AppIntent::ActivateChart { instance_id } => {
                 self.activate_session_chart(instance_id)?;
             }

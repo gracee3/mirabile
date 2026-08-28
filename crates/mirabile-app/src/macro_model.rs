@@ -519,7 +519,8 @@ impl SemanticActionV1 {
             | AppIntent::SelectRepositoryResource { .. }
             | AppIntent::BeginDeleteResource { .. }
             | AppIntent::ConfirmDeleteResource { .. }
-            | AppIntent::SetWorkspaceBinding { .. } => {
+            | AppIntent::SetWorkspaceBinding { .. }
+            | AppIntent::ApplyWorkspaceComposition(_) => {
                 return Err(MacroError::UnsupportedIntent(intent.semantic_summary()));
             }
         })

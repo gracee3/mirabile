@@ -562,6 +562,8 @@ pub enum ChartPersistence {
 pub struct ViewSummary {
     pub view_id: ViewInstanceId,
     pub title: String,
+    pub rotation: Option<Angle>,
+    pub hidden_points: Vec<PointId>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

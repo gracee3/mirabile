@@ -4,10 +4,10 @@ use mirabile_app::{
     ChartRecordMutation, ControlAddress, ControlId, ControlKind, DraftState, PointSetMutation,
     QueryDefinitionMutation, ResourceDraftKind, ResourceMetadataMutation, ResourceMutation,
     ThemeMutation, ViewDocumentMutation, WheelTemplateMutation, WorkspaceBindingSelection,
-    WorkspaceBindingSlot, WorkspaceDocumentMutation,
+    WorkspaceBindingSlot, WorkspaceCompositionMutation, WorkspaceDocumentMutation,
 };
 
-use crate::dispatcher::WorkbenchCoordinator;
+use crate::{dispatcher::WorkbenchCoordinator, workbench_controls::BufferedNumberField};
 
 #[component]
 pub(super) fn Cockpit(
@@ -63,6 +63,7 @@ pub(super) fn Cockpit(
                         </div>
                     }
                 }}
+                <WorkspaceComposition model dispatcher />
             </CockpitSection>
 
             <CockpitSection number=2 title="Workspace, sessions, views, slots, and library" search expanded>
@@ -107,6 +108,171 @@ pub(super) fn Cockpit(
             </CockpitSection>
         </section>
     }
+}
+
+#[component]
+fn WorkspaceComposition(
+    model: RwSignal<AppReadModel>,
+    dispatcher: WorkbenchCoordinator,
+) -> impl IntoView {
+    view! {
+        <div class="workspace-composition">
+            <h3>"Chart membership and order"</h3>
+            {move || {
+                let snapshot = model.get();
+                let chart_count = snapshot.workspace.charts.len();
+                snapshot.workspace.charts.into_iter().enumerate().map(|(index, chart)| {
+                    let move_dispatcher = dispatcher;
+                    let close_dispatcher = dispatcher;
+                    let move_enabled = index + 1 < chart_count;
+                    let instance_id = chart.instance_id;
+                    view! { <div class="builder-row">
+                        <span><strong>{chart.title}</strong><small>{chart.subtitle}</small></span>
+                        <button type="button" class="button secondary" disabled=!move_enabled
+                            data-mirabile-control=ControlId::WORKSPACE_CHART_MOVE.to_string()
+                            data-mirabile-address=workspace_address(ControlId::WORKSPACE_CHART_MOVE, [("chart", instance_id.to_string())])
+                            data-mirabile-kind=ControlKind::Action.as_str()
+                            data-mirabile-enabled=move_enabled.to_string()
+                            data-mirabile-disabled-reason=(!move_enabled).then_some("This chart is already last")
+                            on:click=move |_| move_dispatcher.dispatch(AppIntent::ApplyWorkspaceComposition(WorkspaceCompositionMutation::MoveChart { instance_id, before: None }))
+                        >"Move to end"</button>
+                        <button type="button" class="button danger"
+                            data-mirabile-control=ControlId::WORKSPACE_CHART_REMOVE.to_string()
+                            data-mirabile-address=workspace_address(ControlId::WORKSPACE_CHART_REMOVE, [("chart", instance_id.to_string())])
+                            data-mirabile-kind=ControlKind::Action.as_str()
+                            data-mirabile-enabled="true"
+                            on:click=move |_| close_dispatcher.dispatch(AppIntent::CloseChart { instance_id })
+                        >"Remove"</button>
+                    </div> }
+                }).collect_view()
+            }}
+            {move || {
+                let snapshot = model.get();
+                snapshot.library.charts.into_iter().filter(|candidate| !snapshot.workspace.charts.iter().any(|open| matches!(open.persistence, mirabile_app::ChartPersistence::Saved { definition_id } if definition_id == candidate.definition_id))).map(|candidate| {
+                    let open_dispatcher = dispatcher;
+                    view! { <button type="button" class="button secondary"
+                        data-mirabile-control=ControlId::WORKSPACE_CHART_ADD.to_string()
+                        data-mirabile-address=workspace_address(ControlId::WORKSPACE_CHART_ADD, [("definition", candidate.definition_id.to_string())])
+                        data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true"
+                        on:click=move |_| open_dispatcher.dispatch(AppIntent::OpenChart { definition_id: candidate.definition_id })
+                    >{format!("Add {}", candidate.title)}</button> }
+                }).collect_view()
+            }}
+
+            <h3>"View composition and durable display overrides"</h3>
+            {move || {
+                let snapshot = model.get();
+                let candidates = snapshot.resources.inventories.iter()
+                    .find(|inventory| inventory.kind == mirabile_app::ResourceKind::ViewDocument)
+                    .map(|inventory| inventory.resources.clone())
+                    .unwrap_or_default();
+                if candidates.is_empty() {
+                    view! { <button type="button" class="button secondary" disabled
+                        data-mirabile-control=ControlId::WORKSPACE_VIEW_ADD.to_string()
+                        data-mirabile-address=ControlAddress::new(ControlId::WORKSPACE_VIEW_ADD).to_string()
+                        data-mirabile-kind=ControlKind::Action.as_str()
+                        data-mirabile-enabled="false"
+                        data-mirabile-disabled-reason="Create a ViewDocument before adding a view"
+                    >"Add view"</button> }.into_any()
+                } else {
+                    view! { <div class="builder-row">
+                        {candidates.into_iter().map(|resource| {
+                            let add_dispatcher=dispatcher;
+                            let resource_id=resource.resource_id;
+                            view! { <button type="button" class="button secondary"
+                                data-mirabile-control=ControlId::WORKSPACE_VIEW_ADD.to_string()
+                                data-mirabile-address=workspace_address(ControlId::WORKSPACE_VIEW_ADD, [("resource", resource_id.to_string())])
+                                data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true"
+                                on:click=move |_| add_dispatcher.dispatch(AppIntent::ApplyWorkspaceComposition(WorkspaceCompositionMutation::AddView { document: WorkspaceBindingSelection::Follow { resource_id } }))
+                            >{format!("Add {} · r{}", resource.title, resource.revision)}</button> }
+                        }).collect_view()}
+                    </div> }.into_any()
+                }
+            }}
+            {move || {
+                let snapshot = model.get();
+                let view_count = snapshot.workspace.views.len();
+                let points = snapshot.authoring.points;
+                snapshot.workspace.views.into_iter().enumerate().map(|(index, view)| {
+                    let view_id = view.view_id;
+                    let move_dispatcher = dispatcher;
+                    let remove_dispatcher = dispatcher;
+                    let move_enabled = index + 1 < view_count;
+                    let rotation_buffer = RwSignal::new(String::new());
+                    let rotation_error = RwSignal::new(None);
+                    let rotation_dispatcher = dispatcher;
+                    let authoritative = Signal::derive(move || model.get().workspace.views.into_iter().find(|candidate| candidate.view_id == view_id).and_then(|candidate| candidate.rotation).map(|angle| angle.degrees().to_string()).unwrap_or_default());
+                    let parser = Callback::new(|raw: String| {
+                        if raw.trim().is_empty() {
+                            return Ok(String::new());
+                        }
+                        raw.parse::<f64>()
+                            .ok()
+                            .filter(|value| value.is_finite())
+                            .map(|value| value.to_string())
+                            .ok_or_else(|| "Enter a finite angle in degrees or leave blank".into())
+                    });
+                    let hidden = view.hidden_points.clone();
+                    view! { <article class="resource-laboratory">
+                        <header><strong>{view.title}</strong><small>{view_id.to_string()}</small></header>
+                        <div class="builder-row">
+                            <button type="button" class="button secondary" disabled=!move_enabled
+                                data-mirabile-control=ControlId::WORKSPACE_VIEW_MOVE.to_string()
+                                data-mirabile-address=workspace_address(ControlId::WORKSPACE_VIEW_MOVE, [("view", view_id.to_string())])
+                                data-mirabile-kind=ControlKind::Action.as_str()
+                                data-mirabile-enabled=move_enabled.to_string()
+                                data-mirabile-disabled-reason=(!move_enabled).then_some("This view is already last")
+                                on:click=move |_| move_dispatcher.dispatch(AppIntent::ApplyWorkspaceComposition(WorkspaceCompositionMutation::MoveView { view_id, before: None }))
+                            >"Move to end"</button>
+                            <button type="button" class="button danger"
+                                data-mirabile-control=ControlId::WORKSPACE_VIEW_REMOVE.to_string()
+                                data-mirabile-address=workspace_address(ControlId::WORKSPACE_VIEW_REMOVE, [("view", view_id.to_string())])
+                                data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true"
+                                on:click=move |_| remove_dispatcher.dispatch(AppIntent::ApplyWorkspaceComposition(WorkspaceCompositionMutation::RemoveView { view_id }))
+                            >"Remove"</button>
+                        </div>
+                        <BufferedNumberField
+                            address=workspace_address(ControlId::WORKSPACE_VIEW_ROTATION, [("view", view_id.to_string())])
+                            label="Rotation (blank uses chart orientation)".to_owned()
+                            authoritative
+                            disabled=Signal::derive(|| false)
+                            buffer=rotation_buffer
+                            error=rotation_error
+                            parser
+                            on_commit=Callback::new(move |raw: String| {
+                                let rotation = if raw.is_empty() { None } else { raw.parse::<f64>().ok().and_then(|value| mirabile_app::Angle::normalized(value).ok()) };
+                                rotation_dispatcher.dispatch(AppIntent::ApplyWorkspaceComposition(WorkspaceCompositionMutation::SetRotation { view_id, rotation }));
+                            })
+                        />
+                        <fieldset class="payload-fields"><legend>"Durably hidden points"</legend>
+                            {points.clone().into_iter().map(|point| {
+                                let point_id=point.value;
+                                let checked=hidden.contains(&point_id);
+                                let point_dispatcher=dispatcher;
+                                view! { <label class="checkbox-field"><input type="checkbox" prop:checked=checked disabled=!point.enabled
+                                    data-mirabile-control=ControlId::WORKSPACE_VIEW_POINT.to_string()
+                                    data-mirabile-address=workspace_address(ControlId::WORKSPACE_VIEW_POINT, [("view", view_id.to_string()), ("point", point_id.to_string())])
+                                    data-mirabile-kind=ControlKind::Checkbox.as_str()
+                                    data-mirabile-enabled=point.enabled.to_string()
+                                    data-mirabile-disabled-reason=point.disabled_reason
+                                    on:change=move |event| point_dispatcher.dispatch(AppIntent::ApplyWorkspaceComposition(WorkspaceCompositionMutation::SetPointHidden { view_id, point_id: point_id.clone(), hidden: event_target_checked(&event) }))
+                                />{point.label}</label> }
+                            }).collect_view()}
+                        </fieldset>
+                    </article> }
+                }).collect_view()
+            }}
+        </div>
+    }
+}
+
+fn workspace_address<const N: usize>(
+    control: ControlId,
+    qualifiers: [(&str, String); N],
+) -> String {
+    ControlAddress::qualified(control, qualifiers)
+        .expect("workspace composition address")
+        .to_string()
 }
 
 #[component]

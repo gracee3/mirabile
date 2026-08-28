@@ -411,6 +411,8 @@ impl MockState {
                     .map(|view| ViewSummary {
                         view_id: view.view_id,
                         title: view.title.clone(),
+                        rotation: None,
+                        hidden_points: Vec::new(),
                     })
                     .collect(),
                 active_view: Some(self.active_view),
@@ -668,6 +670,10 @@ impl MockState {
             AppIntent::SetWorkspaceBinding { .. } => Err(AppError::new(
                 AppErrorKind::Unavailable,
                 "Generalized binding editing is provided by the real application adapter",
+            )),
+            AppIntent::ApplyWorkspaceComposition(_) => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Workspace composition editing is provided by the real application adapter",
             )),
             AppIntent::BeginResourceEdit { .. }
             | AppIntent::BeginResourceCreate { .. }

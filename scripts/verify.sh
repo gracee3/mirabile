@@ -67,6 +67,7 @@ run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario new-chart --mode
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario new-chart-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario saved-chart-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario workspace-lifecycle-control --mode control
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario workspace-composition-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario aspect-set-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario session-slots-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario diagnostics-control --mode control

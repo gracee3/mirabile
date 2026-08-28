@@ -125,6 +125,8 @@ impl RealState {
                 Ok(ViewSummary {
                     view_id: view.id,
                     title: view_title(view, &self.catalog)?,
+                    rotation: view.overrides.rotation,
+                    hidden_points: view.overrides.hidden_points.clone(),
                 })
             })
             .collect::<AppResult<Vec<_>>>()?;

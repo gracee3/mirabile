@@ -31,6 +31,33 @@ pub enum WorkspaceBindingSelection {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum WorkspaceCompositionMutation {
+    MoveChart {
+        instance_id: InstanceId,
+        before: Option<InstanceId>,
+    },
+    AddView {
+        document: WorkspaceBindingSelection,
+    },
+    RemoveView {
+        view_id: ViewInstanceId,
+    },
+    MoveView {
+        view_id: ViewInstanceId,
+        before: Option<ViewInstanceId>,
+    },
+    SetRotation {
+        view_id: ViewInstanceId,
+        rotation: Option<Angle>,
+    },
+    SetPointHidden {
+        view_id: ViewInstanceId,
+        point_id: PointId,
+        hidden: bool,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum AppIntent {
     BeginNewChart,
     BeginSavedChartEdit {
@@ -79,6 +106,7 @@ pub enum AppIntent {
         slot: WorkspaceBindingSlot,
         selection: WorkspaceBindingSelection,
     },
+    ApplyWorkspaceComposition(WorkspaceCompositionMutation),
     NewWorkspace,
     OpenWorkspace {
         resource_id: ResourceId,
@@ -201,6 +229,9 @@ impl AppIntent {
             }
             Self::SetWorkspaceBinding { slot, selection } => {
                 format!("workspace.binding[{slot:?}]={selection:?}")
+            }
+            Self::ApplyWorkspaceComposition(mutation) => {
+                format!("workspace.composition={mutation:?}")
             }
             Self::NewWorkspace => "workspace.new".into(),
             Self::OpenWorkspace { resource_id } => format!("workspace.open[{resource_id}]"),
