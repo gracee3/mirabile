@@ -2,12 +2,14 @@
 
 ## Goal state
 
-- Base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
-- Branch: `goal/mirabile-workbench-authoring`
-- Worktree: `/home/emmy/worktrees/mirabile-workbench-authoring`
-- Current phase: Complete - READY for unmerged goal-branch handoff
-- Delivery: unmerged goal branch; push and remote-SHA verification required at handoff
-- Baseline: `./scripts/check.sh` passes 118 tests, strict Clippy, formatting, and diff checks
+- Original base: `892bbcb8a44118de21b1715348cc2905e3716dbb` (`origin/main` verified 2026-08-24)
+- Delivery branch: `goal/mirabile-workbench-authoring`
+- Current phase: Complete - delivered to `main`
+- Delivery: `main` and `goal/mirabile-workbench-authoring` both resolve to
+  `3287cb671158494d76b91aadde7790397eb7166f` (verified 2026-08-28)
+- Current baseline: `./scripts/check.sh` passes 155 Rust tests and 5 Python tests, strict
+  Clippy, formatting, and diff checks (rerun on the documentation-only
+  `chore/t14-baseline-hygiene` delivery follow-up on 2026-08-28)
 
 ## Frozen boundaries
 
@@ -39,7 +41,7 @@
 | 14. Level B browser semantics | Complete | Real isolated IndexedDB/Worker/XALEN semantic workflows plus a lazily initialized peer Real application sharing the same database for independent chart conflicts | Semantic Aspect Set/display/workspace scenario and two-application Record+Definition conflict scenario pass; `./scripts/check.sh` passes 153 Rust tests plus 5 Python tests; strict Clippy and native/WASM automation checks | Phase 14 commit |
 | 15. Level C control E2E | Complete | Native semantic-address journeys cover chart creation/validation, saved edit/cancel, independent conflicts, workspace decisions/revisions, full Aspect Set rows, display promotion/slots, macros, diagnostics, trace, and screenshots | Nine live control scenarios pass against isolated IndexedDB, Worker, and XALEN; `./scripts/check.sh` passes 153 Rust tests plus 5 Python tests | Phase 15 commit |
 | 16. Cockpit composition | Complete | Single desktop grid keeps library, wheel, diagnostics/trace/macros, and inspector visible with bounded independent scrolling; responsive fallback remains; manifest labels/values and keyboard focus semantics refined | 1600x1000 live screenshot reviewed; diagnostics control audit verifies exact authoritative buffered value, semantic labels, disabled reasons, and full manifest; native/WASM checks and `./scripts/check.sh` pass | Phase 16 commit |
-| 17. Handoff | Complete | Architecture, application, persistence, and local-automation docs; explicit scope/authority/control/artifact/license audit; complete local suite; unmerged goal-branch delivery | `./scripts/verify.sh` passes every native/package/workspace/XALEN/WASM/Trunk/license/browser/semantic/control/artifact check; final push and remote-SHA equality are the post-commit delivery action | Final handoff commit |
+| 17. Handoff | Complete | Architecture, application, persistence, and local-automation docs; explicit scope/authority/control/artifact/license audit; complete local suite; goal delivered to `main` | `./scripts/verify.sh` passed every native/package/workspace/XALEN/WASM/Trunk/license/browser/semantic/control/artifact check before delivery; `main` and the goal branch resolve to the same final SHA | `7037d4d`, followed by semantic control correction `3287cb6` |
 
 ## Required acceptance evidence
 
