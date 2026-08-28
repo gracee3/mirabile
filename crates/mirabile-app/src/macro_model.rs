@@ -422,6 +422,9 @@ impl SemanticActionV1 {
             | AppIntent::SaveChartDraft { .. }
             | AppIntent::CancelChartDraft { .. }
             | AppIntent::SelectRepositoryResource { .. }
+            | AppIntent::BeginDeleteResource { .. }
+            | AppIntent::ConfirmDeleteResource { .. }
+            | AppIntent::SetWorkspaceBinding { .. }
             | AppIntent::BeginResourceEdit { .. }
             | AppIntent::BeginResourceCreate { .. }
             | AppIntent::ApplyResourceMutation(_)

@@ -146,6 +146,7 @@ where
             resource_id: id,
             history,
         });
+        state.delete_confirmation = None;
         state.notice = None;
         state.advance()
     }

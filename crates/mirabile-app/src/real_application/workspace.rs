@@ -811,6 +811,9 @@ impl RealState {
             | AppIntent::BeginNewAspectSet
             | AppIntent::DuplicateAspectSet { .. }
             | AppIntent::SelectRepositoryResource { .. }
+            | AppIntent::BeginDeleteResource { .. }
+            | AppIntent::ConfirmDeleteResource { .. }
+            | AppIntent::SetWorkspaceBinding { .. }
             | AppIntent::BeginResourceEdit { .. }
             | AppIntent::BeginResourceCreate { .. }
             | AppIntent::ApplyResourceMutation(_)

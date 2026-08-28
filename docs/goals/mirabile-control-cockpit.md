@@ -37,9 +37,9 @@
 | 2. Repository and inventory | Complete | Present/deleted heads; selected-resource revisions; inventories for all ten canonical resource types | 157 Rust tests; WASM check; IndexedDB browser contract; `./scripts/check.sh` | `85bfead` |
 | 3. General typed drafts | Complete | Typed mutations, lifecycle/conflict projections, one draft per type, stable nested item IDs | 161 Rust tests; 5 Python tests; strict Clippy; `./scripts/check.sh` | `4aae865` |
 | 4. Complete editors | In progress | Metadata plus initial native typed payload fields; chart/workspace and typed list-builder completion remains | Native and browser authoring coverage | Pending |
-| 5. Bindings and outputs | In progress | Provider-neutral semantic tables, provenance, parameter status, and last-good retention are implemented; writable bindings remain | Focused last-good regression | Pending |
+| 5. Bindings and outputs | In progress | Writable Follow/Pinned/Inline bindings, provider-neutral tables, provenance, parameter status, and last-good retention | Focused binding and last-good regressions | Pending |
 | 6. Cockpit composition | In progress | Document-height eight-section cockpit, sticky search/fold controls, and semantic addresses | WASM build and responsive captures | Pending |
-| 7. History and deletion | Pending | Revision inspection, reference-aware two-step deletion, tombstones, stale-delete conflicts, reload | Store/application/browser history-delete tests | Pending |
+| 7. History and deletion | In progress | Revision inspection plus reference-aware two-step deletion, tombstones, and stale-delete conflicts; browser reload journey remains | Store/application deletion tests | Pending |
 | 8. Handoff | Pending | Viewport captures, docs, full gates, pushed feature PR left open | T14 acceptance matrix and remote verification | Pending |
 
 ## Phase records
@@ -136,6 +136,27 @@
   and strict Clippy are rerun at this checkpoint before commit.
 - Blockers: none. Next action: complete reference-aware deletion, writable binding controls, and
   remaining typed payload builders before responsive browser journeys.
+
+### Binding and deletion checkpoint - phases 5 and 7 in progress
+
+- Every projected workspace binding has native resource, mode, and revision controls with stable
+  slot-qualified addresses. Typed intents support Follow, exact-revision Pinned, and Inline-copy
+  transitions for all three Point Set roles, Aspect Set, Analysis Profile, Theme, Wheel Template,
+  and the active View Document. A focused application test preserves all three semantics and marks
+  the workspace dirty without introducing another state authority.
+- Repository selection now projects application-level references, active-editor blockers, the
+  expected head revision, deletion availability, and confirmation state. Deletion requires two
+  distinct typed actions; the second rechecks blockers and repository CAS before publishing a
+  tombstone. Successful deletion keeps all revisions selected, while referenced and stale deletes
+  are rejected in focused tests.
+- Automation snapshots include bounded semantic point, house, angle, aspect, and provenance rows
+  and still omit Scene geometry.
+- The E2E runner accepts and range-checks `--viewport WIDTHxHEIGHT`. The new
+  `cockpit-manifest-control` journey passed at 1366x768 and covers the cockpit navigation, all ten
+  canonical resource families, and disabled deletion reasons.
+- Screenshot: `target/workbench-e2e-cockpit-manifest-control.png` (untracked).
+- Next action: complete remaining typed list builders, add history/delete browser reload coverage,
+  capture the final responsive matrix, and run the final repository gates.
 
 ## Acceptance checklist
 

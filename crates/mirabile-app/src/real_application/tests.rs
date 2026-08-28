@@ -368,6 +368,119 @@ fn initialization_projects_all_canonical_inventories_and_repository_heads() {
 }
 
 #[test]
+fn deletion_requires_two_confirmations_and_retains_tombstone_history() {
+    let repository = MemoryRepository::default();
+    let orphan = CanonicalResource::PointSet(ResourceEnvelope::new(
+        "Orphan points",
+        PointSet { points: Vec::new() },
+        Timestamp::from_unix_millis(1),
+    ));
+    let resource_id = orphan.id();
+    block_on(repository.create(orphan)).expect("seed orphan");
+    let application = RealApplication::with_repository(repository.clone());
+    ready(&application);
+    let selected =
+        block_on(application.dispatch(AppIntent::SelectRepositoryResource { resource_id }))
+            .expect("select orphan");
+    let deletion = selected.repository.deletion.expect("deletion projection");
+    assert!(deletion.enabled);
+    assert!(!deletion.first_confirmation_complete);
+
+    let first = block_on(application.dispatch(AppIntent::BeginDeleteResource {
+        resource_id,
+        expected_revision: deletion.expected_revision,
+    }))
+    .expect("first confirmation");
+    assert!(
+        first
+            .repository
+            .deletion
+            .expect("confirmed deletion projection")
+            .first_confirmation_complete
+    );
+    let deleted = block_on(application.dispatch(AppIntent::ConfirmDeleteResource {
+        resource_id,
+        expected_revision: deletion.expected_revision,
+    }))
+    .expect("second confirmation");
+    assert!(deleted.repository.deletion.is_none());
+    assert!(matches!(
+        deleted
+            .repository
+            .heads
+            .iter()
+            .find(|head| head.resource_id == resource_id)
+            .map(|head| &head.state),
+        Some(RepositoryHeadState::Deleted { .. })
+    ));
+    assert_eq!(deleted.repository.selected_history.len(), 2);
+    assert!(
+        block_on(repository.get(resource_id))
+            .expect("read deleted head")
+            .is_none()
+    );
+}
+
+#[test]
+fn referenced_and_stale_resources_are_rejected_before_tombstoning() {
+    let repository = MemoryRepository::default();
+    for resource in demo_resources() {
+        block_on(repository.create(resource)).expect("seed demo resource");
+    }
+    let application = RealApplication::with_repository(repository.clone());
+    ready(&application);
+    let referenced = block_on(application.dispatch(AppIntent::SelectRepositoryResource {
+        resource_id: demo_ids().chart_record_a,
+    }))
+    .expect("select referenced record");
+    let deletion = referenced.repository.deletion.expect("deletion projection");
+    assert!(!deletion.enabled);
+    assert!(!deletion.references.is_empty());
+    assert!(
+        block_on(application.dispatch(AppIntent::BeginDeleteResource {
+            resource_id: demo_ids().chart_record_a,
+            expected_revision: deletion.expected_revision,
+        }))
+        .is_err()
+    );
+
+    let orphan = CanonicalResource::PointSet(ResourceEnvelope::new(
+        "Stale orphan",
+        PointSet { points: Vec::new() },
+        Timestamp::from_unix_millis(10),
+    ));
+    let orphan_id = orphan.id();
+    block_on(repository.create(orphan.clone())).expect("seed stale orphan");
+    let reloaded = RealApplication::with_repository(repository.clone());
+    ready(&reloaded);
+    let selected = block_on(reloaded.dispatch(AppIntent::SelectRepositoryResource {
+        resource_id: orphan_id,
+    }))
+    .expect("select stale orphan");
+    let expected = selected
+        .repository
+        .deletion
+        .expect("deletion projection")
+        .expected_revision;
+    block_on(reloaded.dispatch(AppIntent::BeginDeleteResource {
+        resource_id: orphan_id,
+        expected_revision: expected,
+    }))
+    .expect("first confirmation");
+    let mut remote = orphan
+        .next_revision(Timestamp::from_unix_millis(11))
+        .expect("next remote revision");
+    remote.set_title("Remote update".into());
+    block_on(repository.save(expected, remote)).expect("remote save");
+    let error = block_on(reloaded.dispatch(AppIntent::ConfirmDeleteResource {
+        resource_id: orphan_id,
+        expected_revision: expected,
+    }))
+    .expect_err("stale delete must conflict");
+    assert_eq!(error.kind, AppErrorKind::Conflict);
+}
+
+#[test]
 fn typed_resource_draft_saves_conflicts_cancels_and_reloads() {
     let repository = MemoryRepository::default();
     let original = CanonicalResource::PointSet(ResourceEnvelope::new(
@@ -474,6 +587,56 @@ fn typed_resource_draft_saves_conflicts_cancels_and_reloads() {
     }))
     .expect("cancel conflicted draft");
     assert!(canceled.resource_editor.drafts.is_empty());
+}
+
+#[test]
+fn generalized_workspace_binding_preserves_follow_pinned_and_inline_modes() {
+    let repository = MemoryRepository::default();
+    let points = CanonicalResource::PointSet(ResourceEnvelope::new(
+        "Binding points",
+        PointSet {
+            points: vec![PointSelector::Point(PointId::new("sun").expect("point"))],
+        },
+        Timestamp::from_unix_millis(1),
+    ));
+    let resource_id = points.id();
+    block_on(repository.create(points)).expect("seed binding points");
+    let application = RealApplication::with_repository(repository);
+    ready(&application);
+
+    let followed = block_on(application.dispatch(AppIntent::SetWorkspaceBinding {
+        slot: crate::WorkspaceBindingSlot::DisplayedPoints,
+        selection: crate::WorkspaceBindingSelection::Follow { resource_id },
+    }))
+    .expect("follow binding");
+    assert!(matches!(
+        followed.inspector.bindings[0].source,
+        BindingSourceSummary::Follow { resource_id: id, revision: Revision::INITIAL, .. } if id == resource_id
+    ));
+
+    let pinned = block_on(application.dispatch(AppIntent::SetWorkspaceBinding {
+        slot: crate::WorkspaceBindingSlot::DisplayedPoints,
+        selection: crate::WorkspaceBindingSelection::Pinned {
+            resource_id,
+            revision: Revision::INITIAL,
+        },
+    }))
+    .expect("pinned binding");
+    assert!(matches!(
+        pinned.inspector.bindings[0].source,
+        BindingSourceSummary::Pinned { resource_id: id, revision: Revision::INITIAL, .. } if id == resource_id
+    ));
+
+    let inlined = block_on(application.dispatch(AppIntent::SetWorkspaceBinding {
+        slot: crate::WorkspaceBindingSlot::DisplayedPoints,
+        selection: crate::WorkspaceBindingSelection::Inline { resource_id },
+    }))
+    .expect("inline binding");
+    assert!(matches!(
+        inlined.inspector.bindings[0].source,
+        BindingSourceSummary::Inline
+    ));
+    assert!(inlined.workspace.document_dirty);
 }
 
 #[test]

@@ -3,7 +3,8 @@ use mirabile_app::{
     AnalysisProfileMutation, AppIntent, AppReadModel, AspectSetMutation, ChartDefinitionMutation,
     ChartRecordMutation, ControlAddress, ControlId, ControlKind, DraftState, PointSetMutation,
     QueryDefinitionMutation, ResourceDraftKind, ResourceMetadataMutation, ResourceMutation,
-    ThemeMutation, ViewDocumentMutation, WheelTemplateMutation, WorkspaceDocumentMutation,
+    ThemeMutation, ViewDocumentMutation, WheelTemplateMutation, WorkspaceBindingSelection,
+    WorkspaceBindingSlot, WorkspaceDocumentMutation,
 };
 
 use crate::dispatcher::WorkbenchCoordinator;
@@ -90,9 +91,7 @@ pub(super) fn Cockpit(
             </CockpitSection>
 
             <CockpitSection number=5 title="Follow, Pinned, and Inline binding matrix" search expanded>
-                {move || model.get().inspector.bindings.into_iter().map(|binding| view! {
-                    <div class="cockpit-row"><strong>{binding.label}</strong><span>{format!("{:?}", binding.source)}</span></div>
-                }).collect_view()}
+                <BindingMatrix model dispatcher />
             </CockpitSection>
 
             <CockpitSection number=6 title="Current semantic output and calculation provenance" search expanded>
@@ -108,6 +107,115 @@ pub(super) fn Cockpit(
             </CockpitSection>
         </section>
     }
+}
+
+#[component]
+fn BindingMatrix(model: RwSignal<AppReadModel>, dispatcher: WorkbenchCoordinator) -> impl IntoView {
+    view! { {move || {
+        let snapshot=model.get();
+        snapshot.inspector.bindings.into_iter().map(|binding| {
+            let kind=binding_resource_kind(binding.slot);
+            let candidates=snapshot.resources.inventories.iter().find(|inventory| inventory.kind == kind).map(|inventory| inventory.resources.clone()).unwrap_or_default();
+            let (current_mode, current_id, current_revision)=match &binding.source {
+                mirabile_app::BindingSourceSummary::Follow { resource_id, revision, .. } => ("follow", Some(*resource_id), Some(*revision)),
+                mirabile_app::BindingSourceSummary::Pinned { resource_id, revision, .. } => ("pinned", Some(*resource_id), Some(*revision)),
+                mirabile_app::BindingSourceSummary::Inline => ("inline", None, None),
+            };
+            let fallback=candidates.first().map(|resource| (resource.resource_id, resource.revision));
+            let selected_id=current_id.or(fallback.map(|value| value.0));
+            let selected_revision=current_revision.or(fallback.map(|value| value.1));
+            let enabled=selected_id.is_some();
+            let reason=(!enabled).then_some("Create a compatible canonical resource before changing this binding");
+            let mode_dispatcher=dispatcher;
+            let resource_dispatcher=dispatcher;
+            let revision_dispatcher=dispatcher;
+            let slot=binding.slot;
+            let slot_key=binding_slot_key(slot);
+            view! { <article class="binding-row">
+                <header><strong>{binding.label}</strong><small>{format!("{:?}", binding.source)}</small></header>
+                <label>"Mode"<select prop:value=current_mode disabled=!enabled
+                    data-mirabile-control=ControlId::BINDING_MODE.to_string()
+                    data-mirabile-address=binding_address(ControlId::BINDING_MODE, &slot_key)
+                    data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled=enabled.to_string()
+                    data-mirabile-disabled-reason=reason
+                    on:change=move |event| if let (Some(resource_id), Some(revision))=(selected_id, selected_revision) && let Some(selection)=binding_selection(&event_target_value(&event), resource_id, revision) { mode_dispatcher.dispatch(AppIntent::SetWorkspaceBinding { slot, selection }); }>
+                    <option value="follow">"Follow latest"</option><option value="pinned">"Pinned revision"</option><option value="inline">"Inline copy"</option>
+                </select></label>
+                <label>"Resource"<select prop:value=selected_id.map(|id| id.to_string()).unwrap_or_default() disabled=!enabled
+                    data-mirabile-control=ControlId::BINDING_RESOURCE.to_string()
+                    data-mirabile-address=binding_address(ControlId::BINDING_RESOURCE, &slot_key)
+                    data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled=enabled.to_string()
+                    data-mirabile-disabled-reason=reason
+                    on:change=move |event| if let (Ok(resource_id), Some(revision))=(event_target_value(&event).parse(), selected_revision) && let Some(selection)=binding_selection(current_mode, resource_id, revision) { resource_dispatcher.dispatch(AppIntent::SetWorkspaceBinding { slot, selection }); }>
+                    {candidates.iter().map(|resource| view! { <option value=resource.resource_id.to_string()>{format!("{} · r{}", resource.title, resource.revision)}</option> }).collect_view()}
+                </select></label>
+                <label>"Revision"<select prop:value=selected_revision.map(|revision| revision.to_string()).unwrap_or_default() disabled=current_mode != "pinned" || !enabled
+                    data-mirabile-control=ControlId::BINDING_REVISION.to_string()
+                    data-mirabile-address=binding_address(ControlId::BINDING_REVISION, &slot_key)
+                    data-mirabile-kind=ControlKind::Select.as_str()
+                    data-mirabile-enabled=(current_mode == "pinned" && enabled).to_string()
+                    data-mirabile-disabled-reason=if current_mode == "pinned" && enabled { None } else { Some("Choose Pinned mode to select an immutable revision") }
+                    on:change=move |event| if let (Some(resource_id), Some(revision))=(selected_id, parse_revision(&event_target_value(&event))) { revision_dispatcher.dispatch(AppIntent::SetWorkspaceBinding { slot, selection: WorkspaceBindingSelection::Pinned { resource_id, revision } }); }>
+                    {selected_revision.into_iter().map(|revision| view! { <option value=revision.to_string()>{revision.to_string()}</option> }).collect_view()}
+                </select></label>
+            </article> }
+        }).collect_view()
+    }} }
+}
+
+fn binding_resource_kind(slot: WorkspaceBindingSlot) -> mirabile_app::ResourceKind {
+    match slot {
+        WorkspaceBindingSlot::DisplayedPoints
+        | WorkspaceBindingSlot::AspectedPoints
+        | WorkspaceBindingSlot::TransitPoints => mirabile_app::ResourceKind::PointSet,
+        WorkspaceBindingSlot::Aspects => mirabile_app::ResourceKind::AspectSet,
+        WorkspaceBindingSlot::Analysis => mirabile_app::ResourceKind::AnalysisProfile,
+        WorkspaceBindingSlot::Theme => mirabile_app::ResourceKind::Theme,
+        WorkspaceBindingSlot::Wheel => mirabile_app::ResourceKind::WheelTemplate,
+        WorkspaceBindingSlot::ViewDocument { .. } => mirabile_app::ResourceKind::ViewDocument,
+    }
+}
+
+fn binding_selection(
+    mode: &str,
+    resource_id: mirabile_app::ResourceId,
+    revision: mirabile_app::Revision,
+) -> Option<WorkspaceBindingSelection> {
+    match mode {
+        "follow" => Some(WorkspaceBindingSelection::Follow { resource_id }),
+        "pinned" => Some(WorkspaceBindingSelection::Pinned {
+            resource_id,
+            revision,
+        }),
+        "inline" => Some(WorkspaceBindingSelection::Inline { resource_id }),
+        _ => None,
+    }
+}
+
+fn binding_slot_key(slot: WorkspaceBindingSlot) -> String {
+    match slot {
+        WorkspaceBindingSlot::DisplayedPoints => "displayed-points".into(),
+        WorkspaceBindingSlot::AspectedPoints => "aspected-points".into(),
+        WorkspaceBindingSlot::TransitPoints => "transit-points".into(),
+        WorkspaceBindingSlot::Aspects => "aspects".into(),
+        WorkspaceBindingSlot::Analysis => "analysis".into(),
+        WorkspaceBindingSlot::Theme => "theme".into(),
+        WorkspaceBindingSlot::Wheel => "wheel".into(),
+        WorkspaceBindingSlot::ViewDocument { view_id } => format!("view-{view_id}"),
+    }
+}
+
+fn binding_address(control: ControlId, slot: &str) -> String {
+    ControlAddress::qualified(control, [("slot", slot.to_owned())])
+        .expect("binding address")
+        .to_string()
+}
+
+fn parse_revision(value: &str) -> Option<mirabile_app::Revision> {
+    value
+        .parse::<u64>()
+        .ok()
+        .and_then(|value| mirabile_app::Revision::new(value).ok())
 }
 
 #[component]
@@ -376,12 +484,31 @@ fn RepositoryLaboratory(
         {move || model.get().repository.selected_history.into_iter().map(|revision| view! {
             <div class="cockpit-row revision-line"><span>{format!("r{} · {:?}", revision.revision, revision.state)}</span></div>
         }).collect_view()}
-        <button type="button" class="button secondary" disabled=true data-mirabile-control="repository.delete"
-            data-mirabile-address="repository.delete" data-mirabile-kind=ControlKind::Action.as_str()
-            data-mirabile-enabled="false" data-mirabile-disabled-reason="Select an unreferenced resource and complete both confirmations">"Delete resource — confirmation 1"</button>
-        <button type="button" class="button secondary" disabled=true data-mirabile-control="repository.confirm-delete"
-            data-mirabile-address="repository.confirm-delete" data-mirabile-kind=ControlKind::Action.as_str()
-            data-mirabile-enabled="false" data-mirabile-disabled-reason="First deletion confirmation is required">"Confirm deletion — confirmation 2"</button>
+        {move || {
+            let deletion=model.get().repository.deletion;
+            let first_dispatcher=dispatcher;
+            let second_dispatcher=dispatcher;
+            let (resource_id, revision, enabled, reason, confirmed)=deletion.map_or(
+                (None, None, false, Some("Select a present resource before deletion".to_owned()), false),
+                |deletion| (Some(deletion.resource_id), Some(deletion.expected_revision), deletion.enabled, deletion.disabled_reason, deletion.first_confirmation_complete),
+            );
+            let confirm_enabled=enabled && confirmed;
+            view! { <div class="delete-actions">
+                <button type="button" class="button secondary" disabled=!enabled
+                    data-mirabile-control=ControlId::REPOSITORY_DELETE.to_string()
+                    data-mirabile-address=ControlAddress::new(ControlId::REPOSITORY_DELETE).to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled=enabled.to_string() data-mirabile-disabled-reason=reason.clone()
+                    on:click=move |_| if let (Some(resource_id), Some(expected_revision))=(resource_id, revision) { first_dispatcher.dispatch(AppIntent::BeginDeleteResource { resource_id, expected_revision }); }>"Delete resource — confirmation 1"</button>
+                <button type="button" class="button danger" disabled=!confirm_enabled
+                    data-mirabile-control=ControlId::REPOSITORY_CONFIRM_DELETE.to_string()
+                    data-mirabile-address=ControlAddress::new(ControlId::REPOSITORY_CONFIRM_DELETE).to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled=confirm_enabled.to_string()
+                    data-mirabile-disabled-reason=if confirm_enabled { None } else if !enabled { reason } else { Some("First deletion confirmation is required".to_owned()) }
+                    on:click=move |_| if let (Some(resource_id), Some(expected_revision))=(resource_id, revision) { second_dispatcher.dispatch(AppIntent::ConfirmDeleteResource { resource_id, expected_revision }); }>"Confirm deletion — confirmation 2"</button>
+            </div> }
+        }}
     }
 }
 

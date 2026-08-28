@@ -135,40 +135,64 @@ impl RealState {
         let active_aspect_set = workspace.profile.aspects.id();
         let mut bindings = vec![
             binding_summary(
+                crate::WorkspaceBindingSlot::DisplayedPoints,
                 "Displayed points",
                 &workspace.profile.displayed_points,
                 &self.catalog,
             )?,
             binding_summary(
+                crate::WorkspaceBindingSlot::AspectedPoints,
                 "Aspected points",
                 &workspace.profile.aspected_points,
                 &self.catalog,
             )?,
             binding_summary(
+                crate::WorkspaceBindingSlot::TransitPoints,
                 "Transit points",
                 &workspace.profile.transit_points,
                 &self.catalog,
             )?,
-            binding_summary("Aspect set", &workspace.profile.aspects, &self.catalog)?,
             binding_summary(
+                crate::WorkspaceBindingSlot::Aspects,
+                "Aspect set",
+                &workspace.profile.aspects,
+                &self.catalog,
+            )?,
+            binding_summary(
+                crate::WorkspaceBindingSlot::Analysis,
                 "Analysis profile",
                 &workspace.profile.analysis,
                 &self.catalog,
             )?,
-            binding_summary("Theme", &workspace.profile.theme, &self.catalog)?,
-            binding_summary("Wheel template", &workspace.profile.wheel, &self.catalog)?,
+            binding_summary(
+                crate::WorkspaceBindingSlot::Theme,
+                "Theme",
+                &workspace.profile.theme,
+                &self.catalog,
+            )?,
+            binding_summary(
+                crate::WorkspaceBindingSlot::Wheel,
+                "Wheel template",
+                &workspace.profile.wheel,
+                &self.catalog,
+            )?,
         ];
         if let Some(view) = session
             .active_view
             .and_then(|id| workspace.views.iter().find(|view| view.id == id))
         {
             bindings.push(binding_summary(
+                crate::WorkspaceBindingSlot::ViewDocument { view_id: view.id },
                 "View document",
                 &view.document,
                 &self.catalog,
             )?);
         }
 
+        let mut repository = self
+            .catalog
+            .repository_read_model(self.repository_selection.as_ref());
+        repository.deletion = self.repository_deletion_read_model();
         Ok(AppReadModel {
             version: self.version,
             status: self.status.clone(),
@@ -185,9 +209,7 @@ impl RealState {
                 workspaces: self.catalog.workspace_summaries(),
             },
             resources: self.catalog.resource_catalog_read_model(),
-            repository: self
-                .catalog
-                .repository_read_model(self.repository_selection.as_ref()),
+            repository,
             workspace: WorkspaceReadModel {
                 title: session.working_title.clone(),
                 charts: open_charts,

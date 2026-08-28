@@ -16,6 +16,7 @@ impl Default for RealState {
             editor: None,
             chart_editor: None,
             repository_selection: None,
+            delete_confirmation: None,
             resource_drafts: BTreeMap::new(),
             workspace_switch: None,
             pending_workspace_switch: None,

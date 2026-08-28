@@ -108,6 +108,7 @@ pub struct AutomationSnapshotV1 {
     pub authoring: crate::AuthoringCapabilitiesReadModel,
     pub chart_editor: Option<crate::ChartEditorReadModel>,
     pub resource_editor: crate::ResourceEditorReadModel,
+    pub semantic_output: AutomationSemanticOutput,
     pub controls: Vec<ControlDescriptor>,
     pub coordinator: CoordinatorReadModel,
     pub recent_trace: Vec<ExecutionTraceEntry>,
@@ -210,11 +211,119 @@ impl AutomationSnapshotV1 {
             authoring: model.authoring.clone(),
             chart_editor: model.chart_editor.clone(),
             resource_editor: model.resource_editor.clone(),
+            semantic_output: AutomationSemanticOutput::capture(&model.semantic_output),
             controls,
             coordinator,
             recent_trace,
         }
     }
+}
+
+const AUTOMATION_SEMANTIC_ROW_LIMIT: usize = 64;
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct AutomationSemanticOutput {
+    pub points: Vec<AutomationSemanticPoint>,
+    pub houses: Vec<AutomationSemanticHouse>,
+    pub angles: Vec<AutomationSemanticAngle>,
+    pub aspects: Vec<AutomationSemanticAspect>,
+    pub provenance: Vec<AutomationProvenanceEntry>,
+    pub unavailable_reason: Option<String>,
+}
+
+impl AutomationSemanticOutput {
+    fn capture(value: &crate::SemanticOutputReadModel) -> Self {
+        Self {
+            points: value
+                .points
+                .iter()
+                .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
+                .map(|point| AutomationSemanticPoint {
+                    point_id: point.point_id.to_string(),
+                    longitude_degrees: point.longitude_degrees,
+                    retrograde: point.retrograde,
+                    derived: point.derived,
+                })
+                .collect(),
+            houses: value
+                .houses
+                .iter()
+                .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
+                .map(|house| AutomationSemanticHouse {
+                    number: house.number,
+                    cusp_degrees: house.cusp_degrees,
+                })
+                .collect(),
+            angles: value
+                .angles
+                .iter()
+                .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
+                .map(|angle| AutomationSemanticAngle {
+                    name: angle.name.clone(),
+                    longitude_degrees: angle.longitude_degrees,
+                })
+                .collect(),
+            aspects: value
+                .aspects
+                .iter()
+                .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
+                .map(|aspect| AutomationSemanticAspect {
+                    lhs: aspect.lhs.to_string(),
+                    rhs: aspect.rhs.to_string(),
+                    aspect: aspect.aspect.to_string(),
+                    orb_degrees: aspect.orb_degrees,
+                    applying: aspect.applying,
+                })
+                .collect(),
+            provenance: value
+                .provenance
+                .iter()
+                .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
+                .map(|entry| AutomationProvenanceEntry {
+                    responsibility: entry.responsibility.clone(),
+                    implementation: entry.implementation.clone(),
+                    detail: entry.detail.clone(),
+                })
+                .collect(),
+            unavailable_reason: value.unavailable_reason.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AutomationSemanticPoint {
+    pub point_id: String,
+    pub longitude_degrees: f64,
+    pub retrograde: bool,
+    pub derived: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AutomationSemanticHouse {
+    pub number: usize,
+    pub cusp_degrees: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AutomationSemanticAngle {
+    pub name: String,
+    pub longitude_degrees: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AutomationSemanticAspect {
+    pub lhs: String,
+    pub rhs: String,
+    pub aspect: String,
+    pub orb_degrees: f64,
+    pub applying: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AutomationProvenanceEntry {
+    pub responsibility: String,
+    pub implementation: String,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

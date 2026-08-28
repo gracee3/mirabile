@@ -1,7 +1,34 @@
 use crate::{
     Angle, AspectId, ChartDraft, ChartMutation, ChartSlotId, InstanceId, PointId,
-    ResourceDraftKind, ResourceId, ResourceMutation, ViewInstanceId, WorkspaceSwitchAction,
+    ResourceDraftKind, ResourceId, ResourceMutation, Revision, ViewInstanceId,
+    WorkspaceSwitchAction,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceBindingSlot {
+    DisplayedPoints,
+    AspectedPoints,
+    TransitPoints,
+    Aspects,
+    Analysis,
+    Theme,
+    Wheel,
+    ViewDocument { view_id: ViewInstanceId },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceBindingSelection {
+    Follow {
+        resource_id: ResourceId,
+    },
+    Pinned {
+        resource_id: ResourceId,
+        revision: Revision,
+    },
+    Inline {
+        resource_id: ResourceId,
+    },
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppIntent {
@@ -48,6 +75,10 @@ pub enum AppIntent {
     SetWorkspaceAspectSet {
         resource_id: ResourceId,
     },
+    SetWorkspaceBinding {
+        slot: WorkspaceBindingSlot,
+        selection: WorkspaceBindingSelection,
+    },
     NewWorkspace,
     OpenWorkspace {
         resource_id: ResourceId,
@@ -79,6 +110,14 @@ pub enum AppIntent {
     /// Selects one canonical identity for repository revision inspection.
     SelectRepositoryResource {
         resource_id: ResourceId,
+    },
+    BeginDeleteResource {
+        resource_id: ResourceId,
+        expected_revision: crate::Revision,
+    },
+    ConfirmDeleteResource {
+        resource_id: ResourceId,
+        expected_revision: crate::Revision,
     },
     BeginResourceEdit {
         resource_id: ResourceId,
@@ -138,6 +177,9 @@ impl AppIntent {
             Self::SetWorkspaceAspectSet { resource_id } => {
                 format!("workspace.aspect-set[{resource_id}]")
             }
+            Self::SetWorkspaceBinding { slot, selection } => {
+                format!("workspace.binding[{slot:?}]={selection:?}")
+            }
             Self::NewWorkspace => "workspace.new".into(),
             Self::OpenWorkspace { resource_id } => format!("workspace.open[{resource_id}]"),
             Self::RenameWorkspace { .. } => "workspace.rename".into(),
@@ -162,6 +204,12 @@ impl AppIntent {
             }
             Self::SelectRepositoryResource { resource_id } => {
                 format!("repository.select[{resource_id}]")
+            }
+            Self::BeginDeleteResource { resource_id, .. } => {
+                format!("repository.begin-delete[{resource_id}]")
+            }
+            Self::ConfirmDeleteResource { resource_id, .. } => {
+                format!("repository.confirm-delete[{resource_id}]")
             }
             Self::BeginResourceEdit { resource_id } => {
                 format!("resource.begin-edit[{resource_id}]")

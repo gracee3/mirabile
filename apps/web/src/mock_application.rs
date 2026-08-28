@@ -453,6 +453,7 @@ impl MockState {
             inspector: InspectorReadModel {
                 active_chart,
                 bindings: vec![ResourceBindingSummary {
+                    slot: mirabile_app::WorkspaceBindingSlot::Aspects,
                     label: "Aspect set".into(),
                     source: BindingSourceSummary::Follow {
                         resource_id: aspect_set.summary.resource_id,
@@ -655,9 +656,15 @@ impl MockState {
                 AppErrorKind::Unavailable,
                 "Workspace library management is provided by the real application adapter",
             )),
-            AppIntent::SelectRepositoryResource { .. } => Err(AppError::new(
+            AppIntent::SelectRepositoryResource { .. }
+            | AppIntent::BeginDeleteResource { .. }
+            | AppIntent::ConfirmDeleteResource { .. } => Err(AppError::new(
                 AppErrorKind::Unavailable,
                 "Repository inspection is provided by the real application adapter",
+            )),
+            AppIntent::SetWorkspaceBinding { .. } => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Generalized binding editing is provided by the real application adapter",
             )),
             AppIntent::BeginResourceEdit { .. }
             | AppIntent::BeginResourceCreate { .. }

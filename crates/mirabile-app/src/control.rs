@@ -74,7 +74,12 @@ impl ControlId {
     pub const RESOURCE_VIEW_WIDTH: Self = Self(Cow::Borrowed("resource.view.width"));
     pub const RESOURCE_VIEW_HEIGHT: Self = Self(Cow::Borrowed("resource.view.height"));
     pub const RESOURCE_QUERY_DESCRIPTION: Self = Self(Cow::Borrowed("resource.query.description"));
+    pub const BINDING_MODE: Self = Self(Cow::Borrowed("binding.mode"));
+    pub const BINDING_RESOURCE: Self = Self(Cow::Borrowed("binding.resource"));
+    pub const BINDING_REVISION: Self = Self(Cow::Borrowed("binding.revision"));
     pub const REPOSITORY_SELECT: Self = Self(Cow::Borrowed("repository.select"));
+    pub const REPOSITORY_DELETE: Self = Self(Cow::Borrowed("repository.delete"));
+    pub const REPOSITORY_CONFIRM_DELETE: Self = Self(Cow::Borrowed("repository.confirm-delete"));
     pub const VIEW_ACTIVATE: Self = Self(Cow::Borrowed("view.activate"));
     pub const VIEW_SLOT: Self = Self(Cow::Borrowed("view.slot"));
     pub const WORKSPACE_SAVE: Self = Self(Cow::Borrowed("workspace.save"));

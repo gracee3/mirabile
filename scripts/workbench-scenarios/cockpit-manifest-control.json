@@ -1,0 +1,22 @@
+{
+  "name": "cockpit-manifest-control",
+  "steps": [
+    {"command": "wait", "timeout": 20},
+    {"command": "get", "address": "cockpit.search", "expect": {"kind": "text", "enabled": true}},
+    {"command": "get", "address": "cockpit.expand-all", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "cockpit.collapse-all", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "resource.new[kind=chartrecord]", "expect": {"kind": "action", "enabled": false, "disabled_reason": "ChartRecord creation is atomic with ChartDefinition; use New Chart"}},
+    {"command": "get", "address": "resource.new[kind=chartdefinition]", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "resource.new[kind=pointset]", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "resource.new[kind=aspectset]", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "resource.new[kind=analysisprofile]", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "resource.new[kind=wheeltemplate]", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "resource.new[kind=viewdocument]", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "resource.new[kind=theme]", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "resource.new[kind=querydefinition]", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "resource.new[kind=workspacedocument]", "expect": {"kind": "action", "enabled": true}},
+    {"command": "get", "address": "repository.delete", "expect": {"kind": "action", "enabled": false, "disabled_reason": "Select a present resource before deletion"}},
+    {"command": "get", "address": "repository.confirm-delete", "expect": {"kind": "action", "enabled": false}},
+    {"command": "controls"}
+  ]
+}

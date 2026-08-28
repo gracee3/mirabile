@@ -434,6 +434,17 @@ pub struct RepositoryReadModel {
     pub heads: Vec<RepositoryHeadReadModel>,
     pub selected_resource: Option<ResourceId>,
     pub selected_history: Vec<RepositoryRevisionReadModel>,
+    pub deletion: Option<RepositoryDeletionReadModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepositoryDeletionReadModel {
+    pub resource_id: ResourceId,
+    pub expected_revision: Revision,
+    pub references: Vec<String>,
+    pub enabled: bool,
+    pub disabled_reason: Option<String>,
+    pub first_confirmation_complete: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -650,6 +661,7 @@ pub struct ActiveChartInspector {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceBindingSummary {
+    pub slot: crate::WorkspaceBindingSlot,
     pub label: String,
     pub source: BindingSourceSummary,
 }
@@ -830,6 +842,7 @@ mod tests {
     #[test]
     fn inline_binding_summary_requires_no_resource_identity() {
         let binding = ResourceBindingSummary {
+            slot: crate::WorkspaceBindingSlot::Theme,
             label: "Theme".into(),
             source: BindingSourceSummary::Inline,
         };

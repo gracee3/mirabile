@@ -51,9 +51,11 @@ use crate::{
 #[cfg(feature = "xalen-backend")]
 use mirabile_engine::XalenBackend;
 
+mod binding_editing;
 mod calculation;
 mod catalog;
 mod configuration;
+mod deletion;
 mod editing;
 mod hydration;
 mod projection;
@@ -381,6 +383,7 @@ where
         self.read_model()
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn dispatch(&self, intent: AppIntent) -> AppResult<AppReadModel> {
         if !matches!(self.state.borrow().status, ApplicationStatus::Ready) {
             return Err(AppError::new(
@@ -422,6 +425,9 @@ where
             | AppIntent::SetWorkspaceAspectSet { .. } => {
                 self.dispatch_workspace_intent(&intent)?;
             }
+            AppIntent::SetWorkspaceBinding { slot, selection } => {
+                self.set_workspace_binding(slot, selection)?;
+            }
             AppIntent::ActivateChart { instance_id } => {
                 self.activate_session_chart(instance_id)?;
             }
@@ -456,6 +462,17 @@ where
             }
             AppIntent::SelectRepositoryResource { resource_id } => {
                 self.select_repository_resource(resource_id).await?;
+            }
+            AppIntent::BeginDeleteResource {
+                resource_id,
+                expected_revision,
+            } => self.begin_delete_resource(resource_id, expected_revision)?,
+            AppIntent::ConfirmDeleteResource {
+                resource_id,
+                expected_revision,
+            } => {
+                self.confirm_delete_resource(resource_id, expected_revision)
+                    .await?;
             }
             AppIntent::BeginResourceEdit { resource_id } => {
                 self.begin_resource_edit(resource_id)?;
@@ -530,6 +547,7 @@ struct RealState {
     editor: Option<AspectSetEditor>,
     chart_editor: Option<crate::ChartAuthoringEditor>,
     repository_selection: Option<RepositorySelection>,
+    delete_confirmation: Option<(ResourceId, Revision)>,
     resource_drafts: BTreeMap<crate::ResourceDraftKind, resource_editing::GenericResourceDraft>,
     workspace_switch: Option<WorkspaceSwitchDecisionReadModel>,
     pending_workspace_switch: Option<WorkspaceSwitchTarget>,
@@ -646,6 +664,7 @@ struct PendingCachedView {
 }
 
 fn binding_summary<T: BoundPayload>(
+    slot: crate::WorkspaceBindingSlot,
     label: &str,
     binding: &ResourceBinding<T>,
     catalog: &Catalog,
@@ -672,6 +691,7 @@ fn binding_summary<T: BoundPayload>(
         },
     };
     Ok(ResourceBindingSummary {
+        slot,
         label: label.into(),
         source,
     })

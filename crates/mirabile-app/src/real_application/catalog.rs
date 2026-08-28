@@ -98,6 +98,7 @@ impl Catalog {
                     },
                 })
                 .collect(),
+            deletion: None,
         }
     }
 
