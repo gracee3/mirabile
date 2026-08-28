@@ -58,9 +58,18 @@ and staged plus unstaged diff checks. Missing local prerequisites fail with an a
 The WASM build requires the `wasm32-unknown-unknown` Rust target. Run the app with:
 
 ```bash
-cd apps/web
-trunk serve
+(cd apps/web && trunk serve --port 8080)
 ```
+
+Generate the current diagnostics cockpit screenshot with:
+
+```bash
+./scripts/test-workbench-e2e.sh --scenario diagnostics-control --mode control
+```
+
+The generated image is `target/workbench-e2e-diagnostics-control.png`; keep it untracked unless it
+is deliberately selected as a repository artifact. Use `scripts/check.sh` during development and
+reserve the substantially heavier `scripts/verify.sh` for a complete handoff or merge gate.
 
 ## Current limitations
 
