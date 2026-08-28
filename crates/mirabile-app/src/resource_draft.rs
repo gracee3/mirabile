@@ -181,25 +181,48 @@ pub enum ChartRecordMutation {
     SetSource(SourceProvenance),
     Notes(DraftListMutation<Note>),
     LifeEvents(DraftListMutation<LifeEvent>),
+    LifeEventNotes {
+        life_event_id: DraftItemId,
+        mutation: DraftListMutation<Note>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChartDefinitionMutation {
     Metadata(ResourceMetadataMutation),
     SetSource(ChartSource),
+    MutateDerivedRecipe(DerivedRecipeMutation),
     SetCalculation(CalculationSpec),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DerivedRecipeMutation {
+    SetTransit {
+        at: TemporalAssertion,
+        location: LocationAssertion,
+    },
+    SetHarmonic {
+        radix: ResourceId,
+        harmonic: f64,
+    },
+    SetRelocation {
+        radix: ResourceId,
+        location: LocationAssertion,
+    },
+    SetCompositeMethod(mirabile_core::CompositeMethod),
+    CompositeCharts(DraftListMutation<ResourceId>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PointSetMutation {
     Metadata(ResourceMetadataMutation),
-    SetPoints(Vec<PointSelector>),
+    Selectors(DraftListMutation<PointSelector>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AspectSetMutation {
     Metadata(ResourceMetadataMutation),
-    SetAspects(Vec<AspectDefinition>),
+    Aspects(DraftListMutation<AspectDefinition>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -218,7 +241,11 @@ pub enum WheelTemplateMutation {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ViewDocumentMutation {
     Metadata(ResourceMetadataMutation),
-    SetChartSlots(Vec<ChartSlot>),
+    ChartSlots(DraftListMutation<ChartSlot>),
+    RenameChartSlot {
+        item_id: DraftItemId,
+        slot: ChartSlot,
+    },
     Objects(DraftListMutation<ViewObject>),
     SetLayout(PageLayout),
 }
@@ -233,14 +260,35 @@ pub enum ThemeMutation {
 pub enum QueryDefinitionMutation {
     Metadata(ResourceMetadataMutation),
     SetDescription(Option<String>),
-    SetExpression(QueryExpr),
+    Tree(QueryTreeMutation),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum QueryTreeMutation {
+    Replace {
+        node_id: DraftItemId,
+        expression: QueryExpr,
+    },
+    InsertChild {
+        parent_id: DraftItemId,
+        after: Option<DraftItemId>,
+        expression: QueryExpr,
+    },
+    Remove {
+        node_id: DraftItemId,
+    },
+    Move {
+        node_id: DraftItemId,
+        new_parent_id: DraftItemId,
+        before: Option<DraftItemId>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkspaceDocumentMutation {
     Metadata(ResourceMetadataMutation),
-    SetChartInstances(Vec<WorkspaceDocumentChart>),
-    SetViews(Vec<ViewInstance>),
+    ChartInstances(DraftListMutation<WorkspaceDocumentChart>),
+    Views(DraftListMutation<ViewInstance>),
     SetProfile(Box<WorkspaceProfile>),
 }
 
@@ -294,6 +342,10 @@ impl<T: Clone> StableDraftList<T> {
 
     pub fn items(&self) -> &[StableDraftItem<T>] {
         &self.items
+    }
+
+    pub(crate) fn items_mut(&mut self) -> &mut [StableDraftItem<T>] {
+        &mut self.items
     }
 
     pub fn apply(&mut self, mutation: DraftListMutation<T>) -> Result<(), &'static str> {
@@ -356,6 +408,51 @@ impl<T: Clone> StableDraftList<T> {
 pub struct DraftItemAddressReadModel {
     pub collection: String,
     pub item_id: DraftItemId,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct StableDraftItemReadModel<T> {
+    pub item_id: DraftItemId,
+    pub value: T,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct LifeEventDraftReadModel {
+    pub item_id: DraftItemId,
+    pub value: LifeEvent,
+    pub notes: Vec<StableDraftItemReadModel<Note>>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct QueryNodeDraftReadModel {
+    pub node_id: DraftItemId,
+    pub expression: QueryExpr,
+    pub children: Vec<QueryNodeDraftReadModel>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "type", content = "items", rename_all = "snake_case")]
+pub enum NestedResourceDraftReadModel {
+    None,
+    ChartRecord {
+        notes: Vec<StableDraftItemReadModel<Note>>,
+        life_events: Vec<LifeEventDraftReadModel>,
+    },
+    ChartDefinition {
+        composite_charts: Vec<StableDraftItemReadModel<ResourceId>>,
+    },
+    PointSet(Vec<StableDraftItemReadModel<PointSelector>>),
+    AspectSet(Vec<StableDraftItemReadModel<AspectDefinition>>),
+    WheelTemplate(Vec<StableDraftItemReadModel<RingSpec>>),
+    ViewDocument {
+        chart_slots: Vec<StableDraftItemReadModel<ChartSlot>>,
+        objects: Vec<StableDraftItemReadModel<ViewObject>>,
+    },
+    QueryDefinition(QueryNodeDraftReadModel),
+    WorkspaceDocument {
+        charts: Vec<StableDraftItemReadModel<WorkspaceDocumentChart>>,
+        views: Vec<StableDraftItemReadModel<ViewInstance>>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

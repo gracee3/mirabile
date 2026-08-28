@@ -471,8 +471,11 @@ impl MockState {
                     aspects: vec![AspectDraftValue {
                         aspect_id: conjunction_id(),
                         label: "Conjunction".into(),
+                        angle: Angle::from_degrees(0.0).expect("angle"),
                         enabled: editor.conjunction_enabled,
                         maximum_orb: editor.conjunction_orb,
+                        applying_multiplier: 1.0,
+                        classification: mirabile_app::AspectClass::Major,
                     }],
                 }),
                 drafts: Vec::new(),
@@ -1066,6 +1069,15 @@ impl MockState {
                     return Err(not_found("draft aspect"));
                 }
                 editor.conjunction_enabled = enabled;
+            }
+            AspectSetDraftMutation::Insert { .. }
+            | AspectSetDraftMutation::Update { .. }
+            | AspectSetDraftMutation::Remove { .. }
+            | AspectSetDraftMutation::Move { .. } => {
+                return Err(AppError::new(
+                    AppErrorKind::Unavailable,
+                    "The deterministic mock supports scalar Aspect Set edits only",
+                ));
             }
         }
         if !matches!(editor.state, DraftState::Conflict { .. }) {

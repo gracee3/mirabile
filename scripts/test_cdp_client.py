@@ -77,6 +77,15 @@ class CDPClientTests(unittest.TestCase):
                 3,
             )
 
+    def test_scenario_bindings_substitute_discovered_semantic_addresses(self) -> None:
+        module = load_workbench_control()
+        bindings = {"ring": "resource.list.field[collection=rings,draft-item=abc,field=slot,kind=wheeltemplate]"}
+        self.assertEqual(
+            module.substitute_bindings({"command": "set", "address": "${ring}", "value": "outer"}, bindings)["address"],
+            bindings["ring"],
+        )
+        self.assertEqual(module.result_path({"address": bindings["ring"]}, "address"), bindings["ring"])
+
 
 if __name__ == "__main__":
     unittest.main()

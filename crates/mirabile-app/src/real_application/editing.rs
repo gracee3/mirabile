@@ -151,6 +151,7 @@ where
         state.advance()
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn apply_chart_mutation(&self, mutation: ChartMutation) -> AppResult<()> {
         let descriptor = self.engine.backend_descriptor();
         let mut state = self.state.borrow_mut();
@@ -194,6 +195,17 @@ where
             ChartMutation::SetHouseSystem(value) => {
                 ensure_option_enabled(&capabilities.house_systems, value)?;
             }
+            ChartMutation::SetCalculation(value) => {
+                let mode = match value.zodiac {
+                    mirabile_core::ZodiacSpec::Tropical => mirabile_engine::ZodiacMode::Tropical,
+                    mirabile_core::ZodiacSpec::Sidereal { .. } => {
+                        mirabile_engine::ZodiacMode::Sidereal
+                    }
+                };
+                ensure_option_enabled(&capabilities.zodiac_modes, &mode)?;
+                ensure_option_enabled(&capabilities.coordinate_systems, &value.coordinates)?;
+                ensure_option_enabled(&capabilities.house_systems, &value.houses)?;
+            }
             ChartMutation::SetTitle(_)
             | ChartMutation::SetEventKind(_)
             | ChartMutation::SetSubjectName(_)
@@ -204,7 +216,8 @@ where
             | ChartMutation::SetLocationName(_)
             | ChartMutation::SetCountryRegion(_)
             | ChartMutation::SetLatitude(_)
-            | ChartMutation::SetLongitude(_) => {}
+            | ChartMutation::SetLongitude(_)
+            | ChartMutation::SetRecordDetails(_) => {}
         }
         let (instance_id, is_new, materialized) = {
             let editor = state.chart_editor.as_mut().expect("editor was checked");
@@ -731,6 +744,7 @@ where
         state.advance()
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn update_aspect_set_draft(
         &self,
         mutation: AspectSetDraftMutation,
@@ -792,6 +806,76 @@ where
                         )
                     })?;
                 aspect.enabled = enabled;
+                true
+            }
+            AspectSetDraftMutation::Insert { after, aspect } => {
+                let index = after.map_or(Ok(0), |id| {
+                    editor
+                        .draft
+                        .aspects
+                        .iter()
+                        .position(|value| value.id == id)
+                        .map(|i| i + 1)
+                        .ok_or_else(|| {
+                            AppError::new(
+                                AppErrorKind::NotFound,
+                                "Aspect insertion anchor was not found",
+                            )
+                        })
+                })?;
+                editor.draft.aspects.insert(index, aspect);
+                true
+            }
+            AspectSetDraftMutation::Update { aspect_id, aspect } => {
+                let value = editor
+                    .draft
+                    .aspects
+                    .iter_mut()
+                    .find(|value| value.id == aspect_id)
+                    .ok_or_else(|| {
+                        AppError::new(AppErrorKind::NotFound, "Aspect row was not found")
+                    })?;
+                *value = aspect;
+                true
+            }
+            AspectSetDraftMutation::Remove { aspect_id } => {
+                let index = editor
+                    .draft
+                    .aspects
+                    .iter()
+                    .position(|value| value.id == aspect_id)
+                    .ok_or_else(|| {
+                        AppError::new(AppErrorKind::NotFound, "Aspect row was not found")
+                    })?;
+                editor.draft.aspects.remove(index);
+                true
+            }
+            AspectSetDraftMutation::Move { aspect_id, before } => {
+                if before.as_ref() != Some(&aspect_id) {
+                    let index = editor
+                        .draft
+                        .aspects
+                        .iter()
+                        .position(|value| value.id == aspect_id)
+                        .ok_or_else(|| {
+                            AppError::new(AppErrorKind::NotFound, "Aspect row was not found")
+                        })?;
+                    let value = editor.draft.aspects.remove(index);
+                    let destination = before.map_or(Ok(editor.draft.aspects.len()), |id| {
+                        editor
+                            .draft
+                            .aspects
+                            .iter()
+                            .position(|value| value.id == id)
+                            .ok_or_else(|| {
+                                AppError::new(
+                                    AppErrorKind::NotFound,
+                                    "Aspect move target was not found",
+                                )
+                            })
+                    })?;
+                    editor.draft.aspects.insert(destination, value);
+                }
                 true
             }
         };

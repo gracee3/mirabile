@@ -279,6 +279,21 @@ pub enum SemanticActionV1 {
     SetAspectTitle {
         title: String,
     },
+    InsertAspect {
+        after: Option<AspectId>,
+        aspect: mirabile_core::AspectDefinition,
+    },
+    UpdateAspect {
+        aspect_id: AspectId,
+        aspect: mirabile_core::AspectDefinition,
+    },
+    RemoveAspect {
+        aspect_id: AspectId,
+    },
+    MoveAspect {
+        aspect_id: AspectId,
+        before: Option<AspectId>,
+    },
     SaveDraft,
     CancelDraft,
     SaveWorkspace,
@@ -288,6 +303,22 @@ pub enum SemanticActionV1 {
     },
     PromoteTemporaryDisplay,
     RefreshActiveView,
+    BeginResourceCreate {
+        kind: crate::ResourceDraftKind,
+    },
+    BeginResourceEdit {
+        resource: MacroResourceSelector,
+    },
+    SetResourceMetadata {
+        kind: crate::ResourceDraftKind,
+        mutation: crate::ResourceMetadataMutation,
+    },
+    SaveResourceDraft {
+        kind: crate::ResourceDraftKind,
+    },
+    CancelResourceDraft {
+        kind: crate::ResourceDraftKind,
+    },
 }
 
 impl SemanticActionV1 {
@@ -339,6 +370,9 @@ impl SemanticActionV1 {
                 ChartMutation::SetCoordinateSystem(coordinates) => Self::SetChartCoordinates {
                     coordinates: *coordinates,
                 },
+                ChartMutation::SetRecordDetails(_) | ChartMutation::SetCalculation(_) => {
+                    return Err(MacroError::UnsupportedIntent(intent.semantic_summary()));
+                }
             },
             AppIntent::SaveChartEditor => Self::SaveChartEditor,
             AppIntent::CancelChartEditor => Self::CancelChartEditor,
@@ -414,22 +448,74 @@ impl SemanticActionV1 {
                         enabled: *enabled,
                     }
                 }
+                AspectSetDraftMutation::Insert { after, aspect } => Self::InsertAspect {
+                    after: after.clone(),
+                    aspect: aspect.clone(),
+                },
+                AspectSetDraftMutation::Update { aspect_id, aspect } => Self::UpdateAspect {
+                    aspect_id: aspect_id.clone(),
+                    aspect: aspect.clone(),
+                },
+                AspectSetDraftMutation::Remove { aspect_id } => Self::RemoveAspect {
+                    aspect_id: aspect_id.clone(),
+                },
+                AspectSetDraftMutation::Move { aspect_id, before } => Self::MoveAspect {
+                    aspect_id: aspect_id.clone(),
+                    before: before.clone(),
+                },
             },
             AppIntent::SaveDraft => Self::SaveDraft,
             AppIntent::CancelDraft => Self::CancelDraft,
             AppIntent::RefreshActiveView => Self::RefreshActiveView,
+            AppIntent::BeginResourceCreate { kind } => Self::BeginResourceCreate { kind: *kind },
+            AppIntent::BeginResourceEdit { resource_id } => Self::BeginResourceEdit {
+                resource: captured_any_resource(*resource_id, model, bindings),
+            },
+            AppIntent::ApplyResourceMutation(mutation) => {
+                let kind = mutation.kind();
+                let metadata = match mutation.as_ref() {
+                    crate::ResourceMutation::ChartRecord(crate::ChartRecordMutation::Metadata(
+                        value,
+                    ))
+                    | crate::ResourceMutation::ChartDefinition(
+                        crate::ChartDefinitionMutation::Metadata(value),
+                    )
+                    | crate::ResourceMutation::PointSet(crate::PointSetMutation::Metadata(value))
+                    | crate::ResourceMutation::AspectSet(crate::AspectSetMutation::Metadata(
+                        value,
+                    ))
+                    | crate::ResourceMutation::AnalysisProfile(
+                        crate::AnalysisProfileMutation::Metadata(value),
+                    )
+                    | crate::ResourceMutation::WheelTemplate(
+                        crate::WheelTemplateMutation::Metadata(value),
+                    )
+                    | crate::ResourceMutation::ViewDocument(
+                        crate::ViewDocumentMutation::Metadata(value),
+                    )
+                    | crate::ResourceMutation::Theme(crate::ThemeMutation::Metadata(value))
+                    | crate::ResourceMutation::QueryDefinition(
+                        crate::QueryDefinitionMutation::Metadata(value),
+                    )
+                    | crate::ResourceMutation::WorkspaceDocument(
+                        crate::WorkspaceDocumentMutation::Metadata(value),
+                    ) => value.clone(),
+                    _ => return Err(MacroError::UnsupportedIntent(intent.semantic_summary())),
+                };
+                Self::SetResourceMetadata {
+                    kind,
+                    mutation: metadata,
+                }
+            }
+            AppIntent::SaveResourceDraft { kind } => Self::SaveResourceDraft { kind: *kind },
+            AppIntent::CancelResourceDraft { kind } => Self::CancelResourceDraft { kind: *kind },
             AppIntent::StartChartDraft { .. }
             | AppIntent::SaveChartDraft { .. }
             | AppIntent::CancelChartDraft { .. }
             | AppIntent::SelectRepositoryResource { .. }
             | AppIntent::BeginDeleteResource { .. }
             | AppIntent::ConfirmDeleteResource { .. }
-            | AppIntent::SetWorkspaceBinding { .. }
-            | AppIntent::BeginResourceEdit { .. }
-            | AppIntent::BeginResourceCreate { .. }
-            | AppIntent::ApplyResourceMutation(_)
-            | AppIntent::SaveResourceDraft { .. }
-            | AppIntent::CancelResourceDraft { .. } => {
+            | AppIntent::SetWorkspaceBinding { .. } => {
                 return Err(MacroError::UnsupportedIntent(intent.semantic_summary()));
             }
         })
@@ -572,6 +658,29 @@ impl SemanticActionV1 {
             Self::SetAspectTitle { title } => {
                 AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetTitle(title.clone()))
             }
+            Self::InsertAspect { after, aspect } => {
+                AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Insert {
+                    after: after.clone(),
+                    aspect: aspect.clone(),
+                })
+            }
+            Self::UpdateAspect { aspect_id, aspect } => {
+                AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Update {
+                    aspect_id: aspect_id.clone(),
+                    aspect: aspect.clone(),
+                })
+            }
+            Self::RemoveAspect { aspect_id } => {
+                AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Remove {
+                    aspect_id: aspect_id.clone(),
+                })
+            }
+            Self::MoveAspect { aspect_id, before } => {
+                AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Move {
+                    aspect_id: aspect_id.clone(),
+                    before: before.clone(),
+                })
+            }
             Self::SaveDraft => AppIntent::SaveDraft,
             Self::CancelDraft => AppIntent::CancelDraft,
             Self::SaveWorkspace => AppIntent::SaveWorkspace,
@@ -583,6 +692,15 @@ impl SemanticActionV1 {
             }
             Self::PromoteTemporaryDisplay => AppIntent::PromoteTemporaryDisplay,
             Self::RefreshActiveView => AppIntent::RefreshActiveView,
+            Self::BeginResourceCreate { kind } => AppIntent::BeginResourceCreate { kind: *kind },
+            Self::BeginResourceEdit { resource } => AppIntent::BeginResourceEdit {
+                resource_id: resolve_any_resource(resource, model, bindings)?,
+            },
+            Self::SetResourceMetadata { kind, mutation } => AppIntent::ApplyResourceMutation(
+                Box::new(metadata_resource_mutation(*kind, mutation.clone())),
+            ),
+            Self::SaveResourceDraft { kind } => AppIntent::SaveResourceDraft { kind: *kind },
+            Self::CancelResourceDraft { kind } => AppIntent::CancelResourceDraft { kind: *kind },
         })
     }
 
@@ -595,6 +713,7 @@ impl SemanticActionV1 {
                 | Self::SaveChartEditor
                 | Self::SaveDraft
                 | Self::SaveWorkspace
+                | Self::SaveResourceDraft { .. }
         )
     }
 
@@ -617,6 +736,14 @@ impl SemanticActionV1 {
                 .and_then(|draft| draft.resource_id)
                 .map(MacroBoundValue::Resource)
                 .ok_or(MacroError::MissingResult("saved Aspect Set")),
+            Self::SaveResourceDraft { kind } => model
+                .resource_editor
+                .drafts
+                .iter()
+                .find(|draft| draft.kind == *kind)
+                .and_then(|draft| draft.resource_id)
+                .map(MacroBoundValue::Resource)
+                .ok_or(MacroError::MissingResult("saved canonical resource")),
             _ => Err(MacroError::MissingResult("action result")),
         }
     }
@@ -642,6 +769,7 @@ impl SemanticActionV1 {
             | Self::SetWorkspaceAspectSet { aspect_set } => {
                 resource_binding(aspect_set, &mut bindings);
             }
+            Self::BeginResourceEdit { resource } => resource_binding(resource, &mut bindings),
             _ => {}
         }
         bindings
@@ -827,6 +955,80 @@ fn captured_resource<'a>(
             },
             |binding| MacroResourceSelector::Binding { binding },
         )
+}
+
+fn captured_any_resource(
+    id: ResourceId,
+    model: &AppReadModel,
+    bindings: &MacroBindings,
+) -> MacroResourceSelector {
+    captured_resource(
+        id,
+        model.resources.inventories.iter().flat_map(|inventory| {
+            inventory
+                .resources
+                .iter()
+                .map(|resource| (resource.title.as_str(), resource.resource_id))
+        }),
+        bindings,
+    )
+}
+
+fn resolve_any_resource(
+    selector: &MacroResourceSelector,
+    model: &AppReadModel,
+    bindings: &MacroBindings,
+) -> Result<ResourceId, MacroError> {
+    resolve_resource(selector, bindings, |title| {
+        unique_title(
+            title,
+            model.resources.inventories.iter().flat_map(|inventory| {
+                inventory
+                    .resources
+                    .iter()
+                    .map(|resource| (resource.title.as_str(), resource.resource_id))
+            }),
+            "canonical resource",
+        )
+    })
+}
+
+fn metadata_resource_mutation(
+    kind: crate::ResourceDraftKind,
+    mutation: crate::ResourceMetadataMutation,
+) -> crate::ResourceMutation {
+    match kind {
+        crate::ResourceDraftKind::ChartRecord => {
+            crate::ResourceMutation::ChartRecord(crate::ChartRecordMutation::Metadata(mutation))
+        }
+        crate::ResourceDraftKind::ChartDefinition => crate::ResourceMutation::ChartDefinition(
+            crate::ChartDefinitionMutation::Metadata(mutation),
+        ),
+        crate::ResourceDraftKind::PointSet => {
+            crate::ResourceMutation::PointSet(crate::PointSetMutation::Metadata(mutation))
+        }
+        crate::ResourceDraftKind::AspectSet => {
+            crate::ResourceMutation::AspectSet(crate::AspectSetMutation::Metadata(mutation))
+        }
+        crate::ResourceDraftKind::AnalysisProfile => crate::ResourceMutation::AnalysisProfile(
+            crate::AnalysisProfileMutation::Metadata(mutation),
+        ),
+        crate::ResourceDraftKind::WheelTemplate => {
+            crate::ResourceMutation::WheelTemplate(crate::WheelTemplateMutation::Metadata(mutation))
+        }
+        crate::ResourceDraftKind::ViewDocument => {
+            crate::ResourceMutation::ViewDocument(crate::ViewDocumentMutation::Metadata(mutation))
+        }
+        crate::ResourceDraftKind::Theme => {
+            crate::ResourceMutation::Theme(crate::ThemeMutation::Metadata(mutation))
+        }
+        crate::ResourceDraftKind::QueryDefinition => crate::ResourceMutation::QueryDefinition(
+            crate::QueryDefinitionMutation::Metadata(mutation),
+        ),
+        crate::ResourceDraftKind::WorkspaceDocument => crate::ResourceMutation::WorkspaceDocument(
+            crate::WorkspaceDocumentMutation::Metadata(mutation),
+        ),
+    }
 }
 
 fn captured_view(
@@ -1173,5 +1375,48 @@ mod tests {
                 chart: MacroInstanceSelector::Binding { binding }
             } if binding.as_str() == "$chart1"
         ));
+    }
+
+    #[test]
+    fn macro_v1_additively_round_trips_typed_resource_lifecycle_and_metadata() {
+        let model = AppReadModel::initializing();
+        let bindings = MacroBindings::default();
+        let create = SemanticActionV1::capture(
+            &AppIntent::BeginResourceCreate {
+                kind: crate::ResourceDraftKind::PointSet,
+            },
+            &model,
+            &bindings,
+        )
+        .expect("capture create");
+        let metadata = SemanticActionV1::capture(
+            &AppIntent::ApplyResourceMutation(Box::new(crate::ResourceMutation::PointSet(
+                crate::PointSetMutation::Metadata(crate::ResourceMetadataMutation::SetTitle(
+                    "Macro points".into(),
+                )),
+            ))),
+            &model,
+            &bindings,
+        )
+        .expect("capture metadata");
+        let document = MacroDocumentV1::new(
+            "typed resource",
+            vec![
+                MacroStepV1 {
+                    action: create,
+                    origin_control: None,
+                    bind: None,
+                },
+                MacroStepV1 {
+                    action: metadata,
+                    origin_control: None,
+                    bind: None,
+                },
+            ],
+        )
+        .expect("document");
+        let json = serde_json::to_string(&document).expect("json");
+        assert_eq!(MacroDocumentV1::from_json(&json), Ok(document));
+        assert!(!json.contains("draft_item"));
     }
 }

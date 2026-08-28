@@ -4,6 +4,85 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{InstanceId, ResourceId, ViewInstanceId};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CockpitCoverageEntry {
+    pub modeled_family: &'static str,
+    pub control_family: &'static str,
+    pub unavailable_reason: Option<&'static str>,
+}
+
+/// Exhaustive application-owned registry used by native acceptance tests and the cockpit manifest.
+/// A missing control must be represented here with an explicit reason instead of disappearing.
+pub const COCKPIT_COVERAGE: &[CockpitCoverageEntry] = &[
+    CockpitCoverageEntry {
+        modeled_family: "metadata",
+        control_family: "resource.title,resource.description,resource.tags",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "chart_record",
+        control_family: "chart.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "calculation_spec",
+        control_family: "chart.zodiac,chart.houses,chart.coordinates",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "derived_recipe",
+        control_family: "resource.recipe.field,resource.list.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "point_selectors",
+        control_family: "resource.point,resource.list.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "aspect_rows",
+        control_family: "aspect.*,resource.list.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "wheel_rings_and_flags",
+        control_family: "resource.wheel.field,resource.list.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "view_slots_and_objects",
+        control_family: "resource.view.*,resource.list.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "query_tree",
+        control_family: "resource.query.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "workspace_composition",
+        control_family: "workspace.*,binding.*,view.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "query_execution",
+        control_family: "none",
+        unavailable_reason: Some("Query execution is deferred; definitions are persisted only"),
+    },
+    CockpitCoverageEntry {
+        modeled_family: "derived_calculation",
+        control_family: "none",
+        unavailable_reason: Some("Derived calculation is deferred; recipes are persisted only"),
+    },
+    CockpitCoverageEntry {
+        modeled_family: "non_wheel_view_rendering",
+        control_family: "none",
+        unavailable_reason: Some(
+            "Non-wheel View Objects are persisted but runtime rendering is deferred",
+        ),
+    },
+];
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct ControlId(Cow<'static, str>);
@@ -18,6 +97,13 @@ impl ControlId {
     pub const ASPECT_NEW: Self = Self(Cow::Borrowed("aspect.new"));
     pub const ASPECT_RESOURCE: Self = Self(Cow::Borrowed("aspect.resource"));
     pub const ASPECT_TITLE: Self = Self(Cow::Borrowed("aspect.title"));
+    pub const ASPECT_NAME: Self = Self(Cow::Borrowed("aspect.name"));
+    pub const ASPECT_ANGLE: Self = Self(Cow::Borrowed("aspect.angle"));
+    pub const ASPECT_APPLYING_MULTIPLIER: Self = Self(Cow::Borrowed("aspect.applying-multiplier"));
+    pub const ASPECT_CLASSIFICATION: Self = Self(Cow::Borrowed("aspect.classification"));
+    pub const ASPECT_REMOVE: Self = Self(Cow::Borrowed("aspect.remove"));
+    pub const ASPECT_MOVE: Self = Self(Cow::Borrowed("aspect.move"));
+    pub const ASPECT_INSERT: Self = Self(Cow::Borrowed("aspect.insert"));
     pub const CHART_ACTIVATE: Self = Self(Cow::Borrowed("chart.activate"));
     pub const CHART_CLOSE: Self = Self(Cow::Borrowed("chart.close"));
     pub const CHART_COORDINATES: Self = Self(Cow::Borrowed("chart.coordinates"));
@@ -40,6 +126,10 @@ impl ControlId {
     pub const CHART_TIMEZONE: Self = Self(Cow::Borrowed("chart.timezone"));
     pub const CHART_TITLE: Self = Self(Cow::Borrowed("chart.title"));
     pub const CHART_ZODIAC: Self = Self(Cow::Borrowed("chart.zodiac"));
+    pub const CHART_LUNAR_NODE: Self = Self(Cow::Borrowed("chart.lunar-node"));
+    pub const CHART_BLACK_MOON: Self = Self(Cow::Borrowed("chart.black-moon"));
+    pub const CHART_FORTUNE_FORMULA: Self = Self(Cow::Borrowed("chart.fortune-formula"));
+    pub const CHART_CORRECTION: Self = Self(Cow::Borrowed("chart.correction"));
     pub const DISPLAY_POINT: Self = Self(Cow::Borrowed("display.point"));
     pub const DISPLAY_PROMOTE: Self = Self(Cow::Borrowed("display.promote"));
     pub const DIAGNOSTICS_EXPORT_SNAPSHOT: Self =
@@ -76,6 +166,16 @@ impl ControlId {
     pub const RESOURCE_QUERY_DESCRIPTION: Self = Self(Cow::Borrowed("resource.query.description"));
     pub const RESOURCE_POINT: Self = Self(Cow::Borrowed("resource.point"));
     pub const RESOURCE_WHEEL_FIELD: Self = Self(Cow::Borrowed("resource.wheel.field"));
+    pub const RESOURCE_LIST_INSERT: Self = Self(Cow::Borrowed("resource.list.insert"));
+    pub const RESOURCE_LIST_FIELD: Self = Self(Cow::Borrowed("resource.list.field"));
+    pub const RESOURCE_LIST_REMOVE: Self = Self(Cow::Borrowed("resource.list.remove"));
+    pub const RESOURCE_LIST_MOVE: Self = Self(Cow::Borrowed("resource.list.move"));
+    pub const RESOURCE_QUERY_NODE: Self = Self(Cow::Borrowed("resource.query.node"));
+    pub const RESOURCE_QUERY_INSERT: Self = Self(Cow::Borrowed("resource.query.insert"));
+    pub const RESOURCE_QUERY_REMOVE: Self = Self(Cow::Borrowed("resource.query.remove"));
+    pub const RESOURCE_QUERY_MOVE: Self = Self(Cow::Borrowed("resource.query.move"));
+    pub const RESOURCE_RECIPE_FIELD: Self = Self(Cow::Borrowed("resource.recipe.field"));
+    pub const RESOURCE_WORKSPACE_FIELD: Self = Self(Cow::Borrowed("resource.workspace.field"));
     pub const BINDING_MODE: Self = Self(Cow::Borrowed("binding.mode"));
     pub const BINDING_RESOURCE: Self = Self(Cow::Borrowed("binding.resource"));
     pub const BINDING_REVISION: Self = Self(Cow::Borrowed("binding.revision"));
@@ -475,5 +575,28 @@ mod tests {
         }
         assert!(ControlKind::from_str("radio").is_err());
         assert!(ControlKind::from_str("Text").is_err());
+    }
+
+    #[test]
+    fn cockpit_coverage_has_exact_families_and_reasons_for_every_unavailable_entry() {
+        let families = COCKPIT_COVERAGE
+            .iter()
+            .map(|entry| entry.modeled_family)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            families.len(),
+            COCKPIT_COVERAGE.len(),
+            "modeled families must be unique"
+        );
+        assert!(
+            COCKPIT_COVERAGE
+                .iter()
+                .all(|entry| !entry.control_family.trim().is_empty())
+        );
+        assert!(COCKPIT_COVERAGE.iter().all(|entry| {
+            entry
+                .unavailable_reason
+                .is_none_or(|reason| !reason.trim().is_empty())
+        }));
     }
 }

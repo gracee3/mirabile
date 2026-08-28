@@ -41,9 +41,14 @@ pub use workspace_session::*;
 
 // Stable identity/value types cross the application boundary without frontend-specific aliases.
 pub use mirabile_core::{
-    Angle, AspectId, ChartSlotId, CivilDate, CivilTime, CoordinateSystem, CorrectionSpec,
-    EventKind, HouseSystem, InstanceId, Latitude, Longitude, Offset, PointId, PointSelector,
-    ResourceId, ResourceKind, Revision, Timestamp, ViewInstanceId, ZodiacSpec,
+    Angle, AspectClass, AspectDefinition, AspectId, AspectTableObject, BlackMoonType, CalendarSpec,
+    ChartDefinition, ChartDetailsObject, ChartSlot, ChartSlotId, ChartSource, CivilDate,
+    CivilDateTime, CivilTime, CompositeMethod, CoordinateSystem, CorrectionSpec, DerivationSpec,
+    EventKind, FortuneFormula, GridObject, HouseSystem, InstanceId, Latitude, LocationAssertion,
+    Longitude, LunarNodeType, NumericComparison, ObjectFrame, Offset, OrbPolicy, PointId,
+    PointRole, PointSelector, PointTableObject, Predicate, QueryExpr, ResourceId, ResourceKind,
+    Revision, RingGeometry, RingSpec, TemporalAssertion, TextComparison, TextObject,
+    TimeZoneAssertion, Timestamp, ViewInstanceId, ViewObject, WheelObject, ZodiacSpec,
 };
 pub use mirabile_engine::ZodiacMode;
 

@@ -1,0 +1,30 @@
+{
+  "name": "nested-builder-control",
+  "steps": [
+    {"command": "wait"},
+    {"command": "click", "address": "resource.new[kind=wheeltemplate]"},
+    {"command": "click", "address": "resource.list.insert[collection=rings,kind=wheeltemplate]"},
+    {"command": "discover", "control": "resource.list.field", "qualifiers": {"kind": "wheeltemplate", "collection": "rings", "field": "slot"}, "bind": "ring_slot"},
+    {"command": "set", "address": "${ring_slot}", "value": "outer"},
+    {"command": "discover", "control": "resource.list.field", "qualifiers": {"kind": "wheeltemplate", "collection": "rings", "field": "inner-radius"}, "bind": "ring_inner"},
+    {"command": "set", "address": "${ring_inner}", "value": "0.6"},
+    {"command": "click", "address": "resource.save[kind=wheeltemplate]"},
+    {"command": "wait"},
+    {"command": "click", "address": "resource.new[kind=viewdocument]"},
+    {"command": "click", "address": "resource.list.insert[collection=chart-slots,kind=viewdocument]"},
+    {"command": "click", "address": "resource.list.insert[collection=objects,kind=viewdocument]"},
+    {"command": "discover", "control": "resource.list.field", "qualifiers": {"kind": "viewdocument", "collection": "objects", "field": "width"}, "bind": "object_width"},
+    {"command": "set", "address": "${object_width}", "value": "512"},
+    {"command": "click", "address": "resource.save[kind=viewdocument]"},
+    {"command": "wait"},
+    {"command": "click", "address": "resource.new[kind=querydefinition]"},
+    {"command": "discover", "control": "resource.query.node", "qualifiers": {"kind": "querydefinition", "collection": "tree", "field": "type"}, "bind": "query_root"},
+    {"command": "select", "address": "${query_root}", "value": "and"},
+    {"command": "discover", "control": "resource.query.insert", "qualifiers": {"kind": "querydefinition", "collection": "tree"}, "bind": "query_add"},
+    {"command": "click", "address": "${query_add}"},
+    {"command": "click", "address": "resource.save[kind=querydefinition]"},
+    {"command": "wait"},
+    {"command": "reload"},
+    {"command": "wait"}
+  ]
+}

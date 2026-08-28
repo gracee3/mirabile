@@ -24,6 +24,8 @@ pub enum ChartMutation {
     SetZodiac(ZodiacSpec),
     SetHouseSystem(HouseSystem),
     SetCoordinateSystem(CoordinateSystem),
+    SetRecordDetails(Box<ChartRecord>),
+    SetCalculation(CalculationSpec),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -108,6 +110,8 @@ pub struct ChartEditorFieldsReadModel {
     pub zodiac: ZodiacSpec,
     pub houses: HouseSystem,
     pub coordinates: CoordinateSystem,
+    pub record: ChartRecord,
+    pub calculation: CalculationSpec,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -288,6 +292,7 @@ impl ChartAuthoringEditor {
                 | ChartMutation::SetCountryRegion(_)
                 | ChartMutation::SetLatitude(_)
                 | ChartMutation::SetLongitude(_)
+                | ChartMutation::SetRecordDetails(_)
         )
     }
 
@@ -323,6 +328,17 @@ impl ChartAuthoringEditor {
             ChartMutation::SetCoordinateSystem(value) => {
                 self.draft.calculation.coordinates = value;
             }
+            ChartMutation::SetRecordDetails(value) => {
+                self.draft.event_kind = value.event_kind.clone();
+                self.draft.subject_name = value
+                    .subject
+                    .as_ref()
+                    .map(|subject| subject.display_name.clone());
+                self.draft.civil_date = value.time.civil_datetime.date;
+                self.draft.civil_time = value.time.civil_datetime.time;
+                self.draft.record_template = *value;
+            }
+            ChartMutation::SetCalculation(value) => self.draft.calculation = value,
         }
         self.state = ChartEditorState::Dirty;
         self.conflicts.clear();
@@ -360,6 +376,8 @@ impl ChartAuthoringEditor {
                 zodiac: self.draft.calculation.zodiac.clone(),
                 houses: self.draft.calculation.houses,
                 coordinates: self.draft.calculation.coordinates,
+                record: self.last_valid.record.clone(),
+                calculation: self.draft.calculation.clone(),
             },
             validation: self.validation.clone(),
             last_valid_preview_present: true,

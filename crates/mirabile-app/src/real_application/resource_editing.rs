@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     AnalysisProfileMutation, AspectSetMutation, ChartDefinitionMutation, ChartRecordMutation,
-    DraftItemAddressReadModel, PointSetMutation, QueryDefinitionMutation,
+    DerivedRecipeMutation, PointSetMutation, QueryDefinitionMutation, QueryTreeMutation,
     ResourceDraftConflictReadModel, ResourceDraftKind, ResourceMetadataMutation, ResourceMutation,
     StableDraftList, ThemeMutation, TypedResourceDraftReadModel, ViewDocumentMutation,
     WheelTemplateMutation, WorkspaceDocumentMutation,
@@ -24,17 +24,58 @@ enum NestedDraftState {
     None,
     ChartRecord {
         notes: StableDraftList<mirabile_core::Note>,
-        life_events: StableDraftList<mirabile_core::LifeEvent>,
+        life_events: StableDraftList<DraftLifeEvent>,
+    },
+    ChartDefinition {
+        composite_charts: StableDraftList<mirabile_core::ResourceId>,
+    },
+    PointSet {
+        selectors: StableDraftList<mirabile_core::PointSelector>,
+    },
+    AspectSet {
+        aspects: StableDraftList<mirabile_core::AspectDefinition>,
     },
     WheelTemplate {
         rings: StableDraftList<mirabile_core::RingSpec>,
     },
     ViewDocument {
+        chart_slots: StableDraftList<mirabile_core::ChartSlot>,
         objects: StableDraftList<mirabile_core::ViewObject>,
     },
     QueryDefinition {
-        node_ids: Vec<crate::DraftItemId>,
+        tree: DraftQueryNode,
     },
+    WorkspaceDocument {
+        charts: StableDraftList<mirabile_core::WorkspaceDocumentChart>,
+        views: StableDraftList<mirabile_core::ViewInstance>,
+    },
+}
+
+#[derive(Clone)]
+struct DraftQueryNode {
+    id: crate::DraftItemId,
+    expression: mirabile_core::QueryExpr,
+    children: Vec<DraftQueryNode>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct DraftLifeEvent {
+    value: mirabile_core::LifeEvent,
+    notes: StableDraftList<mirabile_core::Note>,
+}
+
+impl DraftLifeEvent {
+    fn from_canonical(value: &mirabile_core::LifeEvent) -> Self {
+        Self {
+            value: value.clone(),
+            notes: StableDraftList::from_canonical(&value.notes),
+        }
+    }
+    fn materialize(&self) -> mirabile_core::LifeEvent {
+        let mut value = self.value.clone();
+        value.notes = self.notes.canonical_values();
+        value
+    }
 }
 
 impl GenericResourceDraft {
@@ -71,7 +112,7 @@ impl GenericResourceDraft {
             tags: self.draft.tags().to_vec(),
             state: self.state.clone(),
             conflicts: self.conflicts.clone(),
-            nested_items: self.nested.addresses(),
+            nested: self.nested.read_model(),
             value: crate::ResourceDraftValueReadModel::from(&self.draft),
         }
     }
@@ -153,8 +194,51 @@ impl GenericResourceDraft {
                 let NestedDraftState::ChartRecord { life_events, .. } = &mut self.nested else {
                     return Err(kind_mismatch());
                 };
+                let mutation = match mutation {
+                    crate::DraftListMutation::Insert { after, value } => {
+                        crate::DraftListMutation::Insert {
+                            after,
+                            value: DraftLifeEvent::from_canonical(&value),
+                        }
+                    }
+                    crate::DraftListMutation::Update { item_id, value } => {
+                        crate::DraftListMutation::Update {
+                            item_id,
+                            value: DraftLifeEvent::from_canonical(&value),
+                        }
+                    }
+                    crate::DraftListMutation::Remove { item_id } => {
+                        crate::DraftListMutation::Remove { item_id }
+                    }
+                    crate::DraftListMutation::Move { item_id, before } => {
+                        crate::DraftListMutation::Move { item_id, before }
+                    }
+                };
                 life_events.apply(mutation).map_err(list_error)?;
-                envelope.payload.life_events = life_events.canonical_values();
+                envelope.payload.life_events = life_events
+                    .items()
+                    .iter()
+                    .map(|item| item.value.materialize())
+                    .collect();
+            }
+            ChartRecordMutation::LifeEventNotes {
+                life_event_id,
+                mutation,
+            } => {
+                let NestedDraftState::ChartRecord { life_events, .. } = &mut self.nested else {
+                    return Err(kind_mismatch());
+                };
+                let event = life_events
+                    .items_mut()
+                    .iter_mut()
+                    .find(|item| item.id == life_event_id)
+                    .ok_or_else(|| list_error("Draft life event was not found"))?;
+                event.value.notes.apply(mutation).map_err(list_error)?;
+                envelope.payload.life_events = life_events
+                    .items()
+                    .iter()
+                    .map(|item| item.value.materialize())
+                    .collect();
             }
             ChartRecordMutation::Metadata(_) => unreachable!(),
         }
@@ -170,7 +254,57 @@ impl GenericResourceDraft {
             return Err(kind_mismatch());
         };
         match mutation {
-            ChartDefinitionMutation::SetSource(value) => envelope.payload.source = value,
+            ChartDefinitionMutation::SetSource(value) => {
+                envelope.payload.source = value;
+                self.nested = NestedDraftState::from_resource(&self.draft);
+            }
+            ChartDefinitionMutation::MutateDerivedRecipe(mutation) => {
+                let mirabile_core::ChartSource::Derived { recipe } = &mut envelope.payload.source
+                else {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "Derived recipe mutations require a derived chart source",
+                    ));
+                };
+                match mutation {
+                    DerivedRecipeMutation::SetTransit { at, location } => {
+                        *recipe = mirabile_core::DerivationSpec::Transit { at, location }
+                    }
+                    DerivedRecipeMutation::SetHarmonic { radix, harmonic } => {
+                        *recipe = mirabile_core::DerivationSpec::Harmonic { radix, harmonic }
+                    }
+                    DerivedRecipeMutation::SetRelocation { radix, location } => {
+                        *recipe = mirabile_core::DerivationSpec::Relocation { radix, location }
+                    }
+                    DerivedRecipeMutation::SetCompositeMethod(method) => {
+                        let mirabile_core::DerivationSpec::Composite {
+                            method: current, ..
+                        } = recipe
+                        else {
+                            return Err(AppError::new(
+                                AppErrorKind::InvalidIntent,
+                                "Composite method requires a composite recipe",
+                            ));
+                        };
+                        *current = method;
+                    }
+                    DerivedRecipeMutation::CompositeCharts(mutation) => {
+                        let NestedDraftState::ChartDefinition { composite_charts } =
+                            &mut self.nested
+                        else {
+                            return Err(kind_mismatch());
+                        };
+                        composite_charts.apply(mutation).map_err(list_error)?;
+                        let mirabile_core::DerivationSpec::Composite { charts, .. } = recipe else {
+                            return Err(AppError::new(
+                                AppErrorKind::InvalidIntent,
+                                "Composite chart rows require a composite recipe",
+                            ));
+                        };
+                        *charts = composite_charts.canonical_values();
+                    }
+                }
+            }
             ChartDefinitionMutation::SetCalculation(value) => envelope.payload.calculation = value,
             ChartDefinitionMutation::Metadata(_) => unreachable!(),
         }
@@ -180,28 +314,38 @@ impl GenericResourceDraft {
     fn apply_point_set(&mut self, mutation: PointSetMutation) -> AppResult<()> {
         if let PointSetMutation::Metadata(mutation) = mutation {
             self.apply_metadata(mutation);
-        } else if let (CanonicalResource::PointSet(envelope), PointSetMutation::SetPoints(value)) =
-            (&mut self.draft, mutation)
-        {
-            envelope.payload.points = value;
-        } else {
-            return Err(kind_mismatch());
+            return Ok(());
         }
+        let CanonicalResource::PointSet(envelope) = &mut self.draft else {
+            return Err(kind_mismatch());
+        };
+        let PointSetMutation::Selectors(mutation) = mutation else {
+            unreachable!()
+        };
+        let NestedDraftState::PointSet { selectors } = &mut self.nested else {
+            return Err(kind_mismatch());
+        };
+        selectors.apply(mutation).map_err(list_error)?;
+        envelope.payload.points = selectors.canonical_values();
         Ok(())
     }
 
     fn apply_aspect_set(&mut self, mutation: AspectSetMutation) -> AppResult<()> {
         if let AspectSetMutation::Metadata(mutation) = mutation {
             self.apply_metadata(mutation);
-        } else if let (
-            CanonicalResource::AspectSet(envelope),
-            AspectSetMutation::SetAspects(value),
-        ) = (&mut self.draft, mutation)
-        {
-            envelope.payload.aspects = value;
-        } else {
-            return Err(kind_mismatch());
+            return Ok(());
         }
+        let CanonicalResource::AspectSet(envelope) = &mut self.draft else {
+            return Err(kind_mismatch());
+        };
+        let AspectSetMutation::Aspects(mutation) = mutation else {
+            unreachable!()
+        };
+        let NestedDraftState::AspectSet { aspects } = &mut self.nested else {
+            return Err(kind_mismatch());
+        };
+        aspects.apply(mutation).map_err(list_error)?;
+        envelope.payload.aspects = aspects.canonical_values();
         Ok(())
     }
 
@@ -254,9 +398,68 @@ impl GenericResourceDraft {
             return Err(kind_mismatch());
         };
         match mutation {
-            ViewDocumentMutation::SetChartSlots(value) => envelope.payload.chart_slots = value,
+            ViewDocumentMutation::ChartSlots(mutation) => {
+                let NestedDraftState::ViewDocument { chart_slots, .. } = &mut self.nested else {
+                    return Err(kind_mismatch());
+                };
+                if let crate::DraftListMutation::Remove { item_id } = &mutation {
+                    let slot = chart_slots
+                        .items()
+                        .iter()
+                        .find(|item| item.id == *item_id)
+                        .ok_or_else(|| list_error("Draft chart slot was not found"))?;
+                    if envelope
+                        .payload
+                        .objects
+                        .iter()
+                        .any(|object| object_references_slot(object, &slot.value.id))
+                    {
+                        return Err(AppError::new(
+                            AppErrorKind::Unavailable,
+                            "Chart slots cannot be removed while a View Object references them",
+                        ));
+                    }
+                }
+                chart_slots.apply(mutation).map_err(list_error)?;
+                envelope.payload.chart_slots = chart_slots.canonical_values();
+            }
+            ViewDocumentMutation::RenameChartSlot { item_id, slot } => {
+                let NestedDraftState::ViewDocument {
+                    chart_slots,
+                    objects,
+                } = &mut self.nested
+                else {
+                    return Err(kind_mismatch());
+                };
+                let old = chart_slots
+                    .items()
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or_else(|| list_error("Draft chart slot was not found"))?
+                    .value
+                    .id
+                    .clone();
+                chart_slots
+                    .apply(crate::DraftListMutation::Update {
+                        item_id,
+                        value: slot.clone(),
+                    })
+                    .map_err(list_error)?;
+                for item in objects.items().to_vec() {
+                    let mut value = item.value;
+                    rewrite_object_slot(&mut value, &old, &slot.id);
+                    objects
+                        .apply(crate::DraftListMutation::Update {
+                            item_id: item.id,
+                            value,
+                        })
+                        .map_err(list_error)?;
+                }
+                envelope.payload.chart_slots = chart_slots.canonical_values();
+                envelope.payload.objects = objects.canonical_values();
+            }
             ViewDocumentMutation::Objects(mutation) => {
-                let NestedDraftState::ViewDocument { objects } = &mut self.nested else {
+                let NestedDraftState::ViewDocument { objects, .. } = &mut self.nested else {
                     return Err(kind_mismatch());
                 };
                 objects.apply(mutation).map_err(list_error)?;
@@ -291,9 +494,12 @@ impl GenericResourceDraft {
         };
         match mutation {
             QueryDefinitionMutation::SetDescription(value) => envelope.payload.description = value,
-            QueryDefinitionMutation::SetExpression(value) => {
-                envelope.payload.expression = value;
-                self.nested = NestedDraftState::from_resource(&self.draft);
+            QueryDefinitionMutation::Tree(mutation) => {
+                let NestedDraftState::QueryDefinition { tree } = &mut self.nested else {
+                    return Err(kind_mismatch());
+                };
+                tree.apply(mutation)?;
+                envelope.payload.expression = tree.materialize();
             }
             QueryDefinitionMutation::Metadata(_) => unreachable!(),
         }
@@ -309,10 +515,20 @@ impl GenericResourceDraft {
             return Err(kind_mismatch());
         };
         match mutation {
-            WorkspaceDocumentMutation::SetChartInstances(value) => {
-                envelope.payload.chart_instances = value;
+            WorkspaceDocumentMutation::ChartInstances(mutation) => {
+                let NestedDraftState::WorkspaceDocument { charts, .. } = &mut self.nested else {
+                    return Err(kind_mismatch());
+                };
+                charts.apply(mutation).map_err(list_error)?;
+                envelope.payload.chart_instances = charts.canonical_values();
             }
-            WorkspaceDocumentMutation::SetViews(value) => envelope.payload.views = value,
+            WorkspaceDocumentMutation::Views(mutation) => {
+                let NestedDraftState::WorkspaceDocument { views, .. } = &mut self.nested else {
+                    return Err(kind_mismatch());
+                };
+                views.apply(mutation).map_err(list_error)?;
+                envelope.payload.views = views.canonical_values();
+            }
             WorkspaceDocumentMutation::SetProfile(value) => envelope.payload.profile = *value,
             WorkspaceDocumentMutation::Metadata(_) => unreachable!(),
         }
@@ -325,57 +541,346 @@ impl NestedDraftState {
         match resource {
             CanonicalResource::ChartRecord(envelope) => Self::ChartRecord {
                 notes: StableDraftList::from_canonical(&envelope.payload.notes),
-                life_events: StableDraftList::from_canonical(&envelope.payload.life_events),
+                life_events: StableDraftList::from_canonical(
+                    &envelope
+                        .payload
+                        .life_events
+                        .iter()
+                        .map(DraftLifeEvent::from_canonical)
+                        .collect::<Vec<_>>(),
+                ),
+            },
+            CanonicalResource::ChartDefinition(envelope) => Self::ChartDefinition {
+                composite_charts: StableDraftList::from_canonical(match &envelope.payload.source {
+                    mirabile_core::ChartSource::Derived {
+                        recipe: mirabile_core::DerivationSpec::Composite { charts, .. },
+                    } => charts,
+                    _ => &[],
+                }),
+            },
+            CanonicalResource::PointSet(envelope) => Self::PointSet {
+                selectors: StableDraftList::from_canonical(&envelope.payload.points),
+            },
+            CanonicalResource::AspectSet(envelope) => Self::AspectSet {
+                aspects: StableDraftList::from_canonical(&envelope.payload.aspects),
             },
             CanonicalResource::WheelTemplate(envelope) => Self::WheelTemplate {
                 rings: StableDraftList::from_canonical(&envelope.payload.rings),
             },
             CanonicalResource::ViewDocument(envelope) => Self::ViewDocument {
+                chart_slots: StableDraftList::from_canonical(&envelope.payload.chart_slots),
                 objects: StableDraftList::from_canonical(&envelope.payload.objects),
             },
             CanonicalResource::QueryDefinition(envelope) => Self::QueryDefinition {
-                node_ids: (0..query_node_count(&envelope.payload.expression))
-                    .map(|_| crate::DraftItemId::new())
-                    .collect(),
+                tree: DraftQueryNode::from_expression(&envelope.payload.expression),
             },
-            CanonicalResource::ChartDefinition(_)
-            | CanonicalResource::PointSet(_)
-            | CanonicalResource::AspectSet(_)
-            | CanonicalResource::AnalysisProfile(_)
-            | CanonicalResource::Theme(_)
-            | CanonicalResource::WorkspaceDocument(_) => Self::None,
+            CanonicalResource::WorkspaceDocument(envelope) => Self::WorkspaceDocument {
+                charts: StableDraftList::from_canonical(&envelope.payload.chart_instances),
+                views: StableDraftList::from_canonical(&envelope.payload.views),
+            },
+            CanonicalResource::AnalysisProfile(_) | CanonicalResource::Theme(_) => Self::None,
         }
     }
 
-    fn addresses(&self) -> Vec<DraftItemAddressReadModel> {
-        let addresses = |collection: &str, ids: Vec<crate::DraftItemId>| {
-            ids.into_iter()
-                .map(|item_id| DraftItemAddressReadModel {
-                    collection: collection.into(),
-                    item_id,
+    fn read_model(&self) -> crate::NestedResourceDraftReadModel {
+        fn items<T: Clone>(list: &StableDraftList<T>) -> Vec<crate::StableDraftItemReadModel<T>> {
+            list.items()
+                .iter()
+                .map(|item| crate::StableDraftItemReadModel {
+                    item_id: item.id,
+                    value: item.value.clone(),
                 })
-                .collect::<Vec<_>>()
-        };
+                .collect()
+        }
         match self {
-            Self::None => Vec::new(),
+            Self::None => crate::NestedResourceDraftReadModel::None,
             Self::ChartRecord { notes, life_events } => {
-                let mut result =
-                    addresses("notes", notes.items().iter().map(|item| item.id).collect());
-                result.extend(addresses(
-                    "life_events",
-                    life_events.items().iter().map(|item| item.id).collect(),
-                ));
-                result
+                crate::NestedResourceDraftReadModel::ChartRecord {
+                    notes: items(notes),
+                    life_events: life_events
+                        .items()
+                        .iter()
+                        .map(|item| crate::LifeEventDraftReadModel {
+                            item_id: item.id,
+                            value: item.value.materialize(),
+                            notes: items(&item.value.notes),
+                        })
+                        .collect(),
+                }
+            }
+            Self::ChartDefinition { composite_charts } => {
+                crate::NestedResourceDraftReadModel::ChartDefinition {
+                    composite_charts: items(composite_charts),
+                }
+            }
+            Self::PointSet { selectors } => {
+                crate::NestedResourceDraftReadModel::PointSet(items(selectors))
+            }
+            Self::AspectSet { aspects } => {
+                crate::NestedResourceDraftReadModel::AspectSet(items(aspects))
             }
             Self::WheelTemplate { rings } => {
-                addresses("rings", rings.items().iter().map(|item| item.id).collect())
+                crate::NestedResourceDraftReadModel::WheelTemplate(items(rings))
             }
-            Self::ViewDocument { objects } => addresses(
-                "objects",
-                objects.items().iter().map(|item| item.id).collect(),
-            ),
-            Self::QueryDefinition { node_ids } => addresses("query_nodes", node_ids.clone()),
+            Self::ViewDocument {
+                chart_slots,
+                objects,
+            } => crate::NestedResourceDraftReadModel::ViewDocument {
+                chart_slots: items(chart_slots),
+                objects: items(objects),
+            },
+            Self::QueryDefinition { tree } => {
+                crate::NestedResourceDraftReadModel::QueryDefinition(tree.read_model())
+            }
+            Self::WorkspaceDocument { charts, views } => {
+                crate::NestedResourceDraftReadModel::WorkspaceDocument {
+                    charts: items(charts),
+                    views: items(views),
+                }
+            }
         }
+    }
+}
+
+impl DraftQueryNode {
+    fn from_expression(expression: &mirabile_core::QueryExpr) -> Self {
+        let children = match expression {
+            mirabile_core::QueryExpr::And(values) | mirabile_core::QueryExpr::Or(values) => {
+                values.iter().map(Self::from_expression).collect()
+            }
+            mirabile_core::QueryExpr::Not(value) => vec![Self::from_expression(value)],
+            mirabile_core::QueryExpr::Predicate(_) => Vec::new(),
+        };
+        Self {
+            id: crate::DraftItemId::new(),
+            expression: expression.clone(),
+            children,
+        }
+    }
+
+    fn materialize(&self) -> mirabile_core::QueryExpr {
+        match &self.expression {
+            mirabile_core::QueryExpr::Predicate(value) => {
+                mirabile_core::QueryExpr::Predicate(value.clone())
+            }
+            mirabile_core::QueryExpr::And(_) => {
+                mirabile_core::QueryExpr::And(self.children.iter().map(Self::materialize).collect())
+            }
+            mirabile_core::QueryExpr::Or(_) => {
+                mirabile_core::QueryExpr::Or(self.children.iter().map(Self::materialize).collect())
+            }
+            mirabile_core::QueryExpr::Not(_) => {
+                mirabile_core::QueryExpr::Not(Box::new(self.children[0].materialize()))
+            }
+        }
+    }
+
+    fn read_model(&self) -> crate::QueryNodeDraftReadModel {
+        crate::QueryNodeDraftReadModel {
+            node_id: self.id,
+            expression: self.materialize(),
+            children: self.children.iter().map(Self::read_model).collect(),
+        }
+    }
+
+    fn contains(&self, id: crate::DraftItemId) -> bool {
+        self.id == id || self.children.iter().any(|child| child.contains(id))
+    }
+    fn find_mut(&mut self, id: crate::DraftItemId) -> Option<&mut Self> {
+        if self.id == id {
+            return Some(self);
+        }
+        self.children
+            .iter_mut()
+            .find_map(|child| child.find_mut(id))
+    }
+    fn remove_descendant(&mut self, id: crate::DraftItemId) -> Option<Self> {
+        if let Some(index) = self.children.iter().position(|child| child.id == id) {
+            return Some(self.children.remove(index));
+        }
+        self.children
+            .iter_mut()
+            .find_map(|child| child.remove_descendant(id))
+    }
+    #[allow(clippy::too_many_lines)]
+    fn apply(&mut self, mutation: QueryTreeMutation) -> AppResult<()> {
+        match mutation {
+            QueryTreeMutation::Replace {
+                node_id,
+                expression,
+            } => {
+                let node = self
+                    .find_mut(node_id)
+                    .ok_or_else(|| list_error("Query node was not found"))?;
+                *node = Self::from_expression(&expression);
+                node.id = node_id;
+            }
+            QueryTreeMutation::InsertChild {
+                parent_id,
+                after,
+                expression,
+            } => {
+                let parent = self
+                    .find_mut(parent_id)
+                    .ok_or_else(|| list_error("Query parent was not found"))?;
+                if matches!(parent.expression, mirabile_core::QueryExpr::Predicate(_)) {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "Predicate nodes cannot contain children",
+                    ));
+                }
+                if matches!(parent.expression, mirabile_core::QueryExpr::Not(_))
+                    && !parent.children.is_empty()
+                {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "Not nodes contain exactly one child",
+                    ));
+                }
+                let index = after
+                    .map_or(Ok(0), |id| {
+                        parent
+                            .children
+                            .iter()
+                            .position(|child| child.id == id)
+                            .map(|i| i + 1)
+                            .ok_or("Query insertion anchor was not found")
+                    })
+                    .map_err(list_error)?;
+                parent
+                    .children
+                    .insert(index, Self::from_expression(&expression));
+            }
+            QueryTreeMutation::Remove { node_id } => {
+                if self.id == node_id {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "The query root cannot be deleted",
+                    ));
+                }
+                if self.remove_descendant(node_id).is_none() {
+                    return Err(list_error("Query node was not found"));
+                }
+                if !query_groups_valid(self) {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "Boolean groups must retain at least one child",
+                    ));
+                }
+            }
+            QueryTreeMutation::Move {
+                node_id,
+                new_parent_id,
+                before,
+            } => {
+                if self.id == node_id {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "The query root cannot be moved",
+                    ));
+                }
+                let moving = self
+                    .find_mut(node_id)
+                    .ok_or_else(|| list_error("Query node was not found"))?
+                    .clone();
+                if moving.contains(new_parent_id) {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "A query node cannot move into itself or its descendants",
+                    ));
+                }
+                let backup = self.clone();
+                let node = self
+                    .remove_descendant(node_id)
+                    .ok_or_else(|| list_error("Query node was not found"))?;
+                let Some(parent) = self.find_mut(new_parent_id) else {
+                    *self = backup;
+                    return Err(list_error("Query move parent was not found"));
+                };
+                if matches!(parent.expression, mirabile_core::QueryExpr::Predicate(_))
+                    || (matches!(parent.expression, mirabile_core::QueryExpr::Not(_))
+                        && !parent.children.is_empty())
+                {
+                    *self = backup;
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "Query move target cannot accept a child",
+                    ));
+                }
+                let index = before
+                    .map_or(Ok(parent.children.len()), |id| {
+                        parent
+                            .children
+                            .iter()
+                            .position(|child| child.id == id)
+                            .ok_or("Query move target was not found")
+                    })
+                    .map_err(list_error)?;
+                parent.children.insert(index, node);
+                if !query_groups_valid(self) {
+                    *self = backup;
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "Boolean groups must retain at least one child",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn query_groups_valid(node: &DraftQueryNode) -> bool {
+    let valid = match node.expression {
+        mirabile_core::QueryExpr::And(_)
+        | mirabile_core::QueryExpr::Or(_)
+        | mirabile_core::QueryExpr::Not(_) => !node.children.is_empty(),
+        mirabile_core::QueryExpr::Predicate(_) => true,
+    };
+    valid && node.children.iter().all(query_groups_valid)
+}
+
+fn rewrite_object_slot(
+    object: &mut mirabile_core::ViewObject,
+    old: &mirabile_core::ChartSlotId,
+    new: &mirabile_core::ChartSlotId,
+) {
+    match object {
+        mirabile_core::ViewObject::Wheel(value) if &value.slot == old => value.slot = new.clone(),
+        mirabile_core::ViewObject::AspectGrid(value) => {
+            if &value.lhs == old {
+                value.lhs = new.clone();
+            }
+            if value.rhs.as_ref() == Some(old) {
+                value.rhs = Some(new.clone());
+            }
+        }
+        mirabile_core::ViewObject::ChartDetails(value) if &value.slot == old => {
+            value.slot = new.clone();
+        }
+        mirabile_core::ViewObject::PointTable(value) if &value.slot == old => {
+            value.slot = new.clone();
+        }
+        mirabile_core::ViewObject::AspectTable(value) if &value.slot == old => {
+            value.slot = new.clone();
+        }
+        _ => {}
+    }
+}
+
+fn object_references_slot(
+    object: &mirabile_core::ViewObject,
+    slot: &mirabile_core::ChartSlotId,
+) -> bool {
+    match object {
+        mirabile_core::ViewObject::Wheel(value) => &value.slot == slot,
+        mirabile_core::ViewObject::AspectGrid(value) => {
+            &value.lhs == slot || value.rhs.as_ref() == Some(slot)
+        }
+        mirabile_core::ViewObject::ChartDetails(value) => &value.slot == slot,
+        mirabile_core::ViewObject::PointTable(value) => &value.slot == slot,
+        mirabile_core::ViewObject::AspectTable(value) => &value.slot == slot,
+        mirabile_core::ViewObject::Text(_) => false,
     }
 }
 
@@ -418,13 +923,18 @@ where
                 )
             })?;
         let kind = ResourceDraftKind::try_from(resource.kind()).expect("canonical draft kind");
-        if matches!(
-            kind,
-            ResourceDraftKind::ChartRecord | ResourceDraftKind::ChartDefinition
-        ) {
+        if kind == ResourceDraftKind::ChartRecord {
             return Err(AppError::new(
                 AppErrorKind::Unavailable,
                 "Chart records and definitions are edited together through the atomic chart editor",
+            ));
+        }
+        if kind == ResourceDraftKind::ChartDefinition
+            && matches!(&resource, CanonicalResource::ChartDefinition(envelope) if matches!(envelope.payload.source, mirabile_core::ChartSource::Radix { .. }))
+        {
+            return Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Radix definitions are edited atomically with their ChartRecord; derived definitions use the persisted recipe editor",
             ));
         }
         if kind == ResourceDraftKind::AspectSet {
@@ -485,6 +995,9 @@ where
 
     pub(super) fn begin_save_resource_draft(&self, kind: ResourceDraftKind) -> AppResult<()> {
         let mut state = self.state.borrow_mut();
+        if let Some(draft) = state.resource_drafts.get(&kind) {
+            validate_derived_references(&draft.draft, &state.catalog.current)?;
+        }
         let timestamp = mirabile_core::Timestamp::from_unix_millis(state.next_timestamp);
         let draft = state.resource_drafts.get_mut(&kind).ok_or_else(|| {
             AppError::new(
@@ -606,14 +1119,38 @@ where
     }
 }
 
-fn query_node_count(expression: &mirabile_core::QueryExpr) -> usize {
-    match expression {
-        mirabile_core::QueryExpr::Predicate(_) => 1,
-        mirabile_core::QueryExpr::And(children) | mirabile_core::QueryExpr::Or(children) => {
-            1 + children.iter().map(query_node_count).sum::<usize>()
+fn validate_derived_references(
+    resource: &CanonicalResource,
+    catalog: &std::collections::BTreeMap<crate::ResourceId, CanonicalResource>,
+) -> AppResult<()> {
+    let CanonicalResource::ChartDefinition(envelope) = resource else {
+        return Ok(());
+    };
+    let mirabile_core::ChartSource::Derived { recipe } = &envelope.payload.source else {
+        return Ok(());
+    };
+    let references: Vec<_> = match recipe {
+        mirabile_core::DerivationSpec::Transit { .. } => Vec::new(),
+        mirabile_core::DerivationSpec::Harmonic { radix, .. }
+        | mirabile_core::DerivationSpec::Relocation { radix, .. } => vec![*radix],
+        mirabile_core::DerivationSpec::Composite { charts, .. } => charts.clone(),
+    };
+    for reference in references {
+        if reference == envelope.id
+            || !matches!(
+                catalog.get(&reference),
+                Some(CanonicalResource::ChartDefinition(_))
+            )
+        {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                format!(
+                    "Derived recipe references missing or incompatible ChartDefinition {reference}"
+                ),
+            ));
         }
-        mirabile_core::QueryExpr::Not(child) => 1 + query_node_count(child),
     }
+    Ok(())
 }
 
 fn kind_mismatch() -> AppError {
@@ -710,8 +1247,22 @@ fn new_resource(
                 timestamp,
             ))
         }
+        ResourceDraftKind::ChartDefinition => {
+            CanonicalResource::ChartDefinition(mirabile_core::ResourceEnvelope::new(
+                "Untitled Derived Chart",
+                mirabile_core::ChartDefinition {
+                    source: mirabile_core::ChartSource::Derived {
+                        recipe: mirabile_core::DerivationSpec::Harmonic {
+                            radix: crate::ResourceId::new(),
+                            harmonic: 2.0,
+                        },
+                    },
+                    calculation: mirabile_core::CalculationSpec::default(),
+                },
+                timestamp,
+            ))
+        }
         ResourceDraftKind::ChartRecord
-        | ResourceDraftKind::ChartDefinition
         | ResourceDraftKind::AspectSet
         | ResourceDraftKind::WorkspaceDocument => {
             return Err(AppError::new(
@@ -721,4 +1272,184 @@ fn new_resource(
         }
     };
     Ok(resource)
+}
+
+#[cfg(test)]
+mod nested_tests {
+    use super::*;
+
+    fn timestamp() -> mirabile_core::Timestamp {
+        mirabile_core::Timestamp::from_unix_millis(1)
+    }
+    fn predicate() -> mirabile_core::QueryExpr {
+        mirabile_core::QueryExpr::Predicate(mirabile_core::Predicate::InSign {
+            point: mirabile_core::PointId::new("sun").expect("point"),
+            sign_index: 0,
+        })
+    }
+
+    #[test]
+    fn query_tree_preserves_ids_and_rejects_root_empty_group_and_cycles() {
+        let mut draft = GenericResourceDraft::new_unsaved(
+            new_resource(ResourceDraftKind::QueryDefinition, timestamp()).expect("query"),
+        );
+        let root = match draft.read_model().nested {
+            crate::NestedResourceDraftReadModel::QueryDefinition(tree) => tree.node_id,
+            _ => panic!("query tree"),
+        };
+        draft
+            .apply(ResourceMutation::QueryDefinition(
+                QueryDefinitionMutation::Tree(QueryTreeMutation::Replace {
+                    node_id: root,
+                    expression: mirabile_core::QueryExpr::And(vec![
+                        predicate(),
+                        mirabile_core::QueryExpr::And(vec![predicate()]),
+                    ]),
+                }),
+            ))
+            .expect("replace root");
+        let crate::NestedResourceDraftReadModel::QueryDefinition(tree) = draft.read_model().nested
+        else {
+            panic!("query tree")
+        };
+        assert_eq!(tree.node_id, root);
+        let first = tree.children[0].node_id;
+        let group = tree.children[1].node_id;
+        let grandchild = tree.children[1].children[0].node_id;
+        assert!(
+            draft
+                .apply(ResourceMutation::QueryDefinition(
+                    QueryDefinitionMutation::Tree(QueryTreeMutation::Move {
+                        node_id: group,
+                        new_parent_id: grandchild,
+                        before: None
+                    })
+                ))
+                .is_err()
+        );
+        draft
+            .apply(ResourceMutation::QueryDefinition(
+                QueryDefinitionMutation::Tree(QueryTreeMutation::Remove { node_id: first }),
+            ))
+            .expect("one child remains");
+        assert!(
+            draft
+                .apply(ResourceMutation::QueryDefinition(
+                    QueryDefinitionMutation::Tree(QueryTreeMutation::Remove { node_id: group })
+                ))
+                .is_err()
+        );
+        assert!(
+            draft
+                .apply(ResourceMutation::QueryDefinition(
+                    QueryDefinitionMutation::Tree(QueryTreeMutation::Remove { node_id: root })
+                ))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn slot_removal_is_blocked_and_slot_rename_rewrites_object_references() {
+        let mut draft = GenericResourceDraft::new_unsaved(
+            new_resource(ResourceDraftKind::ViewDocument, timestamp()).expect("view"),
+        );
+        let slot = mirabile_core::ChartSlot {
+            id: mirabile_core::ChartSlotId::new("primary").expect("slot"),
+            label: "Primary".into(),
+            required: true,
+        };
+        draft
+            .apply(ResourceMutation::ViewDocument(
+                ViewDocumentMutation::ChartSlots(crate::DraftListMutation::Insert {
+                    after: None,
+                    value: slot.clone(),
+                }),
+            ))
+            .expect("slot");
+        let slot_item = match draft.read_model().nested {
+            crate::NestedResourceDraftReadModel::ViewDocument { chart_slots, .. } => {
+                chart_slots[0].item_id
+            }
+            _ => panic!("view"),
+        };
+        draft
+            .apply(ResourceMutation::ViewDocument(
+                ViewDocumentMutation::Objects(crate::DraftListMutation::Insert {
+                    after: None,
+                    value: mirabile_core::ViewObject::Wheel(mirabile_core::WheelObject {
+                        slot: slot.id.clone(),
+                        frame: mirabile_core::ObjectFrame {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 10.0,
+                            height: 10.0,
+                        },
+                    }),
+                }),
+            ))
+            .expect("object");
+        assert!(
+            draft
+                .apply(ResourceMutation::ViewDocument(
+                    ViewDocumentMutation::ChartSlots(crate::DraftListMutation::Remove {
+                        item_id: slot_item
+                    })
+                ))
+                .is_err()
+        );
+        let renamed = mirabile_core::ChartSlot {
+            id: mirabile_core::ChartSlotId::new("renamed").expect("slot"),
+            ..slot
+        };
+        draft
+            .apply(ResourceMutation::ViewDocument(
+                ViewDocumentMutation::RenameChartSlot {
+                    item_id: slot_item,
+                    slot: renamed.clone(),
+                },
+            ))
+            .expect("rename");
+        let crate::ResourceDraftValueReadModel::ViewDocument(value) = draft.read_model().value
+        else {
+            panic!("view")
+        };
+        assert!(
+            matches!(&value.objects[0], mirabile_core::ViewObject::Wheel(object) if object.slot == renamed.id)
+        );
+    }
+
+    #[test]
+    fn derived_recipe_references_are_checked_without_claiming_execution() {
+        let referenced = mirabile_core::CanonicalResource::ChartDefinition(
+            mirabile_core::ResourceEnvelope::new(
+                "Radix",
+                mirabile_core::ChartDefinition {
+                    source: mirabile_core::ChartSource::Radix {
+                        record: crate::ResourceId::new(),
+                    },
+                    calculation: mirabile_core::CalculationSpec::default(),
+                },
+                timestamp(),
+            ),
+        );
+        let derived = mirabile_core::CanonicalResource::ChartDefinition(
+            mirabile_core::ResourceEnvelope::new(
+                "Harmonic",
+                mirabile_core::ChartDefinition {
+                    source: mirabile_core::ChartSource::Derived {
+                        recipe: mirabile_core::DerivationSpec::Harmonic {
+                            radix: referenced.id(),
+                            harmonic: 2.0,
+                        },
+                    },
+                    calculation: mirabile_core::CalculationSpec::default(),
+                },
+                timestamp(),
+            ),
+        );
+        assert!(validate_derived_references(&derived, &std::collections::BTreeMap::new()).is_err());
+        let mut catalog = std::collections::BTreeMap::new();
+        catalog.insert(referenced.id(), referenced);
+        validate_derived_references(&derived, &catalog).expect("valid reference");
+    }
 }

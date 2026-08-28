@@ -396,6 +396,8 @@ fn AspectSetEditorPanel(
                             help="Enter applies; Escape restores the authoritative title.".to_owned()
                         />
 
+                        <button type="button" class="button secondary" data-mirabile-control=ControlId::ASPECT_INSERT.to_string() data-mirabile-address=ControlAddress::new(ControlId::ASPECT_INSERT).to_string() data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled=(!title_pending).to_string() disabled=title_pending on:click=move |_| if let Some(current)=model.get().resource_editor.aspect_set { let suffix=current.aspects.len()+1; if let Ok(id)=mirabile_app::AspectId::new(format!("custom-{suffix}")) { dispatcher.dispatch(AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Insert { after: current.aspects.last().map(|aspect| aspect.aspect_id.clone()), aspect: mirabile_app::AspectDefinition { id, name: format!("Custom {suffix}"), angle: mirabile_app::Angle::from_degrees(30.0).expect("angle"), enabled: true, orbs: mirabile_app::OrbPolicy { maximum: mirabile_app::Angle::from_degrees(2.0).expect("orb"), applying_multiplier: 1.0 }, classification: mirabile_app::AspectClass::Custom } })); }}>"Add aspect"</button>
+
                         {draft.aspects.into_iter().map(|aspect| view! {
                             <AspectEditorRow
                                 model
@@ -471,7 +473,7 @@ fn AspectEditorRow(
     aspect: AspectDraftValue,
     invalid_aspect_buffers: RwSignal<BTreeSet<String>>,
 ) -> impl IntoView {
-    let aspect_id = aspect.aspect_id;
+    let aspect_id = aspect.aspect_id.clone();
     let qualifier = aspect_id.as_str().to_owned();
     let buffer = RwSignal::new(format_orb(aspect.maximum_orb));
     let error = RwSignal::new(None::<String>);
@@ -482,7 +484,15 @@ fn AspectEditorRow(
     let enabled_dispatcher = dispatcher;
     let orb_qualifier = qualifier.clone();
     let enabled_qualifier = qualifier.clone();
-    let label = aspect.label;
+    let label = aspect.label.clone();
+    let name_base = aspect.clone();
+    let angle_base = aspect.clone();
+    let multiplier_base = aspect.clone();
+    let class_base = aspect.clone();
+    let remove_dispatcher = dispatcher;
+    let move_dispatcher = dispatcher;
+    let remove_id = aspect_id.clone();
+    let move_id = aspect_id.clone();
     let pending = Signal::derive(move || {
         model.get().resource_editor.aspect_set.is_none_or(|draft| {
             matches!(
@@ -494,6 +504,10 @@ fn AspectEditorRow(
     let authoritative_id = aspect_id.clone();
     view! {
         <div class="aspect-editor-row">
+            <label>"Name"<input type="text" prop:value=label.clone() data-mirabile-control=ControlId::ASPECT_NAME.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::ASPECT_NAME, [("aspect", aspect_id.as_str())]).expect("aspect address").to_string() data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled=move || (!pending.get()).to_string() disabled=pending on:change=move |event| { let mut value=aspect_definition(&name_base); value.name=event_target_value(&event); dispatcher.dispatch(AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Update { aspect_id: name_base.aspect_id.clone(), aspect: value })); } /></label>
+            <label>"Angle"<input type="number" min="0" max="180" step="0.01" prop:value=aspect.angle.degrees() data-mirabile-control=ControlId::ASPECT_ANGLE.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::ASPECT_ANGLE, [("aspect", aspect_id.as_str())]).expect("aspect address").to_string() data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled=move || (!pending.get()).to_string() disabled=pending on:change=move |event| if let Some(angle)=parse_aspect_angle(&event_target_value(&event)) { let mut value=aspect_definition(&angle_base); value.angle=angle; dispatcher.dispatch(AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Update { aspect_id: angle_base.aspect_id.clone(), aspect: value })); } /></label>
+            <label>"Applying multiplier"<input type="number" min="0" step="0.01" prop:value=aspect.applying_multiplier data-mirabile-control=ControlId::ASPECT_APPLYING_MULTIPLIER.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::ASPECT_APPLYING_MULTIPLIER, [("aspect", aspect_id.as_str())]).expect("aspect address").to_string() data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled=move || (!pending.get()).to_string() disabled=pending on:change=move |event| if let Ok(multiplier)=event_target_value(&event).parse() { let mut value=aspect_definition(&multiplier_base); value.orbs.applying_multiplier=multiplier; dispatcher.dispatch(AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Update { aspect_id: multiplier_base.aspect_id.clone(), aspect: value })); } /></label>
+            <label>"Classification"<select prop:value=format!("{:?}", aspect.classification).to_lowercase() data-mirabile-control=ControlId::ASPECT_CLASSIFICATION.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::ASPECT_CLASSIFICATION, [("aspect", aspect_id.as_str())]).expect("aspect address").to_string() data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled=move || (!pending.get()).to_string() disabled=pending on:change=move |event| { let mut value=aspect_definition(&class_base); value.classification=match event_target_value(&event).as_str() { "minor" => mirabile_app::AspectClass::Minor, "harmonic" => mirabile_app::AspectClass::Harmonic, "custom" => mirabile_app::AspectClass::Custom, _ => mirabile_app::AspectClass::Major }; dispatcher.dispatch(AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Update { aspect_id: class_base.aspect_id.clone(), aspect: value })); }><option value="major">"Major"</option><option value="minor">"Minor"</option><option value="harmonic">"Harmonic"</option><option value="custom">"Custom"</option></select></label>
             <BufferedNumberField
                 address=ControlAddress::qualified(
                     ControlId::ASPECT_MAXIMUM_ORB,
@@ -558,8 +572,31 @@ fn AspectEditorRow(
                 />
                 <span>{format!("{label} enabled")}</span>
             </label>
+            <button type="button" class="button secondary" data-mirabile-control=ControlId::ASPECT_MOVE.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::ASPECT_MOVE, [("aspect", move_id.as_str()), ("position", "end")]).expect("aspect address").to_string() data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled=move || (!pending.get()).to_string() disabled=pending on:click=move |_| move_dispatcher.dispatch(AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Move { aspect_id: move_id.clone(), before: None }))>"Move to end"</button>
+            <button type="button" class="button danger" data-mirabile-control=ControlId::ASPECT_REMOVE.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::ASPECT_REMOVE, [("aspect", remove_id.as_str())]).expect("aspect address").to_string() data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled=move || (!pending.get()).to_string() disabled=pending on:click=move |_| remove_dispatcher.dispatch(AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Remove { aspect_id: remove_id.clone() }))>"Remove"</button>
         </div>
     }
+}
+
+fn aspect_definition(value: &AspectDraftValue) -> mirabile_app::AspectDefinition {
+    mirabile_app::AspectDefinition {
+        id: value.aspect_id.clone(),
+        name: value.label.clone(),
+        angle: value.angle,
+        enabled: value.enabled,
+        orbs: mirabile_app::OrbPolicy {
+            maximum: value.maximum_orb,
+            applying_multiplier: value.applying_multiplier,
+        },
+        classification: value.classification,
+    }
+}
+
+fn parse_aspect_angle(value: &str) -> Option<mirabile_app::Angle> {
+    value
+        .parse::<f64>()
+        .ok()
+        .and_then(|degrees| mirabile_app::Angle::from_degrees(degrees).ok())
 }
 
 fn track_invalid_buffer(

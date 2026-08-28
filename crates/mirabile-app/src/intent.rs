@@ -141,11 +141,33 @@ pub enum AppIntent {
 #[derive(Clone, Debug, PartialEq)]
 pub enum AspectSetDraftMutation {
     SetTitle(String),
-    SetOrb { aspect_id: AspectId, maximum: Angle },
-    SetEnabled { aspect_id: AspectId, enabled: bool },
+    SetOrb {
+        aspect_id: AspectId,
+        maximum: Angle,
+    },
+    SetEnabled {
+        aspect_id: AspectId,
+        enabled: bool,
+    },
+    Insert {
+        after: Option<AspectId>,
+        aspect: mirabile_core::AspectDefinition,
+    },
+    Update {
+        aspect_id: AspectId,
+        aspect: mirabile_core::AspectDefinition,
+    },
+    Remove {
+        aspect_id: AspectId,
+    },
+    Move {
+        aspect_id: AspectId,
+        before: Option<AspectId>,
+    },
 }
 
 impl AppIntent {
+    #[allow(clippy::too_many_lines)]
     pub fn semantic_summary(&self) -> String {
         match self {
             Self::BeginNewChart | Self::StartChartDraft { .. } => "chart.begin-new".into(),
@@ -234,6 +256,18 @@ impl AppIntent {
                 aspect_id,
                 enabled,
             }) => format!("aspect.enabled[{}]={enabled}", aspect_id.as_str()),
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::Insert { .. }) => {
+                "aspect.row.insert".into()
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::Update { aspect_id, .. }) => {
+                format!("aspect.row.update[{}]", aspect_id.as_str())
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::Remove { aspect_id }) => {
+                format!("aspect.row.remove[{}]", aspect_id.as_str())
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::Move { aspect_id, .. }) => {
+                format!("aspect.row.move[{}]", aspect_id.as_str())
+            }
             Self::SaveDraft => "draft.save".into(),
             Self::CancelDraft => "draft.cancel".into(),
             Self::RefreshActiveView => "application.refresh".into(),
@@ -264,6 +298,8 @@ impl ChartMutation {
             Self::SetZodiac(_) => "chart.zodiac.set".into(),
             Self::SetHouseSystem(_) => "chart.houses.set".into(),
             Self::SetCoordinateSystem(_) => "chart.coordinates.set".into(),
+            Self::SetRecordDetails(_) => "chart.record-details.set".into(),
+            Self::SetCalculation(_) => "chart.calculation.set".into(),
         }
     }
 }

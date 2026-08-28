@@ -737,8 +737,11 @@ fn aspect_editor_read_model(editor: &AspectSetEditor) -> AppResult<AspectSetDraf
             .map(|aspect| AspectDraftValue {
                 aspect_id: aspect.id.clone(),
                 label: aspect.name.clone(),
+                angle: aspect.angle,
                 enabled: aspect.enabled,
                 maximum_orb: aspect.orbs.maximum,
+                applying_multiplier: aspect.orbs.applying_multiplier,
+                classification: aspect.classification,
             })
             .collect(),
     })

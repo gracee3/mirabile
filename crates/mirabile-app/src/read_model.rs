@@ -698,7 +698,7 @@ pub struct TypedResourceDraftReadModel {
     pub tags: Vec<String>,
     pub state: DraftState,
     pub conflicts: Vec<crate::ResourceDraftConflictReadModel>,
-    pub nested_items: Vec<crate::DraftItemAddressReadModel>,
+    pub nested: crate::NestedResourceDraftReadModel,
     pub value: crate::ResourceDraftValueReadModel,
 }
 
@@ -714,8 +714,11 @@ pub struct AspectSetDraftReadModel {
 pub struct AspectDraftValue {
     pub aspect_id: AspectId,
     pub label: String,
+    pub angle: Angle,
     pub enabled: bool,
     pub maximum_orb: Angle,
+    pub applying_multiplier: f64,
+    pub classification: mirabile_core::AspectClass,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
