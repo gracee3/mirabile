@@ -40,7 +40,7 @@
 | 5. Bindings and outputs | Complete | Writable Follow/Pinned/Inline bindings, provider-neutral tables, provenance, parameter status, and last-good retention | Focused binding and last-good regressions | `8b2b44e` |
 | 6. Cockpit composition | Complete | Document-height eight-section cockpit, sticky navigation/search/fold controls, and semantic addresses | Cockpit manifest plus four responsive captures | `534a277`, `057c5e3` |
 | 7. History and deletion | Complete | Revision inspection, reference-aware two-step deletion, tombstones, stale-delete conflicts, and reload | Store/application tests plus browser reload journey | `8b2b44e`, `057c5e3` |
-| 8. Handoff | In progress | Viewport captures, docs, final gates, pushed feature PR left open | T14 acceptance matrix and remote verification | Pending |
+| 8. Handoff | Complete | Viewport captures, docs, final gates, pushed feature PR left open | T14 acceptance matrix and remote verification | `4550ff2`, PR #2 |
 
 ## Phase records
 
@@ -191,6 +191,9 @@
   Point Set membership, Analysis Profile values, Wheel Template display/geometry, View Document
   page geometry, Theme colors, and Query description; additional nested object/query/recipe row
   builders remain follow-up UI depth and are not represented as runtime support.
+- Feature PR: [#2, Build the comprehensive Mirabile control cockpit](https://github.com/gracee3/mirabile/pull/2).
+  It is open as a draft, is not merged, targets `main`, and explicitly records the remaining nested
+  builder depth instead of overstating phase 4 completeness.
 
 ## Acceptance checklist
 
