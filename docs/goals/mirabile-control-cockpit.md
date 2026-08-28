@@ -6,7 +6,7 @@
   2026-08-28 after squash-merging PR #1)
 - Branch: `goal/mirabile-control-cockpit`
 - Worktree: `/home/emmy/mirabile` (the existing checkout; no additional worktree or Cargo target)
-- Current phase: 3 - generalized typed drafts and lifecycle state
+- Current phase: 4 - complete modeled fields and editors
 - Delivery: focused commits pushed regularly; open a feature PR but do not merge it
 - Fast baseline: `./scripts/check.sh` passes 155 Rust tests and 5 Python tests, strict
   Clippy, formatting, and staged plus unstaged diff checks
@@ -35,8 +35,8 @@
 | --- | --- | --- | --- | --- |
 | 1. Baseline and goal | Complete | Correct and merge PR #1; capture disk, normal application, console, display, and screenshot baseline | `./scripts/check.sh`; clean fast-forwarded `main`; normal non-automation XALEN initialization | `774d54c` |
 | 2. Repository and inventory | Complete | Present/deleted heads; selected-resource revisions; inventories for all ten canonical resource types | 157 Rust tests; WASM check; IndexedDB browser contract; `./scripts/check.sh` | `85bfead` |
-| 3. General typed drafts | In progress | Typed mutations, lifecycle/conflict projections, one draft per type, stable nested item IDs | Per-resource create/edit/save/cancel/conflict/reload tests | Pending |
-| 4. Complete editors | Pending | Chart/workspace completion and every modeled resource editor | Native and browser authoring coverage | Pending |
+| 3. General typed drafts | Complete | Typed mutations, lifecycle/conflict projections, one draft per type, stable nested item IDs | 161 Rust tests; 5 Python tests; strict Clippy; `./scripts/check.sh` | `4aae865` |
+| 4. Complete editors | In progress | Chart/workspace completion and every modeled resource editor | Native and browser authoring coverage | Pending |
 | 5. Bindings and outputs | Pending | Follow/Pinned/Inline controls; point/house/angle/aspect/provenance tables; parameter status | Focused binding, last-good, and coverage tests | Pending |
 | 6. Cockpit composition | Pending | Document-height expanded cockpit, sticky navigation/search/fold controls, semantic addresses | Responsive control-manifest journeys | Pending |
 | 7. History and deletion | Pending | Revision inspection, reference-aware two-step deletion, tombstones, stale-delete conflicts, reload | Store/application/browser history-delete tests | Pending |
@@ -89,6 +89,32 @@
 - Blockers: none.
 - Next action: replace the Aspect Set-specific editor contract with generalized typed resource
   drafts, lifecycle/conflict state, and stable nested draft item identities.
+
+### Phase 3 - generalized typed drafts
+
+- SHA: `4aae8653c787e619c9a60b75da2e94baf3b52cb6`.
+- `ResourceDraftKind` and `ResourceMutation` cover exactly the ten canonical payload variants.
+  Mutations delegate to typed per-resource enums and metadata mutations; no field path, JSON patch,
+  or repository handle crosses the application boundary.
+- The application maintains at most one draft per resource type. Selecting a different same-kind
+  target while dirty requires Save or Cancel. Six independent types support new/edit/save/cancel;
+  ChartRecord plus ChartDefinition, Aspect Set, and Workspace route to their existing atomic or
+  session workflows instead of creating a second authority.
+- Typed drafts project New/Creating/Clean/Dirty/Saving/Conflict state and structured CAS conflicts.
+  Save is observable pending work; conflict and adapter failure retain the local draft.
+- Notes, life events, wheel rings, view objects, and query nodes receive application-owned draft
+  item identities. Reorder/update tests prove identities remain stable while canonical materialized
+  values and JSON omit every draft ID.
+- Tests: `./scripts/check.sh` passed in 27.07 seconds with 161 Rust tests, 5 Python tests, strict
+  Clippy, formatting, and both diff checks. Focused tests cover create for each independent payload,
+  edit/save/reload, CAS conflict retention, cancel, exact ten-kind coverage, and reordered rows.
+- Disk checkpoint: 19 GiB free on `/`; the existing shared `target/` is 9.9 GiB. Heavy browser
+  rebuilds are deferred until their phase gate so the final 15 GiB verification threshold remains
+  observable.
+- Screenshot paths: no visual change in this phase; Phase 1 before evidence remains current.
+- Blockers: none.
+- Next action: expose complete typed draft values and native editors for every modeled field while
+  retaining the composite chart and workspace session paths.
 
 ## Acceptance checklist
 
