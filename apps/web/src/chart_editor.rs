@@ -191,6 +191,7 @@ pub(super) fn ChartAuthoring(
                                 }
                             })
                         />
+                        <ChartRecordDetails record=editor.fields.record.clone() disabled=factual_disabled disabled_reason=factual_disabled_reason dispatcher />
                         <fieldset class="payload-fields"><legend>"Complete calculation semantics"</legend>
                             <label>"Lunar node"<select prop:value=move || model.get().chart_editor.map_or_else(String::new, |editor| format!("{:?}", editor.fields.calculation.lunar_node).to_lowercase()) data-mirabile-control=ControlId::CHART_LUNAR_NODE.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_LUNAR_NODE).to_string() data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| if let Some(editor)=model.get().chart_editor { let mut calculation=editor.fields.calculation; calculation.lunar_node=if event_target_value(&event) == "mean" { mirabile_app::LunarNodeType::Mean } else { mirabile_app::LunarNodeType::True }; dispatch_mutation(dispatcher, ControlId::CHART_LUNAR_NODE, ChartMutation::SetCalculation(calculation)); }><option value="mean">"Mean"</option><option value="true">"True"</option></select></label>
                             <label>"Black Moon"<select prop:value=move || model.get().chart_editor.map_or_else(String::new, |editor| format!("{:?}", editor.fields.calculation.black_moon).to_lowercase()) data-mirabile-control=ControlId::CHART_BLACK_MOON.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_BLACK_MOON).to_string() data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| if let Some(editor)=model.get().chart_editor { let mut calculation=editor.fields.calculation; calculation.black_moon=if event_target_value(&event) == "osculating" { mirabile_app::BlackMoonType::Osculating } else { mirabile_app::BlackMoonType::Mean }; dispatch_mutation(dispatcher, ControlId::CHART_BLACK_MOON, ChartMutation::SetCalculation(calculation)); }><option value="mean">"Mean"</option><option value="osculating">"Osculating"</option></select></label>
@@ -393,6 +394,130 @@ pub(super) fn ChartAuthoring(
                 }
             })}
         </section>
+    }
+}
+
+#[component]
+fn ChartRecordDetails(
+    record: mirabile_app::ChartRecord,
+    disabled: Signal<bool>,
+    disabled_reason: Signal<Option<String>>,
+    dispatcher: WorkbenchCoordinator,
+) -> impl IntoView {
+    let custom_base = record.clone();
+    let pronouns_base = record.clone();
+    let calendar_base = record.clone();
+    let disambiguation_base = record.clone();
+    let country_base = record.clone();
+    let atlas_provider_base = record.clone();
+    let atlas_record_base = record.clone();
+    let atlas_version_base = record.clone();
+    let source_description_base = record.clone();
+    let source_type_base = record.clone();
+    let recorded_by_base = record.clone();
+    let custom = match &record.event_kind {
+        EventKind::Other(value) => value.clone(),
+        _ => String::new(),
+    };
+    let pronouns = record
+        .subject
+        .as_ref()
+        .and_then(|value| value.pronouns.clone())
+        .unwrap_or_default();
+    let country = record
+        .location
+        .as_ref()
+        .and_then(|value| value.country_region.clone())
+        .unwrap_or_default();
+    let atlas = record
+        .location
+        .as_ref()
+        .and_then(|value| value.atlas_provenance.clone());
+    view! { <fieldset class="payload-fields chart-record-details"><legend>"Complete factual provenance"</legend>
+        <label>"Custom event label (sets Other when nonempty)"<input type="text" prop:value=custom data-mirabile-control=ControlId::CHART_CUSTOM_EVENT_KIND.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_CUSTOM_EVENT_KIND).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() data-mirabile-disabled-reason=move || disabled_reason.get() disabled=disabled on:change=move |event| { let value=event_target_value(&event); if !value.trim().is_empty() { let mut next=custom_base.clone(); next.event_kind=EventKind::Other(value); dispatch_record(dispatcher, ControlId::CHART_CUSTOM_EVENT_KIND, next); } } /></label>
+        <label>"Pronouns"<input type="text" prop:value=pronouns data-mirabile-control=ControlId::CHART_SUBJECT_PRONOUNS.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_SUBJECT_PRONOUNS).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let value=event_target_value(&event); let mut next=pronouns_base.clone(); if let Some(subject)=&mut next.subject { subject.pronouns=(!value.trim().is_empty()).then_some(value); dispatch_record(dispatcher, ControlId::CHART_SUBJECT_PRONOUNS, next); } } /></label>
+        <label>"Calendar"<select prop:value=calendar_key(&record.time.calendar) data-mirabile-control=ControlId::CHART_CALENDAR.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_CALENDAR).to_string() data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut next=calendar_base.clone(); next.time.calendar=if event_target_value(&event)=="julian" { mirabile_app::CalendarSpec::Julian } else { mirabile_app::CalendarSpec::ProlepticGregorian }; dispatch_record(dispatcher, ControlId::CHART_CALENDAR, next); }><option value="gregorian">"Proleptic Gregorian"</option><option value="julian">"Julian"</option></select></label>
+        <label>"Ambiguous local time"<select prop:value=disambiguation_key(record.time.disambiguation) data-mirabile-control=ControlId::CHART_DISAMBIGUATION.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_DISAMBIGUATION).to_string() data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut next=disambiguation_base.clone(); next.time.disambiguation=match event_target_value(&event).as_str() { "earlier"=>Some(mirabile_app::TimeChoice::Earlier), "later"=>Some(mirabile_app::TimeChoice::Later), _=>None }; dispatch_record(dispatcher, ControlId::CHART_DISAMBIGUATION, next); }><option value="none">"Not specified"</option><option value="earlier">"Earlier occurrence"</option><option value="later">"Later occurrence"</option></select></label>
+        <label>"Country / region"<input type="text" prop:value=country data-mirabile-control=ControlId::CHART_COUNTRY_REGION.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_COUNTRY_REGION).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let value=event_target_value(&event); let mut next=country_base.clone(); if let Some(location)=&mut next.location { location.country_region=(!value.trim().is_empty()).then_some(value); dispatch_record(dispatcher, ControlId::CHART_COUNTRY_REGION, next); } } /></label>
+        <label>"Atlas provider"<input type="text" prop:value=atlas.as_ref().map(|value| value.provider.clone()).unwrap_or_default() data-mirabile-control=ControlId::CHART_ATLAS_PROVIDER.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_ATLAS_PROVIDER).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut next=atlas_provider_base.clone(); update_atlas(&mut next, |atlas| atlas.provider=event_target_value(&event)); dispatch_record(dispatcher, ControlId::CHART_ATLAS_PROVIDER, next); } /></label>
+        <label>"Atlas record ID"<input type="text" prop:value=atlas.as_ref().and_then(|value| value.record_id.clone()).unwrap_or_default() data-mirabile-control=ControlId::CHART_ATLAS_RECORD.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_ATLAS_RECORD).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let value=event_target_value(&event); let mut next=atlas_record_base.clone(); update_atlas(&mut next, |atlas| atlas.record_id=(!value.trim().is_empty()).then_some(value)); dispatch_record(dispatcher, ControlId::CHART_ATLAS_RECORD, next); } /></label>
+        <label>"Atlas data version"<input type="text" prop:value=atlas.and_then(|value| value.data_version).unwrap_or_default() data-mirabile-control=ControlId::CHART_ATLAS_VERSION.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_ATLAS_VERSION).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let value=event_target_value(&event); let mut next=atlas_version_base.clone(); update_atlas(&mut next, |atlas| atlas.data_version=(!value.trim().is_empty()).then_some(value)); dispatch_record(dispatcher, ControlId::CHART_ATLAS_VERSION, next); } /></label>
+        <label>"Source description"<input type="text" prop:value=record.source.description data-mirabile-control=ControlId::CHART_SOURCE_DESCRIPTION.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_SOURCE_DESCRIPTION).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut next=source_description_base.clone(); next.source.description=event_target_value(&event); dispatch_record(dispatcher, ControlId::CHART_SOURCE_DESCRIPTION, next); } /></label>
+        <label>"Source type"<select prop:value=source_type_key(record.source.source_type) data-mirabile-control=ControlId::CHART_SOURCE_TYPE.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_SOURCE_TYPE).to_string() data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut next=source_type_base.clone(); next.source.source_type=parse_source_type(&event_target_value(&event)); dispatch_record(dispatcher, ControlId::CHART_SOURCE_TYPE, next); }>{source_type_options().into_iter().map(|(value,label)| view! { <option value=value>{label}</option> }).collect_view()}</select></label>
+        <label>"Recorded by"<input type="text" prop:value=record.source.recorded_by.unwrap_or_default() data-mirabile-control=ControlId::CHART_SOURCE_RECORDED_BY.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_SOURCE_RECORDED_BY).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let value=event_target_value(&event); let mut next=recorded_by_base.clone(); next.source.recorded_by=(!value.trim().is_empty()).then_some(value); dispatch_record(dispatcher, ControlId::CHART_SOURCE_RECORDED_BY, next); } /></label>
+    </fieldset> }
+}
+
+fn dispatch_record(
+    dispatcher: WorkbenchCoordinator,
+    control: ControlId,
+    record: mirabile_app::ChartRecord,
+) {
+    dispatch_mutation(
+        dispatcher,
+        control,
+        ChartMutation::SetRecordDetails(Box::new(record)),
+    );
+}
+fn update_atlas(
+    record: &mut mirabile_app::ChartRecord,
+    update: impl FnOnce(&mut mirabile_app::AtlasRef),
+) {
+    if let Some(location) = &mut record.location {
+        let atlas = location
+            .atlas_provenance
+            .get_or_insert_with(|| mirabile_app::AtlasRef {
+                provider: "Manual".into(),
+                record_id: None,
+                data_version: None,
+            });
+        update(atlas);
+    }
+}
+fn calendar_key(value: &mirabile_app::CalendarSpec) -> &'static str {
+    match value {
+        mirabile_app::CalendarSpec::Julian => "julian",
+        _ => "gregorian",
+    }
+}
+fn disambiguation_key(value: Option<mirabile_app::TimeChoice>) -> &'static str {
+    match value {
+        Some(mirabile_app::TimeChoice::Earlier) => "earlier",
+        Some(mirabile_app::TimeChoice::Later) => "later",
+        None => "none",
+    }
+}
+fn source_type_options() -> [(&'static str, &'static str); 7] {
+    [
+        ("birth-certificate", "Birth certificate"),
+        ("memory", "Memory"),
+        ("published", "Published"),
+        ("research", "Research"),
+        ("user-assertion", "User assertion"),
+        ("system-clock", "System clock"),
+        ("unknown", "Unknown"),
+    ]
+}
+fn source_type_key(value: mirabile_app::SourceType) -> &'static str {
+    match value {
+        mirabile_app::SourceType::BirthCertificate => "birth-certificate",
+        mirabile_app::SourceType::Memory => "memory",
+        mirabile_app::SourceType::Published => "published",
+        mirabile_app::SourceType::Research => "research",
+        mirabile_app::SourceType::UserAssertion => "user-assertion",
+        mirabile_app::SourceType::SystemClock => "system-clock",
+        mirabile_app::SourceType::Unknown => "unknown",
+    }
+}
+fn parse_source_type(value: &str) -> mirabile_app::SourceType {
+    match value {
+        "birth-certificate" => mirabile_app::SourceType::BirthCertificate,
+        "memory" => mirabile_app::SourceType::Memory,
+        "published" => mirabile_app::SourceType::Published,
+        "research" => mirabile_app::SourceType::Research,
+        "system-clock" => mirabile_app::SourceType::SystemClock,
+        "unknown" => mirabile_app::SourceType::Unknown,
+        _ => mirabile_app::SourceType::UserAssertion,
     }
 }
 

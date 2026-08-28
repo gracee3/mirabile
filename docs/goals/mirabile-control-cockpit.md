@@ -261,8 +261,10 @@ Reconciliation snapshot on 2026-08-28:
   - Query Definition now exposes every predicate operand, comparison variant, optional orb, and
     value, plus application-validated moves between boolean groups. Structural-selector macro
     coverage remains incomplete.
-  - ChartRecord notes/life events and all their modeled fields have typed stable projections and
-    mutations but no complete cockpit builder. Derived-recipe controls now cover Transit
+  - The atomic ChartRecord editor now exposes custom event labels, subject pronouns, calendar and
+    ambiguity choice, country/region and atlas provenance, and complete source provenance; the
+    visible new-chart journey saves these fields atomically. Notes/life events and their stable
+    nested rows still need the complete cockpit builder. Derived-recipe controls now cover Transit
     date/time/location, Harmonic radix/factor, Relocation radix/location, and ordered Composite
     charts/method; full temporal/location provenance remains part of the field-ledger pass.
   - Workspace Document has typed chart/view lists and profile replacement, but its canonical editor

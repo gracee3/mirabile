@@ -123,6 +123,17 @@ impl ControlId {
     pub const CHART_OPEN: Self = Self(Cow::Borrowed("chart.open"));
     pub const CHART_SELECT: Self = Self(Cow::Borrowed("chart.select"));
     pub const CHART_SUBJECT_NAME: Self = Self(Cow::Borrowed("chart.subject-name"));
+    pub const CHART_SUBJECT_PRONOUNS: Self = Self(Cow::Borrowed("chart.subject-pronouns"));
+    pub const CHART_CUSTOM_EVENT_KIND: Self = Self(Cow::Borrowed("chart.custom-event-kind"));
+    pub const CHART_CALENDAR: Self = Self(Cow::Borrowed("chart.calendar"));
+    pub const CHART_DISAMBIGUATION: Self = Self(Cow::Borrowed("chart.disambiguation"));
+    pub const CHART_COUNTRY_REGION: Self = Self(Cow::Borrowed("chart.country-region"));
+    pub const CHART_ATLAS_PROVIDER: Self = Self(Cow::Borrowed("chart.atlas-provider"));
+    pub const CHART_ATLAS_RECORD: Self = Self(Cow::Borrowed("chart.atlas-record"));
+    pub const CHART_ATLAS_VERSION: Self = Self(Cow::Borrowed("chart.atlas-version"));
+    pub const CHART_SOURCE_DESCRIPTION: Self = Self(Cow::Borrowed("chart.source-description"));
+    pub const CHART_SOURCE_TYPE: Self = Self(Cow::Borrowed("chart.source-type"));
+    pub const CHART_SOURCE_RECORDED_BY: Self = Self(Cow::Borrowed("chart.source-recorded-by"));
     pub const CHART_TIMEZONE: Self = Self(Cow::Borrowed("chart.timezone"));
     pub const CHART_TITLE: Self = Self(Cow::Borrowed("chart.title"));
     pub const CHART_ZODIAC: Self = Self(Cow::Borrowed("chart.zodiac"));
