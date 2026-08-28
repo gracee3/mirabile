@@ -254,11 +254,12 @@ Reconciliation snapshot on 2026-08-28:
 
 - PR #2 cannot move out of draft yet. The 2026-08-28 completion audit found that the passing
   coverage registry and browser matrix do not prove every field required by Phase 4:
-  - View Document can add only a Wheel object; it cannot create all six `ViewObject` variants,
-    and existing non-text objects expose frames but not editable slot references or PointTable
-    membership.
-  - Query Definition exposes tree type replacement, child insertion, and removal, but not native
-    controls for predicate operands, comparison variants, optional orb, or structural moves.
+  - View Document now creates and switches all six `ViewObject` variants and exposes frames, slot
+    references, optional grid RHS, text, PointTable membership, and object ordering through typed
+    mutations. The focused `nested-builder-control` journey saves and reloads a populated
+    PointTable.
+  - Query Definition now exposes every predicate operand, comparison variant, optional orb, and
+    value. Structural move controls and structural-selector macro coverage remain incomplete.
   - ChartRecord notes/life events and all their modeled fields have typed stable projections and
     mutations but no complete cockpit builder. Derived-recipe controls do not expose every Transit,
     Relocation, and Composite field.

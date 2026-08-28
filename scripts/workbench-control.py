@@ -181,9 +181,12 @@ def perform(client: CDPClient, command: str, options: dict[str, Any]) -> Any:
         control_id = str(options["control"])
         qualifiers = options.get("qualifiers", {})
         matches = [control for control in manifest_controls if control.get("address", {}).get("control") == control_id and all(control.get("address", {}).get("qualifiers", {}).get(key) == value for key, value in qualifiers.items())]
-        if len(matches) != 1:
+        index = options.get("index")
+        if index is None and len(matches) != 1:
             raise CDPError(f"semantic discovery expected one {control_id!r} control, found {len(matches)}")
-        result = dict(matches[0])
+        if index is not None and (not isinstance(index, int) or index < 0 or index >= len(matches)):
+            raise CDPError(f"semantic discovery index {index!r} is outside {len(matches)} {control_id!r} matches")
+        result = dict(matches[0 if index is None else index])
         result["address"] = canonical_address(result["address"])
         return result
     if command in {"click", "set", "select", "check"}:
