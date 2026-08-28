@@ -212,6 +212,44 @@
   diagnostics/workspace journeys, new cockpit journeys, normal non-automation initialization and
   demo load with zero console errors, and `scripts/verify.sh` while free space exceeds 15 GiB.
 
+## Professional-wheel reconciliation
+
+PR #2 intentionally delivers the comprehensive control-cockpit sprint in place of, and before,
+the separately scoped professional-wheel sprint. It does not claim professional-wheel completion;
+that work is explicitly deferred in the frozen boundaries above.
+
+| Professional-wheel acceptance criterion | State in PR #2 | Reconciliation |
+| --- | --- | --- |
+| Real houses and angles | Data/output only; not professional wheel rendering | XALEN and the provider-neutral read model supply house cusps, Ascendant, and Midheaven when the chart requests a supported house system with a complete location. PR #2 adds cockpit tables for those values but does not add wheel cusp or angle geometry. |
+| Zodiac and planet glyphs | Not delivered | The pre-existing Scene contract can carry glyph strings, but the current wheel layout still labels points with identifiers and does not implement the requested zodiac/planet glyph system. |
+| Degree and minute labels | Not delivered | PR #2 adds decimal-degree semantic tables and editable Wheel Template display flags. It does not add degree/minute-formatted labels to professional wheel geometry. |
+| Retrograde state | Data/output only; not professional wheel rendering | XALEN already calculates retrograde state and PR #2 projects it in the semantic point table. The wheel does not yet render a retrograde marker. |
+| Aspect semantics | Partially present; professional presentation not delivered | Applying/orb/separation semantics and aspect segments exist, and PR #2 exposes bounded semantic rows. It does not add the requested professional aspect glyph, line-style, or visual hierarchy treatment. |
+| Collision-aware placement | Not delivered | The current layout places every point label at a fixed radial offset from its longitude. It has no clustering, displacement, leader-line, or collision-resolution pass. |
+| Wheel-dominant cockpit | Not delivered | PR #2 deliberately replaces the fixed workstation with an eight-section document-height control laboratory. The retained wheel is a preview, not the dominant professional-wheel surface. |
+
+The remaining nested object/query/recipe builders are also not merely optional polish: complete
+modeled resource editors and typed list/tree builders were explicit control-cockpit acceptance
+criteria. Their incomplete UI depth is therefore an independent reason for PR #2 to remain draft;
+finishing them would complete the cockpit scope but would still not complete the professional-wheel
+sprint.
+
+Reconciliation snapshot on 2026-08-28:
+
+- PR base and merge base: `b6712bc9ed5913238bc7535b11a1a2e155b54450` (`origin/main`).
+- Feature head: `9d4d605d0f5769da991526ce0a5e0b4669e15225`; the local and remote feature
+  refs matched before this documentation update, with ten feature commits and no divergence.
+- Final implementation worktree was clean before this documentation update. PR #2 remains open,
+  draft, and remotely reported `CLEAN`; it has not been merged.
+- Architecture boundaries remain preserved: the PR does not modify `mirabile-engine`, the frozen
+  architecture documents, or the calculation-provider interface. The web layer remains a typed
+  intent adapter; repository access and provider-neutral projection remain in application/store
+  layers under the single authoritative `AppReadModel`.
+- Current disk snapshot: 17,970,290,688 bytes free on `/` (16.74 GiB), and `target/` is
+  13,618,344,201 bytes (12.68 GiB). This newer free-space reading does not alter the historically
+  correct final-gate record above: `scripts/verify.sh` was skipped when only 11,262,078,976 bytes
+  were free.
+
 ## Blockers
 
 - None.
