@@ -76,6 +76,8 @@ run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario resource-authori
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario nested-builder-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario history-delete-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-control --mode control
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario nested-macro-control --mode control
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-topology-failure-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-failure-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario macro-bridge --mode semantic
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario two-application-conflict --mode semantic

@@ -259,8 +259,10 @@ Reconciliation snapshot on 2026-08-28:
     mutations. The focused `nested-builder-control` journey saves and reloads a populated
     PointTable.
   - Query Definition now exposes every predicate operand, comparison variant, optional orb, and
-    value, plus application-validated moves between boolean groups. Structural-selector macro
-    coverage remains incomplete.
+    value, plus application-validated moves between boolean groups. Version-1 macros now capture
+    query nodes as root-relative child-index paths, resolve them against fresh application-owned
+    node IDs at replay time, and stop with an explicit topology mismatch when the tree shape no
+    longer matches.
   - The atomic ChartRecord editor now exposes custom event labels, subject pronouns, calendar and
     ambiguity choice, country/region and atlas provenance, and complete source provenance; the
     visible new-chart journey saves these fields atomically. Notes, life events, and nested
@@ -275,7 +277,8 @@ Reconciliation snapshot on 2026-08-28:
     assignments, and change all seven profile bindings plus the active ViewDocument binding. A
     focused native test proves domain equality after save/reopen, while
     `workspace-composition-control` performs the same visible-control sequence through IndexedDB.
-    Structural-selector macro coverage for these new mutations remains incomplete.
+    Version-1 macros now capture and replay the workspace mutations and generalized binding
+    changes through symbolic resource/view bindings rather than runtime IDs.
 - Fresh gate evidence for `b2292ef`: `./scripts/check.sh` passed; focused
   `cockpit-manifest-control`, `resource-authoring-control`, and `nested-builder-control` journeys
   passed; and the complete `./scripts/verify.sh` passed, including native, XALEN known-answer,
@@ -290,6 +293,11 @@ Reconciliation snapshot on 2026-08-28:
   browser journey passes create/add/order/rotate/hide/save/reload/remove through semantic controls.
   The post-journey disk snapshot is 23,125,602,304 bytes available with 16,293,625,214 bytes in the
   repository-local `target/`.
+- Structural-macro checkpoint: 86 `mirabile-app` tests and strict focused Clippy pass. The
+  `nested-macro-control` journey records and replays nested Point Set and Query Definition edits
+  after fresh draft IDs are allocated; `macro-topology-failure-control` proves an unresolved query
+  path fails at the recorded semantic control without dispatching a partial mutation. Macro schema
+  version 1 remains unchanged and no `DraftItemId` is serialized.
 - Next action: finish the controls listed above, add field-level native and browser assertions that
   cannot be satisfied by registry declarations alone, rerun the disk gate and full verification,
   and only then mark PR #2 ready and perform the squash-merge/branch handoff.

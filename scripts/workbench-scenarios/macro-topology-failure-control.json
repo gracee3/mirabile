@@ -1,0 +1,13 @@
+{
+  "name": "macro-topology-failure-control",
+  "steps": [
+    {"command": "wait", "timeout": 15},
+    {"command": "set", "address": "macro.json", "value": "{\"schema_version\":1,\"name\":\"Topology mismatch\",\"steps\":[{\"action\":{\"action\":\"begin_resource_create\",\"kind\":\"query_definition\"}},{\"action\":{\"action\":\"mutate_resource\",\"kind\":\"query_definition\",\"mutation\":{\"mutation\":\"query_tree\",\"value\":{\"operation\":\"replace\",\"node\":{\"path\":[9]},\"expression\":{\"type\":\"predicate\",\"value\":{\"type\":\"in_sign\",\"point\":\"sun\",\"sign_index\":0}}}}},\"origin_control\":{\"control\":\"resource.query.node\",\"qualifiers\":{\"kind\":\"querydefinition\",\"collection\":\"tree\",\"field\":\"type\"}}}]}"},
+    {"command": "get", "address": "macro.import", "expect": {"enabled": true}},
+    {"command": "click", "address": "macro.import"},
+    {"command": "click", "address": "macro.replay"},
+    {"command": "wait", "timeout": 15},
+    {"command": "snapshot", "expect": {"value.application.settled": true, "value.coordinator.running": false, "value.coordinator.macro_state.state": "failed", "value.coordinator.macro_state.step": 2, "value.coordinator.highlighted_control.control": "resource.query.node"}},
+    {"command": "get", "address": "resource.cancel[kind=querydefinition]", "expect": {"enabled": true}}
+  ]
+}
