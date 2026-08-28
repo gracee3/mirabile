@@ -8,7 +8,8 @@
 - Delivery: `main` and `goal/mirabile-workbench-authoring` both resolve to
   `3287cb671158494d76b91aadde7790397eb7166f` (verified 2026-08-28)
 - Current baseline: `./scripts/check.sh` passes 155 Rust tests and 5 Python tests, strict
-  Clippy, formatting, and diff checks (verified 2026-08-28)
+  Clippy, formatting, and diff checks (rerun on the documentation-only
+  `chore/t14-baseline-hygiene` delivery follow-up on 2026-08-28)
 
 ## Frozen boundaries
 

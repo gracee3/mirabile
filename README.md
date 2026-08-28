@@ -58,7 +58,7 @@ and staged plus unstaged diff checks. Missing local prerequisites fail with an a
 The WASM build requires the `wasm32-unknown-unknown` Rust target. Run the app with:
 
 ```bash
-(cd apps/web && trunk serve --port 8080)
+(cd apps/web && env -u NO_COLOR trunk serve --port 8080)
 ```
 
 Generate the current diagnostics cockpit screenshot with:
