@@ -6,7 +6,7 @@
   2026-08-28 after squash-merging PR #1)
 - Branch: `goal/mirabile-control-cockpit`
 - Worktree: `/home/emmy/mirabile` (the existing checkout; no additional worktree or Cargo target)
-- Current phase: 2 - repository queries and complete inventory projections
+- Current phase: 3 - generalized typed drafts and lifecycle state
 - Delivery: focused commits pushed regularly; open a feature PR but do not merge it
 - Fast baseline: `./scripts/check.sh` passes 155 Rust tests and 5 Python tests, strict
   Clippy, formatting, and staged plus unstaged diff checks
@@ -33,9 +33,9 @@
 
 | Phase | State | Scope | Gate / evidence | Commit |
 | --- | --- | --- | --- | --- |
-| 1. Baseline and goal | Complete | Correct and merge PR #1; capture disk, normal application, console, display, and screenshot baseline | `./scripts/check.sh`; clean fast-forwarded `main`; normal non-automation XALEN initialization | `b6712bc` base |
-| 2. Repository and inventory | In progress | Present/deleted heads; selected-resource revisions; inventories for all ten canonical resource types | Focused store/application tests and `./scripts/check.sh` | Pending |
-| 3. General typed drafts | Pending | Typed mutations, lifecycle/conflict projections, one draft per type, stable nested item IDs | Per-resource create/edit/save/cancel/conflict/reload tests | Pending |
+| 1. Baseline and goal | Complete | Correct and merge PR #1; capture disk, normal application, console, display, and screenshot baseline | `./scripts/check.sh`; clean fast-forwarded `main`; normal non-automation XALEN initialization | `774d54c` |
+| 2. Repository and inventory | Complete | Present/deleted heads; selected-resource revisions; inventories for all ten canonical resource types | 157 Rust tests; WASM check; IndexedDB browser contract; `./scripts/check.sh` | `85bfead` |
+| 3. General typed drafts | In progress | Typed mutations, lifecycle/conflict projections, one draft per type, stable nested item IDs | Per-resource create/edit/save/cancel/conflict/reload tests | Pending |
 | 4. Complete editors | Pending | Chart/workspace completion and every modeled resource editor | Native and browser authoring coverage | Pending |
 | 5. Bindings and outputs | Pending | Follow/Pinned/Inline controls; point/house/angle/aspect/provenance tables; parameter status | Focused binding, last-good, and coverage tests | Pending |
 | 6. Cockpit composition | Pending | Document-height expanded cockpit, sticky navigation/search/fold controls, semantic addresses | Responsive control-manifest journeys | Pending |
@@ -65,6 +65,30 @@
 - Blockers: none.
 - Next action: add repository head/history queries and authoritative inventories for all ten
   canonical resource kinds.
+
+### Phase 2 - repository and inventory
+
+- SHA: `85bfeada7a155c40e17dddcda0451a5bc9722d80`.
+- `ResourceRepository` now lists ordered present/deleted heads and complete ordered history for one
+  stable identity. Memory and IndexedDB adapters implement the same contract; ordinary `list`
+  continues to hide tombstones.
+- `CanonicalResource::KINDS` is the authoritative ten-variant set and explicitly excludes the five
+  reserved `ResourceKind` values without canonical payloads. Resource metadata accessors support
+  uniform inventory projection.
+- `AppReadModel` now carries ten inventory groups (including empty groups), metadata summaries,
+  repository heads, and selected revision history. `SelectRepositoryResource` is a typed
+  application intent; selection loads repository history and never exposes a web repository write.
+- Tests: `cargo test --workspace` passed 157 Rust tests; the web WASM check passed; the IndexedDB
+  reload/Worker browser contract passed with new head/history assertions; `./scripts/check.sh`
+  passed in 9.43 seconds with 157 Rust tests, 5 Python tests, strict Clippy, formatting, and diff
+  checks.
+- Disk checkpoint: 25 GiB free on `/`; the shared existing `target/` was 8.5 GiB after WASM and
+  browser builds.
+- Elapsed: the broad native, WASM, and IndexedDB validation sequence completed in about one minute.
+- Screenshot paths: Phase 1 before evidence remains current; no Phase 2 visual change.
+- Blockers: none.
+- Next action: replace the Aspect Set-specific editor contract with generalized typed resource
+  drafts, lifecycle/conflict state, and stable nested draft item identities.
 
 ## Acceptance checklist
 
