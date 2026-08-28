@@ -36,7 +36,7 @@
 | 1. Baseline and goal | Complete | Correct and merge PR #1; capture disk, normal application, console, display, and screenshot baseline | `./scripts/check.sh`; clean fast-forwarded `main`; normal non-automation XALEN initialization | `774d54c` |
 | 2. Repository and inventory | Complete | Present/deleted heads; selected-resource revisions; inventories for all ten canonical resource types | 157 Rust tests; WASM check; IndexedDB browser contract; `./scripts/check.sh` | `85bfead` |
 | 3. General typed drafts | Complete | Typed mutations, lifecycle/conflict projections, one draft per type, stable nested item IDs | 161 Rust tests; 5 Python tests; strict Clippy; `./scripts/check.sh` | `4aae865` |
-| 4. Complete editors | In progress | Metadata plus initial native typed payload fields; chart/workspace and typed list-builder completion remains | Native and browser authoring coverage | Pending |
+| 4. Complete editors | In progress | Stable typed nested projections and mutations are implemented; complete chart, recipe, View Object, query-predicate, and workspace composition controls remain | Native and browser authoring coverage | `b2292ef` (partial) |
 | 5. Bindings and outputs | Complete | Writable Follow/Pinned/Inline bindings, provider-neutral tables, provenance, parameter status, and last-good retention | Focused binding and last-good regressions | `8b2b44e` |
 | 6. Cockpit composition | Complete | Document-height eight-section cockpit, sticky navigation/search/fold controls, and semantic addresses | Cockpit manifest plus four responsive captures | `534a277`, `057c5e3` |
 | 7. History and deletion | Complete | Revision inspection, reference-aware two-step deletion, tombstones, stale-delete conflicts, and reload | Store/application tests plus browser reload journey | `8b2b44e`, `057c5e3` |
@@ -252,4 +252,29 @@ Reconciliation snapshot on 2026-08-28:
 
 ## Blockers
 
-- None.
+- PR #2 cannot move out of draft yet. The 2026-08-28 completion audit found that the passing
+  coverage registry and browser matrix do not prove every field required by Phase 4:
+  - View Document can add only a Wheel object; it cannot create all six `ViewObject` variants,
+    and existing non-text objects expose frames but not editable slot references or PointTable
+    membership.
+  - Query Definition exposes tree type replacement, child insertion, and removal, but not native
+    controls for predicate operands, comparison variants, optional orb, or structural moves.
+  - ChartRecord notes/life events and all their modeled fields have typed stable projections and
+    mutations but no complete cockpit builder. Derived-recipe controls do not expose every Transit,
+    Relocation, and Composite field.
+  - Workspace Document has typed chart/view lists and profile replacement, but its canonical editor
+    does not yet expose complete chart membership, view composition, document bindings, per-slot
+    assignments, rotation, hidden points, and every profile binding.
+- Fresh gate evidence for `b2292ef`: `./scripts/check.sh` passed; focused
+  `cockpit-manifest-control`, `resource-authoring-control`, and `nested-builder-control` journeys
+  passed; and the complete `./scripts/verify.sh` passed, including native, XALEN known-answer,
+  WASM, IndexedDB/Worker, diagnostics, history/delete, workspace, macro, conflict, and expected-
+  failure artifact coverage. The full gate completed at 2026-08-28 22:01 EDT in roughly four
+  minutes.
+- Final-gate disk measurement before verification was 26,817,978,368 available bytes. Observed
+  focused-build growth was 273,978,930 bytes, so the required threshold was the 18,253,611,008-byte
+  floor and passed by 8,564,367,360 bytes. Post-verification measurements are 25,188,667,392 bytes
+  available and 15,676,665,382 bytes in `target/`; no cleanup was performed.
+- Next action: finish the controls listed above, add field-level native and browser assertions that
+  cannot be satisfied by registry declarations alone, rerun the disk gate and full verification,
+  and only then mark PR #2 ready and perform the squash-merge/branch handoff.
