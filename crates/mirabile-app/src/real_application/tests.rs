@@ -239,6 +239,17 @@ impl ResourceRepository for SaveFailureRepository {
         self.inner.get_revision(id, revision).await
     }
 
+    async fn list_heads(
+        &self,
+        kind: Option<ResourceKind>,
+    ) -> Result<Vec<ResourceState>, RepositoryError> {
+        self.inner.list_heads(kind).await
+    }
+
+    async fn list_revisions(&self, id: ResourceId) -> Result<Vec<ResourceState>, RepositoryError> {
+        self.inner.list_revisions(id).await
+    }
+
     async fn list(
         &self,
         kind: Option<ResourceKind>,
@@ -268,6 +279,89 @@ where
         Some(ViewComputationState::Loading)
     ));
     settle(application, loading)
+}
+
+#[test]
+fn initialization_projects_all_canonical_inventories_and_repository_heads() {
+    let repository = MemoryRepository::default();
+    for resource in demo_resources() {
+        block_on(repository.create(resource)).expect("seed demo resource");
+    }
+    let deleted = CanonicalResource::PointSet(ResourceEnvelope::new(
+        "Deleted points",
+        PointSet { points: Vec::new() },
+        Timestamp::from_unix_millis(2),
+    ));
+    let deleted_id = deleted.id();
+    block_on(repository.create(deleted)).expect("seed deletable resource");
+    let tombstone = block_on(repository.delete(
+        deleted_id,
+        Revision::INITIAL,
+        Timestamp::from_unix_millis(3),
+    ))
+    .expect("delete resource");
+
+    let application = RealApplication::with_repository(repository);
+    let model = ready(&application);
+    assert_eq!(model.resources.inventories.len(), 10);
+    assert_eq!(
+        model
+            .resources
+            .inventories
+            .iter()
+            .map(|inventory| inventory.kind)
+            .collect::<Vec<_>>(),
+        CanonicalResource::KINDS
+    );
+    assert!(
+        model
+            .resources
+            .inventories
+            .iter()
+            .all(|inventory| !inventory.label.is_empty())
+    );
+    assert_eq!(
+        model
+            .resources
+            .inventories
+            .iter()
+            .map(|inventory| inventory.resources.len())
+            .sum::<usize>(),
+        demo_resources().len()
+    );
+    assert!(model.repository.heads.iter().any(|head| {
+        head.resource_id == deleted_id
+            && head.revision == tombstone.revision
+            && matches!(
+                &head.state,
+                RepositoryHeadState::Deleted { deleted_at }
+                    if *deleted_at == tombstone.deleted_at
+            )
+    }));
+    assert!(
+        model
+            .resources
+            .inventories
+            .iter()
+            .flat_map(|inventory| &inventory.resources)
+            .all(|resource| resource.resource_id != deleted_id)
+    );
+
+    let selected = block_on(application.dispatch(AppIntent::SelectRepositoryResource {
+        resource_id: deleted_id,
+    }))
+    .expect("select deleted resource history");
+    assert_eq!(selected.repository.selected_resource, Some(deleted_id));
+    assert_eq!(selected.repository.selected_history.len(), 2);
+    assert_eq!(
+        selected.repository.selected_history[0].revision,
+        Revision::INITIAL
+    );
+    assert!(matches!(
+        selected.repository.selected_history[1].state,
+        RepositoryRevisionState::Deleted { deleted_at }
+            if deleted_at == tombstone.deleted_at
+    ));
 }
 
 fn settle<R, C>(application: &RealApplication<R, C>, mut model: AppReadModel) -> AppReadModel

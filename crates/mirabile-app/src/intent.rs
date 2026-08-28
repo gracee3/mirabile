@@ -76,6 +76,10 @@ pub enum AppIntent {
     DuplicateAspectSet {
         resource_id: ResourceId,
     },
+    /// Selects one canonical identity for repository revision inspection.
+    SelectRepositoryResource {
+        resource_id: ResourceId,
+    },
     UpdateAspectSetDraft(AspectSetDraftMutation),
     SaveDraft,
     CancelDraft,
@@ -142,6 +146,9 @@ impl AppIntent {
             Self::BeginNewAspectSet => "aspect.begin-new".into(),
             Self::DuplicateAspectSet { resource_id } => {
                 format!("aspect.duplicate[{resource_id}]")
+            }
+            Self::SelectRepositoryResource { resource_id } => {
+                format!("repository.select[{resource_id}]")
             }
             Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetTitle(_)) => {
                 "aspect.title.set".into()

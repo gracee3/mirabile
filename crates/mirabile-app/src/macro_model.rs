@@ -420,7 +420,8 @@ impl SemanticActionV1 {
             AppIntent::RefreshActiveView => Self::RefreshActiveView,
             AppIntent::StartChartDraft { .. }
             | AppIntent::SaveChartDraft { .. }
-            | AppIntent::CancelChartDraft { .. } => {
+            | AppIntent::CancelChartDraft { .. }
+            | AppIntent::SelectRepositoryResource { .. } => {
                 return Err(MacroError::UnsupportedIntent(intent.semantic_summary()));
             }
         })

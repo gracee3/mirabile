@@ -810,6 +810,7 @@ impl RealState {
             | AppIntent::BeginAspectSetEdit { .. }
             | AppIntent::BeginNewAspectSet
             | AppIntent::DuplicateAspectSet { .. }
+            | AppIntent::SelectRepositoryResource { .. }
             | AppIntent::UpdateAspectSetDraft(_)
             | AppIntent::SaveDraft
             | AppIntent::CancelDraft

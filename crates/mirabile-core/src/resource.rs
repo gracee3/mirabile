@@ -240,6 +240,19 @@ macro_rules! resource_access {
 }
 
 impl CanonicalResource {
+    pub const KINDS: [ResourceKind; 10] = [
+        ResourceKind::ChartRecord,
+        ResourceKind::ChartDefinition,
+        ResourceKind::PointSet,
+        ResourceKind::AspectSet,
+        ResourceKind::AnalysisProfile,
+        ResourceKind::WheelTemplate,
+        ResourceKind::ViewDocument,
+        ResourceKind::Theme,
+        ResourceKind::QueryDefinition,
+        ResourceKind::WorkspaceDocument,
+    ];
+
     pub fn id(&self) -> ResourceId {
         resource_access!(self, id)
     }
@@ -265,6 +278,44 @@ impl CanonicalResource {
             Self::QueryDefinition(value) => &value.title,
             Self::WorkspaceDocument(value) => &value.title,
         }
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::ChartRecord(value) => value.description.as_deref(),
+            Self::ChartDefinition(value) => value.description.as_deref(),
+            Self::PointSet(value) => value.description.as_deref(),
+            Self::AspectSet(value) => value.description.as_deref(),
+            Self::AnalysisProfile(value) => value.description.as_deref(),
+            Self::WheelTemplate(value) => value.description.as_deref(),
+            Self::ViewDocument(value) => value.description.as_deref(),
+            Self::Theme(value) => value.description.as_deref(),
+            Self::QueryDefinition(value) => value.description.as_deref(),
+            Self::WorkspaceDocument(value) => value.description.as_deref(),
+        }
+    }
+
+    pub fn tags(&self) -> &[String] {
+        match self {
+            Self::ChartRecord(value) => &value.tags,
+            Self::ChartDefinition(value) => &value.tags,
+            Self::PointSet(value) => &value.tags,
+            Self::AspectSet(value) => &value.tags,
+            Self::AnalysisProfile(value) => &value.tags,
+            Self::WheelTemplate(value) => &value.tags,
+            Self::ViewDocument(value) => &value.tags,
+            Self::Theme(value) => &value.tags,
+            Self::QueryDefinition(value) => &value.tags,
+            Self::WorkspaceDocument(value) => &value.tags,
+        }
+    }
+
+    pub fn created_at(&self) -> Timestamp {
+        resource_access!(self, created_at)
+    }
+
+    pub fn modified_at(&self) -> Timestamp {
+        resource_access!(self, modified_at)
     }
 
     pub const fn kind(&self) -> ResourceKind {
@@ -426,6 +477,22 @@ pub enum ResourceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_resource_kinds_exclude_reserved_payloads() {
+        assert_eq!(CanonicalResource::KINDS.len(), 10);
+        assert!(CanonicalResource::KINDS.contains(&ResourceKind::ChartRecord));
+        assert!(CanonicalResource::KINDS.contains(&ResourceKind::WorkspaceDocument));
+        for reserved in [
+            ResourceKind::CalculationProfile,
+            ResourceKind::RulershipScheme,
+            ResourceKind::DignityScheme,
+            ResourceKind::ArabicPartsSet,
+            ResourceKind::FixedStarSet,
+        ] {
+            assert!(!CanonicalResource::KINDS.contains(&reserved));
+        }
+    }
 
     #[test]
     fn binding_modes_remain_distinct_after_serialization() {

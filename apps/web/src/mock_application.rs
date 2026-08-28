@@ -9,10 +9,10 @@ use mirabile_app::{
     ChartPersistence, ChartSlotAssignment, ChartSlotId, Circle, CommandCapability,
     DisplayValueSource, DraftAssignmentPromotion, DraftState, FillRole, InspectorReadModel,
     InstanceId, Label, LibraryChartSummary, LibraryReadModel, Line, OpenChartSummary,
-    PendingOperationReadModel, PointVisibilityReadModel, ProjectionVersion, ResourceBindingSummary,
-    ResourceEditorReadModel, ResourceId, Revision, Scene, SlotAssignmentSource, StrokeRole,
-    ViewComputationState, ViewDisplayReadModel, ViewInstanceId, ViewReadModel, ViewSummary,
-    WorkspaceReadModel, WorkspaceSummary,
+    PendingOperationReadModel, PointVisibilityReadModel, ProjectionVersion, RepositoryReadModel,
+    ResourceBindingSummary, ResourceCatalogReadModel, ResourceEditorReadModel, ResourceId,
+    Revision, Scene, SlotAssignmentSource, StrokeRole, ViewComputationState, ViewDisplayReadModel,
+    ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel, WorkspaceSummary,
 };
 
 const CHART_DEFINITION_IDS: [&str; 5] = [
@@ -398,6 +398,8 @@ impl MockState {
                     revision: self.workspace.revision,
                 }],
             },
+            resources: ResourceCatalogReadModel::default(),
+            repository: RepositoryReadModel::default(),
             workspace: WorkspaceReadModel {
                 title: "Research comparison".into(),
                 charts: self.charts.clone(),
@@ -649,6 +651,10 @@ impl MockState {
             | AppIntent::LoadDemoBundle => Err(AppError::new(
                 AppErrorKind::Unavailable,
                 "Workspace library management is provided by the real application adapter",
+            )),
+            AppIntent::SelectRepositoryResource { .. } => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Repository inspection is provided by the real application adapter",
             )),
             AppIntent::StartChartDraft { draft } => {
                 if draft.title.trim().is_empty() {

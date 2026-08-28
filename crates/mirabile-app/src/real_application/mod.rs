@@ -12,7 +12,7 @@ use mirabile_core::{
     AnalysisProfile, AspectSet, CalculationSpec, CanonicalResource, ChartDefinition, ChartRecord,
     ChartSource, Command, ConfigurationLayer, ConfigurationStack, DerivationSpec, DomainValidate,
     EffectiveConfiguration, InstanceId, PointSet, Resolved, ResourceBinding, ResourceEnvelope,
-    ResourceId, Revision, Theme, Timestamp, ValueSource, ViewDocument, ViewInstance,
+    ResourceId, ResourceKind, Revision, Theme, Timestamp, ValueSource, ViewDocument, ViewInstance,
     ViewInstanceId, WheelTemplate, WorkspaceDocument, WorkspaceDocumentChart, resolve_binding,
 };
 use mirabile_engine::{
@@ -38,12 +38,15 @@ use crate::{
     ChartMutation, ChartPersistence, ChartSlotAssignment, ChartSlotOption, CommandCapability,
     DisplayValueSource, DraftState, ImplementationIdentityReadModel, InlineCalculationRuntime,
     InspectorReadModel, LibraryChartSummary, LibraryReadModel, OpenChartSummary,
-    PendingOperationReadModel, PointVisibilityReadModel, ProjectionVersion, ResourceBindingSummary,
-    ResourceEditorReadModel, SlotAssignmentSource, StartupCalculationProfile, StartupPolicy,
-    ViewComputationState, ViewDisplayReadModel, ViewReadModel, ViewSummary,
-    WorkspaceDocumentBacking, WorkspaceReadModel, WorkspaceSession,
-    WorkspaceSwitchDecisionReadModel, WorkspaceSwitchTarget, blank_workspace_session,
-    current_transits_session, current_unix_millis, workspace_commands::apply_workspace_command,
+    PendingOperationReadModel, PointVisibilityReadModel, ProjectionVersion,
+    RepositoryHeadReadModel, RepositoryHeadState, RepositoryReadModel, RepositoryRevisionReadModel,
+    RepositoryRevisionState, ResourceBindingSummary, ResourceCatalogReadModel,
+    ResourceEditorReadModel, ResourceInventoryReadModel, ResourceSummaryReadModel,
+    SlotAssignmentSource, StartupCalculationProfile, StartupPolicy, ViewComputationState,
+    ViewDisplayReadModel, ViewReadModel, ViewSummary, WorkspaceDocumentBacking, WorkspaceReadModel,
+    WorkspaceSession, WorkspaceSwitchDecisionReadModel, WorkspaceSwitchTarget,
+    blank_workspace_session, current_transits_session, current_unix_millis,
+    workspace_commands::apply_workspace_command,
 };
 #[cfg(feature = "xalen-backend")]
 use mirabile_engine::XalenBackend;
@@ -257,6 +260,17 @@ impl ResourceRepository for IndexedDbRepositorySource {
         self.acquire().await?.get_revision(id, revision).await
     }
 
+    async fn list_heads(
+        &self,
+        kind: Option<mirabile_core::ResourceKind>,
+    ) -> Result<Vec<ResourceState>, RepositoryError> {
+        self.acquire().await?.list_heads(kind).await
+    }
+
+    async fn list_revisions(&self, id: ResourceId) -> Result<Vec<ResourceState>, RepositoryError> {
+        self.acquire().await?.list_revisions(id).await
+    }
+
     async fn list(
         &self,
         kind: Option<mirabile_core::ResourceKind>,
@@ -439,6 +453,9 @@ where
             AppIntent::DuplicateAspectSet { resource_id } => {
                 self.duplicate_aspect_set(resource_id)?;
             }
+            AppIntent::SelectRepositoryResource { resource_id } => {
+                self.select_repository_resource(resource_id).await?;
+            }
             AppIntent::UpdateAspectSetDraft(mutation) => {
                 self.update_aspect_set_draft(mutation)?;
             }
@@ -502,6 +519,7 @@ struct RealState {
     views: BTreeMap<ViewInstanceId, ViewRuntime>,
     editor: Option<AspectSetEditor>,
     chart_editor: Option<crate::ChartAuthoringEditor>,
+    repository_selection: Option<RepositorySelection>,
     workspace_switch: Option<WorkspaceSwitchDecisionReadModel>,
     pending_workspace_switch: Option<WorkspaceSwitchTarget>,
     cache: ComputationCache,
@@ -519,6 +537,11 @@ struct HydratedState {
     workspace: Option<ResourceEnvelope<WorkspaceDocument>>,
     session: WorkspaceSession,
     next_timestamp: i64,
+}
+
+struct RepositorySelection {
+    resource_id: ResourceId,
+    history: Vec<ResourceState>,
 }
 
 #[derive(Clone)]

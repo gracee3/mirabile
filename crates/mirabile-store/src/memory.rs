@@ -150,6 +150,30 @@ impl ResourceRepository for MemoryRepository {
         Ok(self.state.borrow().history.get(&(id, revision)).cloned())
     }
 
+    async fn list_heads(
+        &self,
+        kind: Option<ResourceKind>,
+    ) -> Result<Vec<ResourceState>, RepositoryError> {
+        Ok(self
+            .state
+            .borrow()
+            .current
+            .values()
+            .filter(|state| kind.is_none_or(|expected| state.kind() == expected))
+            .cloned()
+            .collect())
+    }
+
+    async fn list_revisions(&self, id: ResourceId) -> Result<Vec<ResourceState>, RepositoryError> {
+        Ok(self
+            .state
+            .borrow()
+            .history
+            .iter()
+            .filter_map(|((resource_id, _), state)| (*resource_id == id).then(|| state.clone()))
+            .collect())
+    }
+
     async fn list(
         &self,
         kind: Option<ResourceKind>,
@@ -314,6 +338,15 @@ mod tests {
                     .expect("history"),
                 Some(ResourceState::Deleted(ref value)) if value == &tombstone
             ));
+            assert_eq!(repository.list_heads(None).await.expect("heads").len(), 1);
+            assert!(matches!(
+                repository.list_heads(None).await.expect("heads").as_slice(),
+                [ResourceState::Deleted(value)] if value == &tombstone
+            ));
+            let history = repository.list_revisions(id).await.expect("history list");
+            assert_eq!(history.len(), 2);
+            assert_eq!(history[0].revision(), Revision::INITIAL);
+            assert_eq!(history[1].revision(), tombstone.revision);
             let CanonicalResource::PointSet(envelope) = resource.clone() else {
                 panic!("point set")
             };

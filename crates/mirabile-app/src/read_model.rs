@@ -1,6 +1,6 @@
 use std::fmt;
 
-use mirabile_core::{CoordinateSystem, CorrectionSpec, HouseSystem};
+use mirabile_core::{CoordinateSystem, CorrectionSpec, HouseSystem, ResourceKind, Timestamp};
 use mirabile_engine::{BackendDescriptor, ZodiacMode};
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,8 @@ pub struct AppReadModel {
     pub authoring: AuthoringCapabilitiesReadModel,
     pub chart_editor: Option<ChartEditorReadModel>,
     pub library: LibraryReadModel,
+    pub resources: ResourceCatalogReadModel,
+    pub repository: RepositoryReadModel,
     pub workspace: WorkspaceReadModel,
     pub active_view: Option<ViewReadModel>,
     pub inspector: InspectorReadModel,
@@ -36,6 +38,8 @@ impl AppReadModel {
             authoring: AuthoringCapabilitiesReadModel::default(),
             chart_editor: None,
             library: LibraryReadModel::default(),
+            resources: ResourceCatalogReadModel::default(),
+            repository: RepositoryReadModel::default(),
             workspace: WorkspaceReadModel::default(),
             active_view: None,
             inspector: InspectorReadModel::default(),
@@ -331,6 +335,71 @@ pub struct LibraryReadModel {
     pub charts: Vec<LibraryChartSummary>,
     pub aspect_sets: Vec<AspectSetSummary>,
     pub workspaces: Vec<WorkspaceSummary>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ResourceCatalogReadModel {
+    /// One group for each actual `CanonicalResource` variant, including empty groups.
+    pub inventories: Vec<ResourceInventoryReadModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceInventoryReadModel {
+    pub kind: ResourceKind,
+    pub label: String,
+    pub resources: Vec<ResourceSummaryReadModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceSummaryReadModel {
+    pub resource_id: ResourceId,
+    pub kind: ResourceKind,
+    pub title: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub revision: Revision,
+    pub created_at: Timestamp,
+    pub modified_at: Timestamp,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RepositoryReadModel {
+    pub heads: Vec<RepositoryHeadReadModel>,
+    pub selected_resource: Option<ResourceId>,
+    pub selected_history: Vec<RepositoryRevisionReadModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepositoryHeadReadModel {
+    pub resource_id: ResourceId,
+    pub kind: ResourceKind,
+    pub revision: Revision,
+    pub state: RepositoryHeadState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RepositoryHeadState {
+    Present { title: String },
+    Deleted { deleted_at: Timestamp },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepositoryRevisionReadModel {
+    pub resource_id: ResourceId,
+    pub kind: ResourceKind,
+    pub revision: Revision,
+    pub state: RepositoryRevisionState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RepositoryRevisionState {
+    Present {
+        title: String,
+        modified_at: Timestamp,
+    },
+    Deleted {
+        deleted_at: Timestamp,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

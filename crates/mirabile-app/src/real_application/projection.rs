@@ -182,6 +182,10 @@ impl RealState {
                 aspect_sets: self.catalog.aspect_set_summaries()?,
                 workspaces: self.catalog.workspace_summaries(),
             },
+            resources: self.catalog.resource_catalog_read_model(),
+            repository: self
+                .catalog
+                .repository_read_model(self.repository_selection.as_ref()),
             workspace: WorkspaceReadModel {
                 title: session.working_title.clone(),
                 charts: open_charts,

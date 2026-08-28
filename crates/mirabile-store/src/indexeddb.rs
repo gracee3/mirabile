@@ -309,6 +309,47 @@ impl ResourceRepository for IndexedDbRepository {
         value.as_ref().map(state_from_js_string).transpose()
     }
 
+    async fn list_heads(
+        &self,
+        kind: Option<ResourceKind>,
+    ) -> Result<Vec<ResourceState>, RepositoryError> {
+        let transaction = self
+            .database
+            .transaction(&[CURRENT_STORE], TransactionMode::ReadOnly)
+            .map_err(adapter_error)?;
+        let store = transaction.store(CURRENT_STORE).map_err(adapter_error)?;
+        let values = store.get_all(None, None).await.map_err(adapter_error)?;
+        transaction.done().await.map_err(adapter_error)?;
+        let mut heads = values
+            .into_iter()
+            .map(|value| state_from_js_string(&value))
+            .collect::<Result<Vec<_>, _>>()?;
+        heads.retain(|state| kind.is_none_or(|expected| state.kind() == expected));
+        heads.sort_by_key(ResourceState::id);
+        Ok(heads)
+    }
+
+    async fn list_revisions(&self, id: ResourceId) -> Result<Vec<ResourceState>, RepositoryError> {
+        let transaction = self
+            .database
+            .transaction(&[REVISION_STORE], TransactionMode::ReadOnly)
+            .map_err(adapter_error)?;
+        let store = transaction.store(REVISION_STORE).map_err(adapter_error)?;
+        let values = store.get_all(None, None).await.map_err(adapter_error)?;
+        transaction.done().await.map_err(adapter_error)?;
+        let mut revisions = values
+            .into_iter()
+            .map(|value| state_from_js_string(&value))
+            .filter_map(|result| match result {
+                Ok(state) if state.id() == id => Some(Ok(state)),
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        revisions.sort_by_key(ResourceState::revision);
+        Ok(revisions)
+    }
+
     async fn list(
         &self,
         kind: Option<ResourceKind>,

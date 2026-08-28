@@ -15,6 +15,7 @@ impl Default for RealState {
             views: BTreeMap::new(),
             editor: None,
             chart_editor: None,
+            repository_selection: None,
             workspace_switch: None,
             pending_workspace_switch: None,
             cache: ComputationCache::default(),
