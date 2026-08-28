@@ -134,6 +134,20 @@ impl ControlId {
     pub const CHART_SOURCE_DESCRIPTION: Self = Self(Cow::Borrowed("chart.source-description"));
     pub const CHART_SOURCE_TYPE: Self = Self(Cow::Borrowed("chart.source-type"));
     pub const CHART_SOURCE_RECORDED_BY: Self = Self(Cow::Borrowed("chart.source-recorded-by"));
+    pub const CHART_NOTE_INSERT: Self = Self(Cow::Borrowed("chart.note.insert"));
+    pub const CHART_NOTE_FIELD: Self = Self(Cow::Borrowed("chart.note.field"));
+    pub const CHART_NOTE_MOVE: Self = Self(Cow::Borrowed("chart.note.move"));
+    pub const CHART_NOTE_REMOVE: Self = Self(Cow::Borrowed("chart.note.remove"));
+    pub const CHART_LIFE_EVENT_INSERT: Self = Self(Cow::Borrowed("chart.life-event.insert"));
+    pub const CHART_LIFE_EVENT_FIELD: Self = Self(Cow::Borrowed("chart.life-event.field"));
+    pub const CHART_LIFE_EVENT_MOVE: Self = Self(Cow::Borrowed("chart.life-event.move"));
+    pub const CHART_LIFE_EVENT_REMOVE: Self = Self(Cow::Borrowed("chart.life-event.remove"));
+    pub const CHART_LIFE_EVENT_NOTE_INSERT: Self =
+        Self(Cow::Borrowed("chart.life-event.note.insert"));
+    pub const CHART_LIFE_EVENT_NOTE_FIELD: Self =
+        Self(Cow::Borrowed("chart.life-event.note.field"));
+    pub const CHART_LIFE_EVENT_NOTE_REMOVE: Self =
+        Self(Cow::Borrowed("chart.life-event.note.remove"));
     pub const CHART_TIMEZONE: Self = Self(Cow::Borrowed("chart.timezone"));
     pub const CHART_TITLE: Self = Self(Cow::Borrowed("chart.title"));
     pub const CHART_ZODIAC: Self = Self(Cow::Borrowed("chart.zodiac"));

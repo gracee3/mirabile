@@ -299,6 +299,9 @@ impl ChartMutation {
             Self::SetHouseSystem(_) => "chart.houses.set".into(),
             Self::SetCoordinateSystem(_) => "chart.coordinates.set".into(),
             Self::SetRecordDetails(_) => "chart.record-details.set".into(),
+            Self::Notes(_) => "chart.notes.mutate".into(),
+            Self::LifeEvents(_) => "chart.life-events.mutate".into(),
+            Self::LifeEventNotes { .. } => "chart.life-event.notes.mutate".into(),
             Self::SetCalculation(_) => "chart.calculation.set".into(),
         }
     }

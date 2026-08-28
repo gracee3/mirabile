@@ -370,7 +370,11 @@ impl SemanticActionV1 {
                 ChartMutation::SetCoordinateSystem(coordinates) => Self::SetChartCoordinates {
                     coordinates: *coordinates,
                 },
-                ChartMutation::SetRecordDetails(_) | ChartMutation::SetCalculation(_) => {
+                ChartMutation::SetRecordDetails(_)
+                | ChartMutation::SetCalculation(_)
+                | ChartMutation::Notes(_)
+                | ChartMutation::LifeEvents(_)
+                | ChartMutation::LifeEventNotes { .. } => {
                     return Err(MacroError::UnsupportedIntent(intent.semantic_summary()));
                 }
             },

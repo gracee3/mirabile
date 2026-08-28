@@ -1,12 +1,15 @@
 use mirabile_core::{
     CalculationSpec, CalendarSpec, ChartDefinition, ChartRecord, ChartSource, CivilDate,
     CivilDateTime, CivilTime, CoordinateSystem, CorrectionSpec, EventKind, HouseSystem, Latitude,
-    LocationAssertion, Longitude, Offset, ResourceEnvelope, SourceProvenance, SourceType,
-    SubjectInfo, TemporalAssertion, TimeZoneAssertion, ZodiacSpec,
+    LifeEvent, LocationAssertion, Longitude, Note, Offset, ResourceEnvelope, SourceProvenance,
+    SourceType, SubjectInfo, TemporalAssertion, TimeZoneAssertion, ZodiacSpec,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{ChartDraft, InstanceId, ResourceId, Revision};
+use crate::{
+    ChartDraft, DraftItemId, DraftListMutation, InstanceId, LifeEventDraftReadModel, ResourceId,
+    Revision, StableDraftItemReadModel, StableDraftList,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChartMutation {
@@ -25,6 +28,12 @@ pub enum ChartMutation {
     SetHouseSystem(HouseSystem),
     SetCoordinateSystem(CoordinateSystem),
     SetRecordDetails(Box<ChartRecord>),
+    Notes(DraftListMutation<Note>),
+    LifeEvents(DraftListMutation<LifeEvent>),
+    LifeEventNotes {
+        life_event_id: DraftItemId,
+        mutation: DraftListMutation<Note>,
+    },
     SetCalculation(CalculationSpec),
 }
 
@@ -124,6 +133,8 @@ pub struct ChartEditorReadModel {
     pub factual_mutations_enabled: bool,
     pub factual_mutations_disabled_reason: Option<String>,
     pub conflicts: Vec<ChartEditorConflict>,
+    pub notes: Vec<StableDraftItemReadModel<Note>>,
+    pub life_events: Vec<LifeEventDraftReadModel>,
 }
 
 #[derive(Clone)]
@@ -135,6 +146,28 @@ pub(crate) struct ChartAuthoringEditor {
     pub validation: Vec<ChartValidationIssue>,
     saved: Option<SavedChartBases>,
     pub conflicts: Vec<ChartEditorConflict>,
+    notes: StableDraftList<Note>,
+    life_events: StableDraftList<ChartLifeEventDraft>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ChartLifeEventDraft {
+    value: LifeEvent,
+    notes: StableDraftList<Note>,
+}
+
+impl ChartLifeEventDraft {
+    fn from_canonical(value: &LifeEvent) -> Self {
+        Self {
+            value: value.clone(),
+            notes: StableDraftList::from_canonical(&value.notes),
+        }
+    }
+    fn materialize(&self) -> LifeEvent {
+        let mut value = self.value.clone();
+        value.notes = self.notes.canonical_values();
+        value
+    }
 }
 
 #[derive(Clone)]
@@ -199,6 +232,8 @@ impl ChartAuthoringEditor {
             validation: Vec::new(),
             saved: None,
             conflicts: Vec::new(),
+            notes: StableDraftList::from_canonical(&[]),
+            life_events: StableDraftList::from_canonical(&[]),
         }
     }
 
@@ -250,6 +285,15 @@ impl ChartAuthoringEditor {
             record: record.payload.clone(),
             calculation: definition.payload.calculation.clone(),
         };
+        let notes = StableDraftList::from_canonical(&record.payload.notes);
+        let life_events = StableDraftList::from_canonical(
+            &record
+                .payload
+                .life_events
+                .iter()
+                .map(ChartLifeEventDraft::from_canonical)
+                .collect::<Vec<_>>(),
+        );
         Ok(Self {
             target: ChartEditorTarget::Saved {
                 instance_id,
@@ -268,6 +312,8 @@ impl ChartAuthoringEditor {
                 shared_record,
             }),
             conflicts: Vec::new(),
+            notes,
+            life_events,
         })
     }
 
@@ -293,6 +339,9 @@ impl ChartAuthoringEditor {
                 | ChartMutation::SetLatitude(_)
                 | ChartMutation::SetLongitude(_)
                 | ChartMutation::SetRecordDetails(_)
+                | ChartMutation::Notes(_)
+                | ChartMutation::LifeEvents(_)
+                | ChartMutation::LifeEventNotes { .. }
         )
     }
 
@@ -310,6 +359,7 @@ impl ChartAuthoringEditor {
             && self.draft.longitude.is_some()
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn apply(&mut self, mutation: ChartMutation) -> Option<ChartDraft> {
         match mutation {
             ChartMutation::SetTitle(value) => self.draft.title = value,
@@ -338,8 +388,82 @@ impl ChartAuthoringEditor {
                 self.draft.civil_time = value.time.civil_datetime.time;
                 self.draft.record_template = *value;
             }
+            ChartMutation::Notes(mutation) => {
+                if let Err(message) = self.notes.apply(mutation) {
+                    self.validation = vec![ChartValidationIssue {
+                        field: "notes".into(),
+                        message: message.into(),
+                    }];
+                    return None;
+                }
+            }
+            ChartMutation::LifeEvents(mutation) => {
+                let mutation = match mutation {
+                    DraftListMutation::Insert { after, value } => DraftListMutation::Insert {
+                        after,
+                        value: ChartLifeEventDraft::from_canonical(&value),
+                    },
+                    DraftListMutation::Update { item_id, value } => {
+                        let notes = self
+                            .life_events
+                            .items()
+                            .iter()
+                            .find(|item| item.id == item_id)
+                            .map_or_else(
+                                || StableDraftList::from_canonical(&value.notes),
+                                |item| item.value.notes.clone(),
+                            );
+                        DraftListMutation::Update {
+                            item_id,
+                            value: ChartLifeEventDraft { value, notes },
+                        }
+                    }
+                    DraftListMutation::Remove { item_id } => DraftListMutation::Remove { item_id },
+                    DraftListMutation::Move { item_id, before } => {
+                        DraftListMutation::Move { item_id, before }
+                    }
+                };
+                if let Err(message) = self.life_events.apply(mutation) {
+                    self.validation = vec![ChartValidationIssue {
+                        field: "life_events".into(),
+                        message: message.into(),
+                    }];
+                    return None;
+                }
+            }
+            ChartMutation::LifeEventNotes {
+                life_event_id,
+                mutation,
+            } => {
+                let Some(event) = self
+                    .life_events
+                    .items_mut()
+                    .iter_mut()
+                    .find(|item| item.id == life_event_id)
+                else {
+                    self.validation = vec![ChartValidationIssue {
+                        field: "life_events.notes".into(),
+                        message: "Life event was not found".into(),
+                    }];
+                    return None;
+                };
+                if let Err(message) = event.value.notes.apply(mutation) {
+                    self.validation = vec![ChartValidationIssue {
+                        field: "life_events.notes".into(),
+                        message: message.into(),
+                    }];
+                    return None;
+                }
+            }
             ChartMutation::SetCalculation(value) => self.draft.calculation = value,
         }
+        self.draft.record_template.notes = self.notes.canonical_values();
+        self.draft.record_template.life_events = self
+            .life_events
+            .items()
+            .iter()
+            .map(|item| item.value.materialize())
+            .collect();
         self.state = ChartEditorState::Dirty;
         self.conflicts.clear();
         match self.draft.materialize() {
@@ -356,6 +480,34 @@ impl ChartAuthoringEditor {
     }
 
     pub(crate) fn read_model(&self) -> ChartEditorReadModel {
+        let notes = self
+            .notes
+            .items()
+            .iter()
+            .map(|item| StableDraftItemReadModel {
+                item_id: item.id,
+                value: item.value.clone(),
+            })
+            .collect();
+        let life_events = self
+            .life_events
+            .items()
+            .iter()
+            .map(|item| LifeEventDraftReadModel {
+                item_id: item.id,
+                value: item.value.materialize(),
+                notes: item
+                    .value
+                    .notes
+                    .items()
+                    .iter()
+                    .map(|note| StableDraftItemReadModel {
+                        item_id: note.id,
+                        value: note.value.clone(),
+                    })
+                    .collect(),
+            })
+            .collect();
         ChartEditorReadModel {
             target: self.target.clone(),
             state: self.state,
@@ -387,6 +539,8 @@ impl ChartAuthoringEditor {
                     .into()
             }),
             conflicts: self.conflicts.clone(),
+            notes,
+            life_events,
         }
     }
 }
@@ -549,5 +703,80 @@ mod tests {
             "Baltimore"
         );
         assert!(editor.validation.is_empty());
+    }
+
+    #[test]
+    fn nested_chart_facts_keep_stable_ids_and_materialize_in_order() {
+        let mut editor = editor();
+        let first = Note {
+            text: "first".into(),
+            created_at: mirabile_core::Timestamp::from_unix_millis(10),
+        };
+        let second = Note {
+            text: "second".into(),
+            created_at: mirabile_core::Timestamp::from_unix_millis(20),
+        };
+        editor.apply(ChartMutation::Notes(DraftListMutation::Insert {
+            after: None,
+            value: first,
+        }));
+        let first_id = editor.read_model().notes[0].item_id;
+        editor.apply(ChartMutation::Notes(DraftListMutation::Insert {
+            after: Some(first_id),
+            value: second.clone(),
+        }));
+        let second_id = editor.read_model().notes[1].item_id;
+        editor.apply(ChartMutation::Notes(DraftListMutation::Move {
+            item_id: second_id,
+            before: Some(first_id),
+        }));
+        assert_eq!(
+            editor
+                .read_model()
+                .notes
+                .iter()
+                .map(|row| row.item_id)
+                .collect::<Vec<_>>(),
+            vec![second_id, first_id]
+        );
+
+        let event = LifeEvent {
+            title: "Milestone".into(),
+            time: editor.last_valid.record.time.clone(),
+            location: None,
+            notes: Vec::new(),
+        };
+        editor.apply(ChartMutation::LifeEvents(DraftListMutation::Insert {
+            after: None,
+            value: event,
+        }));
+        let event_id = editor.read_model().life_events[0].item_id;
+        editor.apply(ChartMutation::LifeEventNotes {
+            life_event_id: event_id,
+            mutation: DraftListMutation::Insert {
+                after: None,
+                value: Note {
+                    text: "nested".into(),
+                    created_at: mirabile_core::Timestamp::from_unix_millis(30),
+                },
+            },
+        });
+        let read = editor.read_model();
+        assert_eq!(read.life_events[0].item_id, event_id);
+        assert_eq!(read.life_events[0].notes[0].value.text, "nested");
+        assert_eq!(
+            editor.last_valid.record.notes,
+            vec![
+                second,
+                Note {
+                    text: "first".into(),
+                    created_at: mirabile_core::Timestamp::from_unix_millis(10)
+                }
+            ]
+        );
+        assert_eq!(
+            editor.last_valid.record.life_events[0].notes[0].text,
+            "nested"
+        );
     }
 }

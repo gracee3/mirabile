@@ -192,6 +192,7 @@ pub(super) fn ChartAuthoring(
                             })
                         />
                         <ChartRecordDetails record=editor.fields.record.clone() disabled=factual_disabled disabled_reason=factual_disabled_reason dispatcher />
+                        <ChartNestedFacts record=editor.fields.record.clone() notes=editor.notes.clone() life_events=editor.life_events.clone() disabled=factual_disabled dispatcher />
                         <fieldset class="payload-fields"><legend>"Complete calculation semantics"</legend>
                             <label>"Lunar node"<select prop:value=move || model.get().chart_editor.map_or_else(String::new, |editor| format!("{:?}", editor.fields.calculation.lunar_node).to_lowercase()) data-mirabile-control=ControlId::CHART_LUNAR_NODE.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_LUNAR_NODE).to_string() data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| if let Some(editor)=model.get().chart_editor { let mut calculation=editor.fields.calculation; calculation.lunar_node=if event_target_value(&event) == "mean" { mirabile_app::LunarNodeType::Mean } else { mirabile_app::LunarNodeType::True }; dispatch_mutation(dispatcher, ControlId::CHART_LUNAR_NODE, ChartMutation::SetCalculation(calculation)); }><option value="mean">"Mean"</option><option value="true">"True"</option></select></label>
                             <label>"Black Moon"<select prop:value=move || model.get().chart_editor.map_or_else(String::new, |editor| format!("{:?}", editor.fields.calculation.black_moon).to_lowercase()) data-mirabile-control=ControlId::CHART_BLACK_MOON.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_BLACK_MOON).to_string() data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| if let Some(editor)=model.get().chart_editor { let mut calculation=editor.fields.calculation; calculation.black_moon=if event_target_value(&event) == "osculating" { mirabile_app::BlackMoonType::Osculating } else { mirabile_app::BlackMoonType::Mean }; dispatch_mutation(dispatcher, ControlId::CHART_BLACK_MOON, ChartMutation::SetCalculation(calculation)); }><option value="mean">"Mean"</option><option value="osculating">"Osculating"</option></select></label>
@@ -519,6 +520,100 @@ fn parse_source_type(value: &str) -> mirabile_app::SourceType {
         "unknown" => mirabile_app::SourceType::Unknown,
         _ => mirabile_app::SourceType::UserAssertion,
     }
+}
+
+#[component]
+fn ChartNestedFacts(
+    record: mirabile_app::ChartRecord,
+    notes: Vec<mirabile_app::StableDraftItemReadModel<mirabile_app::Note>>,
+    life_events: Vec<mirabile_app::LifeEventDraftReadModel>,
+    disabled: Signal<bool>,
+    dispatcher: WorkbenchCoordinator,
+) -> impl IntoView {
+    let last_note = notes.last().map(|row| row.item_id);
+    let last_event = life_events.last().map(|row| row.item_id);
+    let event_time = record.time.clone();
+    view! { <fieldset class="payload-fields nested-chart-facts"><legend>"Notes and life events"</legend>
+        <h4>"Chart notes"</h4>
+        {notes.into_iter().map(|row| { let item_id=row.item_id; let update=row.value.clone(); view! { <div class="builder-row"><label>"Note"<textarea prop:value=row.value.text data-mirabile-control=ControlId::CHART_NOTE_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_NOTE_FIELD, "note", item_id, Some("text")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut value=update.clone(); value.text=event_target_value(&event); dispatch_mutation(dispatcher, ControlId::CHART_NOTE_FIELD, ChartMutation::Notes(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label><small>{format!("Timestamp {}", row.value.created_at.unix_millis())}</small><button type="button" class="button secondary" data-mirabile-control=ControlId::CHART_NOTE_MOVE.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_NOTE_MOVE, "note", item_id, Some("end")) data-mirabile-kind="action" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:click=move |_| dispatch_mutation(dispatcher, ControlId::CHART_NOTE_MOVE, ChartMutation::Notes(mirabile_app::DraftListMutation::Move { item_id, before:None }))>"Move to end"</button><button type="button" class="button danger" data-mirabile-control=ControlId::CHART_NOTE_REMOVE.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_NOTE_REMOVE, "note", item_id, None) data-mirabile-kind="action" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:click=move |_| dispatch_mutation(dispatcher, ControlId::CHART_NOTE_REMOVE, ChartMutation::Notes(mirabile_app::DraftListMutation::Remove { item_id }))>"Remove note"</button></div> } }).collect_view()}
+        <button type="button" class="button secondary" data-mirabile-control=ControlId::CHART_NOTE_INSERT.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_NOTE_INSERT).to_string() data-mirabile-kind="action" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:click=move |_| dispatch_mutation(dispatcher, ControlId::CHART_NOTE_INSERT, ChartMutation::Notes(mirabile_app::DraftListMutation::Insert { after:last_note, value:mirabile_app::Note { text:"New note".into(), created_at:mirabile_app::Timestamp::from_unix_millis(0) } }))>"Add chart note"</button>
+        <h4>"Life events"</h4>
+        {life_events.into_iter().map(|row| view! { <ChartLifeEventRow row disabled dispatcher /> }).collect_view()}
+        <button type="button" class="button secondary" data-mirabile-control=ControlId::CHART_LIFE_EVENT_INSERT.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_LIFE_EVENT_INSERT).to_string() data-mirabile-kind="action" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:click=move |_| dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_INSERT, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Insert { after:last_event, value:mirabile_app::LifeEvent { title:"New life event".into(), time:event_time.clone(), location:None, notes:Vec::new() } }))>"Add life event"</button>
+    </fieldset> }
+}
+
+#[component]
+fn ChartLifeEventRow(
+    row: mirabile_app::LifeEventDraftReadModel,
+    disabled: Signal<bool>,
+    dispatcher: WorkbenchCoordinator,
+) -> impl IntoView {
+    let item_id = row.item_id;
+    let title_base = row.value.clone();
+    let date_base = row.value.clone();
+    let time_base = row.value.clone();
+    let location_toggle_base = row.value.clone();
+    let last_note = row.notes.last().map(|note| note.item_id);
+    view! { <div class="builder-row life-event-row"><label>"Title"<input type="text" prop:value=row.value.title.clone() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("title")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut value=title_base.clone(); value.title=event_target_value(&event); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
+        <label>"Date"<input type="date" prop:value=format_date(row.value.time.civil_datetime.date) data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("date")) data-mirabile-kind="date" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| if let Ok(date)=parse_date(&event_target_value(&event)) { let mut value=date_base.clone(); value.time.civil_datetime.date=date; dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
+        <label>"Time"<input type="time" step="1" prop:value=format_time(row.value.time.civil_datetime.time) data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("time")) data-mirabile-kind="time" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| if let Ok(time)=parse_time(&event_target_value(&event)) { let mut value=time_base.clone(); value.time.civil_datetime.time=time; dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
+        <label class="checkbox-field"><input type="checkbox" prop:checked=row.value.location.is_some() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("location-enabled")) data-mirabile-kind="toggle" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut value=location_toggle_base.clone(); value.location=event_target_checked(&event).then(|| mirabile_app::LocationAssertion { display_name:"Location".into(), country_region:None, latitude:mirabile_app::Latitude::from_degrees(0.0).expect("latitude"), longitude:mirabile_app::Longitude::from_degrees(0.0).expect("longitude"), atlas_provenance:None }); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } />"Use location"</label>
+        {row.value.location.clone().map(|location| view! { <LifeEventLocation item_id event=row.value.clone() location disabled dispatcher /> })}
+        {row.notes.into_iter().map(|note| { let note_id=note.item_id; let update=note.value.clone(); view! { <div class="nested-note"><label>"Life-event note"<textarea prop:value=note.value.text data-mirabile-control=ControlId::CHART_LIFE_EVENT_NOTE_FIELD.to_string() data-mirabile-address=chart_nested_item_address(ControlId::CHART_LIFE_EVENT_NOTE_FIELD, item_id, note_id, Some("text")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut value=update.clone(); value.text=event_target_value(&event); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_NOTE_FIELD, ChartMutation::LifeEventNotes { life_event_id:item_id, mutation:mirabile_app::DraftListMutation::Update { item_id:note_id, value } }); } /></label><button type="button" class="button danger" data-mirabile-control=ControlId::CHART_LIFE_EVENT_NOTE_REMOVE.to_string() data-mirabile-address=chart_nested_item_address(ControlId::CHART_LIFE_EVENT_NOTE_REMOVE, item_id, note_id, None) data-mirabile-kind="action" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:click=move |_| dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_NOTE_REMOVE, ChartMutation::LifeEventNotes { life_event_id:item_id, mutation:mirabile_app::DraftListMutation::Remove { item_id:note_id } })>"Remove note"</button></div> } }).collect_view()}
+        <button type="button" class="button secondary" data-mirabile-control=ControlId::CHART_LIFE_EVENT_NOTE_INSERT.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_NOTE_INSERT, "life-event", item_id, None) data-mirabile-kind="action" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:click=move |_| dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_NOTE_INSERT, ChartMutation::LifeEventNotes { life_event_id:item_id, mutation:mirabile_app::DraftListMutation::Insert { after:last_note, value:mirabile_app::Note { text:"New note".into(), created_at:mirabile_app::Timestamp::from_unix_millis(0) } } })>"Add nested note"</button>
+        <button type="button" class="button secondary" data-mirabile-control=ControlId::CHART_LIFE_EVENT_MOVE.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_MOVE, "life-event", item_id, Some("end")) data-mirabile-kind="action" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:click=move |_| dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_MOVE, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Move { item_id, before:None }))>"Move event to end"</button><button type="button" class="button danger" data-mirabile-control=ControlId::CHART_LIFE_EVENT_REMOVE.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_REMOVE, "life-event", item_id, None) data-mirabile-kind="action" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:click=move |_| dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_REMOVE, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Remove { item_id }))>"Remove life event"</button>
+    </div> }
+}
+
+#[component]
+fn LifeEventLocation(
+    item_id: mirabile_app::DraftItemId,
+    event: mirabile_app::LifeEvent,
+    location: mirabile_app::LocationAssertion,
+    disabled: Signal<bool>,
+    dispatcher: WorkbenchCoordinator,
+) -> impl IntoView {
+    let name_base = event.clone();
+    let latitude_base = event.clone();
+    let longitude_base = event;
+    view! { <div class="location-fields"><label>"Event location"<input type="text" prop:value=location.display_name data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("location-name")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| { let mut value=name_base.clone(); if let Some(location)=&mut value.location { location.display_name=event_target_value(&change); } dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label><label>"Latitude"<input type="number" prop:value=location.latitude.degrees() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("latitude")) data-mirabile-kind="number" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| if let Ok(degrees)=event_target_value(&change).parse() && let Ok(latitude)=mirabile_app::Latitude::from_degrees(degrees) { let mut value=latitude_base.clone(); if let Some(location)=&mut value.location { location.latitude=latitude; } dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label><label>"Longitude"<input type="number" prop:value=location.longitude.degrees() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("longitude")) data-mirabile-kind="number" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| if let Ok(degrees)=event_target_value(&change).parse() && let Ok(longitude)=mirabile_app::Longitude::from_degrees(degrees) { let mut value=longitude_base.clone(); if let Some(location)=&mut value.location { location.longitude=longitude; } dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label></div> }
+}
+
+fn chart_item_address(
+    control: ControlId,
+    collection: &'static str,
+    item_id: mirabile_app::DraftItemId,
+    field: Option<&'static str>,
+) -> String {
+    let mut qualifiers = vec![
+        ("collection", collection.to_owned()),
+        ("draft-item", item_id.to_string()),
+    ];
+    if let Some(field) = field {
+        qualifiers.push(("field", field.to_owned()));
+    }
+    ControlAddress::qualified(control, qualifiers)
+        .expect("chart item address")
+        .to_string()
+}
+fn chart_nested_item_address(
+    control: ControlId,
+    parent: mirabile_app::DraftItemId,
+    item_id: mirabile_app::DraftItemId,
+    field: Option<&'static str>,
+) -> String {
+    let mut qualifiers = vec![
+        ("collection", "life-event-notes".to_owned()),
+        ("parent", parent.to_string()),
+        ("draft-item", item_id.to_string()),
+    ];
+    if let Some(field) = field {
+        qualifiers.push(("field", field.to_owned()));
+    }
+    ControlAddress::qualified(control, qualifiers)
+        .expect("nested chart item address")
+        .to_string()
 }
 
 fn dispatch_mutation(

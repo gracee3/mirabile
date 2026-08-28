@@ -217,7 +217,10 @@ where
             | ChartMutation::SetCountryRegion(_)
             | ChartMutation::SetLatitude(_)
             | ChartMutation::SetLongitude(_)
-            | ChartMutation::SetRecordDetails(_) => {}
+            | ChartMutation::SetRecordDetails(_)
+            | ChartMutation::Notes(_)
+            | ChartMutation::LifeEvents(_)
+            | ChartMutation::LifeEventNotes { .. } => {}
         }
         let (instance_id, is_new, materialized) = {
             let editor = state.chart_editor.as_mut().expect("editor was checked");
