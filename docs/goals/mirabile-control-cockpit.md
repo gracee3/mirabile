@@ -259,10 +259,12 @@ Reconciliation snapshot on 2026-08-28:
     mutations. The focused `nested-builder-control` journey saves and reloads a populated
     PointTable.
   - Query Definition now exposes every predicate operand, comparison variant, optional orb, and
-    value. Structural move controls and structural-selector macro coverage remain incomplete.
+    value, plus application-validated moves between boolean groups. Structural-selector macro
+    coverage remains incomplete.
   - ChartRecord notes/life events and all their modeled fields have typed stable projections and
-    mutations but no complete cockpit builder. Derived-recipe controls do not expose every Transit,
-    Relocation, and Composite field.
+    mutations but no complete cockpit builder. Derived-recipe controls now cover Transit
+    date/time/location, Harmonic radix/factor, Relocation radix/location, and ordered Composite
+    charts/method; full temporal/location provenance remains part of the field-ledger pass.
   - Workspace Document has typed chart/view lists and profile replacement, but its canonical editor
     does not yet expose complete chart membership, view composition, document bindings, per-slot
     assignments, rotation, hidden points, and every profile binding.

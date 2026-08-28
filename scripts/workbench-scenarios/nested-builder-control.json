@@ -32,6 +32,18 @@
     {"command": "set", "address": "${query_orb}", "value": "3.5"},
     {"command": "click", "address": "resource.save[kind=querydefinition]"},
     {"command": "wait"},
+    {"command": "click", "address": "resource.new[kind=chartdefinition]"},
+    {"command": "select", "address": "resource.recipe.field[field=type,kind=chartdefinition]", "value": "transit"},
+    {"command": "set", "address": "resource.recipe.field[field=date,kind=chartdefinition]", "value": "2027-04-05"},
+    {"command": "set", "address": "resource.recipe.field[field=time,kind=chartdefinition]", "value": "14:30:00"},
+    {"command": "set", "address": "resource.recipe.field[field=location-name,kind=chartdefinition]", "value": "Transit location"},
+    {"command": "select", "address": "resource.recipe.field[field=type,kind=chartdefinition]", "value": "relocation"},
+    {"command": "set", "address": "resource.recipe.field[field=latitude,kind=chartdefinition]", "value": "38.9072"},
+    {"command": "set", "address": "resource.recipe.field[field=longitude,kind=chartdefinition]", "value": "-77.0369"},
+    {"command": "select", "address": "resource.recipe.field[field=type,kind=chartdefinition]", "value": "composite"},
+    {"command": "select", "address": "resource.recipe.field[field=method,kind=chartdefinition]", "value": "davison"},
+    {"command": "click", "address": "resource.list.insert[collection=composite-charts,kind=chartdefinition]"},
+    {"command": "click", "address": "resource.cancel[kind=chartdefinition]"},
     {"command": "reload"},
     {"command": "wait"}
   ]
