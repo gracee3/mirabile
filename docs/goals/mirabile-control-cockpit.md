@@ -6,11 +6,11 @@
   2026-08-28 after squash-merging PR #1)
 - Branch: `goal/mirabile-control-cockpit`
 - Worktree: `/home/emmy/mirabile` (the existing checkout; no additional worktree or Cargo target)
-- Current phase: verified and awaiting authorized feature-PR merge
-- Delivery: focused commits pushed regularly; mark PR #2 ready and squash-merge it only after the
-  exact pushed head passes every completion gate
-- Current fast gate: `scripts/check.sh` passes 182 Rust tests and 6 Python tests, strict Clippy,
-  formatting, and staged plus unstaged diff checks
+- Current phase: complete and squash-merged through PR #2
+- Delivery: final feature head `bba5f89d3d8fcb1d7585a83be8e30a0aea80d4a4` was squash-merged as
+  `8e7b610fb6afd8d72510cb1a0431d946a8c912d8`
+- Final feature fast gate: `scripts/check.sh` passed 182 Rust tests and 6 Python tests, strict
+  Clippy, formatting, and staged plus unstaged diff checks
 
 ## Frozen boundaries
 
@@ -41,7 +41,7 @@
 | 5. Bindings and outputs | Complete | Writable Follow/Pinned/Inline bindings, provider-neutral tables, provenance, parameter status, and last-good retention | Focused binding and last-good regressions | `8b2b44e` |
 | 6. Cockpit composition | Complete | Document-height eight-section cockpit, sticky navigation/search/fold controls, and semantic addresses | Cockpit manifest plus four responsive captures | `534a277`, `057c5e3` |
 | 7. History and deletion | Complete | Revision inspection, reference-aware two-step deletion, tombstones, stale-delete conflicts, and reload | Store/application tests plus browser reload journey | `8b2b44e`, `057c5e3` |
-| 8. Handoff | Complete pending merge | Exact-head full gate, normal browser acceptance, evidence update, and authorized squash merge | T14 acceptance matrix and remote verification | `aaeeb6b`, PR #2 |
+| 8. Handoff | Complete | Exact-head full gate, normal browser acceptance, evidence update, and authorized squash merge | T14 acceptance matrix; PR #2 merge `8e7b610` | `bba5f89`, PR #2 |
 
 ## Phase records
 
@@ -278,6 +278,17 @@ Reconciliation snapshot on 2026-08-28:
   evidence are in `target/control-cockpit-final/`: `cockpit-1600x1000.png`,
   `cockpit-1366x768.png`, `cockpit-t14-1920x1080.png`, `cockpit-800x700.png`, and
   `normal-demo-t14-1920x1080.png`.
-- Next action: push this evidence-only commit, repeat the exact-head fast and full gates if the disk
-  preflight passes, update PR #2, and perform the authorized squash merge only if remote state is
-  still clean.
+
+## Merge closure
+
+- The final field ledger has no in-scope modeled-field gaps. PR #2's exact pushed feature head was
+  `bba5f89d3d8fcb1d7585a83be8e30a0aea80d4a4`.
+- The exact feature head passed `scripts/check.sh` from a cold target in 99.00 seconds and
+  `scripts/verify.sh` in 528.44 seconds, including all native, XALEN, WASM, IndexedDB/Worker,
+  nested-builder, workspace, history/deletion, macro, conflict, and artifact journeys.
+- The normal non-automation Worker/XALEN session and all four responsive viewport inspections
+  passed with zero console errors and no horizontal overflow.
+- PR #2 was marked ready and squash-merged without branch deletion or administrative bypass on
+  2026-08-29. Its verified merge commit is `8e7b610fb6afd8d72510cb1a0431d946a8c912d8`;
+  the remote feature branch remains preserved at `bba5f89d3d8fcb1d7585a83be8e30a0aea80d4a4`.
+- The merge became the exact verified base of the separately scoped professional-wheel branch.

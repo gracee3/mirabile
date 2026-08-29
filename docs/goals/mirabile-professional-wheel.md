@@ -5,10 +5,9 @@
 - Base: `8e7b610fb6afd8d72510cb1a0431d946a8c912d8`, the verified squash merge of
   control-cockpit PR #2 on `main`.
 - Branch: `goal/mirabile-professional-wheel`.
-- Current phase: final exact-head verification and guarded promotion.
-- Delivery: preserve the provider-neutral calculation boundary, extend semantic layout and Scene
-  data additively, make the wheel the responsive primary surface, verify the exact pushed head, and
-  squash-merge the feature PR without deleting the branch.
+- Current phase: complete and squash-merged through PR #3.
+- Delivery: final feature head `3763bfd1d3a7648b5ef672ebbfba5f2b785539cd` was squash-merged as
+  `1341b95f39046cb340670b5a735bdc4a475d9220` without deleting the feature branch.
 
 ## Rendering contract
 
@@ -89,7 +88,26 @@
   houses for the final Equal chart, four angles, six true anchors and labels, one actual retrograde
   marker, two semantic conjunctions, zero label overlaps, no clipping or horizontal overflow, a
   centered first-surface wheel, accessible title/description, and zero console errors.
-- Pre-final disk gate: 18 GiB available with a 12 GiB repository-local `target`; the required
-  reserve is 17 GiB (`15 GiB + max(2 GiB, 1 GiB observed focused-build growth)`). Ignored browser
-  screenshots are retained under `target/`. Exact final-head timings, SHA, disk values, and merge
-  evidence are recorded on PR #3 after the full gate.
+- Final disk gate: after the measured repository-local Cargo cleanup, 29,903,974,400 bytes were
+  available, above the 17 GiB reserve (`15 GiB + max(2 GiB, observed focused-build growth)`).
+- Exact-head `scripts/verify.sh` passed in 664.90 seconds. The focused XALEN adapter suite passed
+  8/8 tests, the professional geometry suite passed 19/19, the automation manifest suite passed
+  3/3, and the exact-head fast gate passed 189 Rust plus seven constrained-driver tests.
+- A normal production session with no automation bridge loaded Example Natal, exercised NoHouses
+  and Equal through native controls, reopened cockpit and diagnostics disclosures, and confirmed
+  fresh Worker/XALEN output, accessible SVG metadata, no horizontal overflow, and zero browser
+  errors.
+- Ignored responsive captures were inspected at 1600x1000, 1366x768, the T14's 1920x1080 mode,
+  and 800x900. Their SHA-256 values and bounded DOM evidence are recorded on PR #3.
+
+## Merge closure
+
+- PR #3's exact pushed feature head was
+  `3763bfd1d3a7648b5ef672ebbfba5f2b785539cd`; remote state was `MERGEABLE` and `CLEAN` with no
+  blocking review or status check before promotion.
+- PR #3 was marked ready and squash-merged without branch deletion or administrative bypass on
+  2026-08-29. The verified merge commit is `1341b95f39046cb340670b5a735bdc4a475d9220`;
+  the remote feature branch remains preserved at the exact feature head.
+- Local `main` was fast-forwarded to the verified remote merge and the post-merge
+  `scripts/check.sh` gate passed in 13.88 seconds. This documentation-only closure synchronizes the
+  committed goal records with that already verified delivery state.
