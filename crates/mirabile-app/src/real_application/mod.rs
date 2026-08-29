@@ -20,7 +20,7 @@ use mirabile_engine::{
     CalculationRequestId, CalculationWorkerFailure, CalculationWorkerFailureCategory,
     CalculationWorkerRequest, CalculationWorkerResult, ComputationCache, DeterministicBackend,
     ImplementationIdentity, PreparedCalculation, Scene, SnapshotContext, WorkerProtocolVersion,
-    layout_wheel, render_key,
+    render_key,
 };
 #[cfg(target_arch = "wasm32")]
 use mirabile_store::ResourceTombstone;
@@ -623,6 +623,7 @@ struct ViewCalculationPlan {
     analysis: AnalysisProfile,
     wheel: WheelTemplate,
     theme: Theme,
+    rotation: Option<mirabile_core::Angle>,
 }
 
 struct AspectSetEditor {

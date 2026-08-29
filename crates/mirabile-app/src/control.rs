@@ -182,6 +182,10 @@ impl ControlId {
     pub const COCKPIT_SEARCH: Self = Self(Cow::Borrowed("cockpit.search"));
     pub const COCKPIT_EXPAND_ALL: Self = Self(Cow::Borrowed("cockpit.expand-all"));
     pub const COCKPIT_COLLAPSE_ALL: Self = Self(Cow::Borrowed("cockpit.collapse-all"));
+    pub const SURFACE_WORKSPACE: Self = Self(Cow::Borrowed("surface.workspace"));
+    pub const SURFACE_INSPECTOR: Self = Self(Cow::Borrowed("surface.inspector"));
+    pub const SURFACE_COCKPIT: Self = Self(Cow::Borrowed("surface.cockpit"));
+    pub const SURFACE_DIAGNOSTICS: Self = Self(Cow::Borrowed("surface.diagnostics"));
     pub const RESOURCE_NEW: Self = Self(Cow::Borrowed("resource.new"));
     pub const RESOURCE_EDIT: Self = Self(Cow::Borrowed("resource.edit"));
     pub const RESOURCE_TITLE: Self = Self(Cow::Borrowed("resource.title"));

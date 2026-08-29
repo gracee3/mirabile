@@ -1,17 +1,18 @@
 use mirabile_core::{
-    AnalysisProfile, Angle, AspectClass, AspectDefinition, AspectFieldSpec, AspectId, AspectSet,
-    CalculationSpec, CalendarSpec, ChartDefinition, ChartRecord, ChartSlotId, ChartSource,
-    CivilDate, CivilDateTime, CivilTime, EventKind, HouseDisplaySpec, HouseSystem, LabelSpec,
-    Latitude, LocationAssertion, Longitude, Note, Offset, OrbPolicy, PointId, PointSelector,
-    PointSet, ResourceEnvelope, ResourceId, RingGeometry, RingSpec, SourceProvenance, SourceType,
-    SubjectInfo, TemporalAssertion, Theme, TimeZoneAssertion, Timestamp, WheelTemplate,
-    ZodiacDisplaySpec,
+    AnalysisProfile, Angle, AngleState, AspectClass, AspectDefinition, AspectFieldSpec, AspectId,
+    AspectSet, CalculationSpec, CalendarSpec, ChartDefinition, ChartRecord, ChartSlotId,
+    ChartSource, CivilDate, CivilDateTime, CivilTime, EventKind, HouseDisplaySpec, HouseState,
+    HouseSystem, LabelSpec, Latitude, LocationAssertion, Longitude, Note, Offset, OrbPolicy,
+    PointId, PointSelector, PointSet, ResourceEnvelope, ResourceId, RingGeometry, RingSpec,
+    SourceProvenance, SourceType, SubjectInfo, TemporalAssertion, Theme, TimeZoneAssertion,
+    Timestamp, WheelTemplate, ZodiacDisplaySpec,
 };
 use mirabile_engine::{
-    AnalysisKey, AspectAnalyzer, BackendDescriptor, CalcKey, CalculationBackend,
-    CalculationBackendError, CalculationBackendResult, CalculationEngine, CalculationError,
-    CalculationValue, ChartSnapshot, ComputationCache, DeterministicBackend,
-    ImplementationIdentity, KeyError, ResolvedCalculationRequest, Scene, layout_wheel, render_key,
+    AnalysisKey, AspectAnalyzer, AspectHit, AspectVisualStyle, BackendDescriptor, CalcKey,
+    CalculationBackend, CalculationBackendError, CalculationBackendResult, CalculationEngine,
+    CalculationError, CalculationValue, ChartSnapshot, ComputationCache, DeterministicBackend,
+    ImplementationIdentity, KeyError, ResolvedCalculationRequest, Scene, WheelLayoutBounds,
+    format_longitude, layout_wheel, layout_wheel_in_bounds, render_key,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -320,7 +321,7 @@ fn every_calculation_dependency_changes_the_calculation_key() {
 }
 
 #[test]
-fn analysis_identity_ignores_labels_classification_and_order() {
+fn analysis_identity_consumes_semantic_metadata_but_ignores_order() {
     let (record, definition) = sample_resources();
     let snapshot = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1")
         .calculate(&definition, &record)
@@ -335,12 +336,8 @@ fn analysis_identity_ignores_labels_classification_and_order() {
     )
     .expect("baseline key");
 
-    let mut display_only = baseline_aspects.clone();
-    display_only.aspects.reverse();
-    for aspect in &mut display_only.aspects {
-        aspect.name = format!("Renamed {}", aspect.name);
-        aspect.classification = AspectClass::Custom;
-    }
+    let mut reordered_aspects = baseline_aspects.clone();
+    reordered_aspects.aspects.reverse();
     let mut reordered_points = baseline_points.clone();
     reordered_points.points.reverse();
     let unused_profile = AnalysisProfile {
@@ -352,10 +349,26 @@ fn analysis_identity_ignores_labels_classification_and_order() {
         AnalysisKey::derive(
             std::slice::from_ref(&snapshot.calc_key),
             &reordered_points,
-            &display_only,
+            &reordered_aspects,
             &unused_profile,
         )
-        .expect("display-only key")
+        .expect("order-independent key")
+    );
+
+    let mut semantic_change = baseline_aspects.clone();
+    for aspect in &mut semantic_change.aspects {
+        aspect.name = format!("Renamed {}", aspect.name);
+        aspect.classification = AspectClass::Custom;
+    }
+    assert_ne!(
+        baseline,
+        AnalysisKey::derive(
+            std::slice::from_ref(&snapshot.calc_key),
+            &baseline_points,
+            &semantic_change,
+            &AnalysisProfile::default(),
+        )
+        .expect("semantic metadata key")
     );
 
     let mut numerical = baseline_aspects.clone();
@@ -712,7 +725,7 @@ fn julian_day_fixtures_cover_offsets_calendars_year_zero_and_lmt_sign() {
 }
 
 #[test]
-fn layout_produces_astrology_free_scene_primitives() {
+fn layout_produces_provider_neutral_semantic_scene() {
     let (record, definition) = sample_resources();
     let engine = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1");
     let snapshot = engine.calculate(&definition, &record).expect("snapshot");
@@ -727,11 +740,16 @@ fn layout_produces_astrology_free_scene_primitives() {
     let scene = Scene::from_wheel(&layout);
 
     assert!(!scene.circles.is_empty());
-    assert_eq!(scene.labels.len(), layout.points.len());
+    assert_eq!(scene.zodiac.len(), 12);
+    assert_eq!(scene.houses, layout.houses);
+    assert_eq!(scene.angles, layout.angles);
+    assert_eq!(scene.points, layout.points);
+    assert_eq!(scene.aspects, layout.aspects);
+    assert!(scene.labels.is_empty());
 }
 
 #[test]
-fn layout_identity_uses_only_consumed_geometry_and_resolved_points() {
+fn layout_identity_uses_every_consumed_semantic_and_display_input() {
     let (record, definition) = sample_resources();
     let snapshot = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1")
         .calculate(&definition, &record)
@@ -748,22 +766,379 @@ fn layout_identity_uses_only_consumed_geometry_and_resolved_points() {
     let baseline =
         layout_wheel(&snapshot, &analysis, &displayed, &baseline_wheel).expect("baseline layout");
 
-    let mut display_only = baseline_wheel.clone();
-    display_only.rings[0].geometry.inner_radius = 120.0;
-    display_only.rings[0].point_role = mirabile_core::PointRole::Transit;
-    display_only.labels.show_degrees = false;
-    display_only.houses.show_numbers = false;
+    let mut role_only = baseline_wheel.clone();
+    role_only.rings[0].point_role = mirabile_core::PointRole::Transit;
     let mut reordered = displayed.clone();
     reordered.points.reverse();
     let equivalent =
-        layout_wheel(&snapshot, &analysis, &reordered, &display_only).expect("equivalent layout");
+        layout_wheel(&snapshot, &analysis, &reordered, &role_only).expect("equivalent layout");
     assert_eq!(baseline.key, equivalent.key);
     assert_eq!(baseline.points, equivalent.points);
     assert_eq!(baseline.aspects, equivalent.aspects);
+
+    let mut display_change = baseline_wheel.clone();
+    display_change.labels.show_degrees = false;
+    display_change.houses.show_numbers = false;
+    let changed =
+        layout_wheel(&snapshot, &analysis, &displayed, &display_change).expect("display layout");
+    assert_ne!(baseline.key, changed.key);
+    assert_ne!(baseline.points, changed.points);
+
+    let mut inner_change = baseline_wheel.clone();
+    inner_change.rings[0].geometry.inner_radius = 120.0;
+    let changed =
+        layout_wheel(&snapshot, &analysis, &displayed, &inner_change).expect("inner layout");
+    assert_ne!(baseline.key, changed.key);
 
     let mut geometry_change = baseline_wheel;
     geometry_change.rings[0].geometry.outer_radius = 160.0;
     let changed =
         layout_wheel(&snapshot, &analysis, &displayed, &geometry_change).expect("changed layout");
     assert_ne!(baseline.key, changed.key);
+}
+
+fn semantic_fixture() -> (ChartSnapshot, mirabile_engine::ChartAnalysis) {
+    let (record, definition) = sample_resources();
+    let snapshot = TestEngine::new(DeterministicBackend, "engine-v1", "fixture-tz-v1")
+        .calculate(&definition, &record)
+        .expect("snapshot");
+    let analysis = AspectAnalyzer::analyze(
+        &snapshot,
+        &points(),
+        &aspects(8.0),
+        &AnalysisProfile::default(),
+    )
+    .expect("analysis");
+    (snapshot, analysis)
+}
+
+fn degrees(value: f64) -> Angle {
+    Angle::from_degrees(value).expect("valid fixture angle")
+}
+
+fn assert_close_degrees(actual: f64, expected: f64) {
+    assert!(
+        (actual - expected).abs() < 1.0e-9,
+        "expected {expected} degrees, got {actual}"
+    );
+}
+
+#[test]
+fn professional_orientation_uses_actual_ascendant_and_explicit_rotation() {
+    let (mut snapshot, analysis) = semantic_fixture();
+    snapshot.calculation.angles = AngleState {
+        ascendant: Some(degrees(123.0)),
+        midheaven: Some(degrees(22.0)),
+    };
+    let layout = layout_wheel(&snapshot, &analysis, &points(), &wheel()).expect("layout");
+    assert_close_degrees(layout.rotation_degrees, 147.0);
+    let asc = layout
+        .angles
+        .iter()
+        .find(|angle| angle.id == "asc")
+        .expect("ASC");
+    assert_close_degrees(asc.screen_angle_degrees, 180.0);
+    assert!(!asc.derived_opposite);
+    let dsc = layout
+        .angles
+        .iter()
+        .find(|angle| angle.id == "dsc")
+        .expect("DSC");
+    assert_close_degrees(dsc.longitude_degrees, 303.0);
+    assert!(dsc.derived_opposite);
+    let ic = layout
+        .angles
+        .iter()
+        .find(|angle| angle.id == "ic")
+        .expect("IC");
+    assert_close_degrees(ic.longitude_degrees, 202.0);
+    assert!(ic.derived_opposite);
+
+    snapshot.calculation.angles = AngleState {
+        ascendant: None,
+        midheaven: None,
+    };
+    let unrotated = layout_wheel(&snapshot, &analysis, &points(), &wheel()).expect("layout");
+    assert_close_degrees(unrotated.rotation_degrees, 0.0);
+    assert_close_degrees(unrotated.zodiac[0].screen_angle_degrees, 270.0);
+    assert!(unrotated.angles.is_empty());
+
+    let explicit = layout_wheel_in_bounds(
+        &snapshot,
+        &analysis,
+        &points(),
+        &wheel(),
+        Some(degrees(30.0)),
+        WheelLayoutBounds::default(),
+    )
+    .expect("explicitly rotated layout");
+    assert_close_degrees(explicit.rotation_degrees, 30.0);
+    assert_close_degrees(explicit.zodiac[0].screen_angle_degrees, 300.0);
+}
+
+#[test]
+fn house_layout_preserves_equal_placidus_and_no_houses_results() {
+    let (mut snapshot, analysis) = semantic_fixture();
+    let equal_cusps = (0_u32..12)
+        .map(|index| degrees(15.0 + f64::from(index) * 30.0))
+        .collect::<Vec<_>>();
+    snapshot.calculation.houses = Some(HouseState {
+        cusps: equal_cusps.clone(),
+    });
+    let equal = layout_wheel(&snapshot, &analysis, &points(), &wheel()).expect("equal layout");
+    assert_eq!(equal.houses.len(), 12);
+    for (house, cusp) in equal.houses.iter().zip(equal_cusps) {
+        assert_close_degrees(house.cusp_longitude_degrees, cusp.degrees());
+        assert!(house.show_cusp);
+        assert!(house.show_number);
+    }
+
+    let placidus_cusps = [
+        15.0, 37.0, 64.5, 101.0, 139.0, 171.0, 195.0, 217.0, 244.5, 281.0, 319.0, 351.0,
+    ];
+    snapshot.calculation.houses = Some(HouseState {
+        cusps: placidus_cusps.into_iter().map(degrees).collect(),
+    });
+    let placidus =
+        layout_wheel(&snapshot, &analysis, &points(), &wheel()).expect("Placidus layout");
+    assert_eq!(placidus.houses.len(), 12);
+    assert_ne!(equal.key, placidus.key);
+    assert!(placidus.houses.windows(2).any(|pair| {
+        (pair[1].cusp_longitude_degrees - pair[0].cusp_longitude_degrees - 30.0).abs() > 1.0
+    }));
+
+    snapshot.calculation.houses = None;
+    let none = layout_wheel(&snapshot, &analysis, &points(), &wheel()).expect("no houses");
+    assert!(none.houses.is_empty());
+    assert_ne!(placidus.key, none.key);
+}
+
+#[test]
+fn longitude_formatting_rounds_minutes_and_carries_across_boundaries() {
+    let taurus = format_longitude(29.0 + 59.6 / 60.0);
+    assert_eq!(taurus.sign_id, "taurus");
+    assert_eq!((taurus.degree, taurus.minute), (0, 0));
+    assert_eq!(taurus.text, "00°00′ ♉ Taurus");
+
+    let aries = format_longitude(359.0 + 59.6 / 60.0);
+    assert_eq!(aries.sign_id, "aries");
+    assert_eq!((aries.degree, aries.minute), (0, 0));
+
+    let wrapped = format_longitude(390.5);
+    assert_eq!(wrapped.sign_id, "taurus");
+    assert_eq!((wrapped.degree, wrapped.minute), (0, 30));
+}
+
+#[test]
+fn supported_point_glyphs_fallback_and_retrograde_are_truthful() {
+    let (mut snapshot, analysis) = semantic_fixture();
+    let mercury = PointId::new("mercury").expect("point ID");
+    snapshot
+        .calculation
+        .celestial_positions
+        .get_mut(&mercury)
+        .expect("Mercury state")
+        .retrograde = true;
+    let sun = PointId::new("sun").expect("point ID");
+    let mut fallback_state = snapshot.calculation.celestial_positions[&sun].clone();
+    fallback_state.longitude = degrees(44.0);
+    fallback_state.retrograde = false;
+    let ceres = PointId::new("dwarf_ceres").expect("point ID");
+    snapshot
+        .calculation
+        .celestial_positions
+        .insert(ceres.clone(), fallback_state);
+    let mut displayed = points();
+    displayed.points.push(PointSelector::Point(ceres.clone()));
+
+    let layout =
+        layout_wheel(&snapshot, &analysis, &displayed, &wheel()).expect("point metadata layout");
+    let expected = [
+        ("sun", "☉", "Sun"),
+        ("moon", "☽", "Moon"),
+        ("mercury", "☿", "Mercury"),
+        ("venus", "♀", "Venus"),
+        ("mars", "♂", "Mars"),
+        ("jupiter", "♃", "Jupiter"),
+    ];
+    for (id, glyph, name) in expected {
+        let point = layout
+            .points
+            .iter()
+            .find(|point| point.point.as_str() == id)
+            .expect("supported point");
+        assert_eq!(point.glyph, glyph);
+        assert_eq!(point.name, name);
+        assert!(!point.glyph_fallback);
+    }
+    let mercury = layout
+        .points
+        .iter()
+        .find(|point| point.point.as_str() == "mercury")
+        .expect("Mercury marker");
+    assert!(mercury.retrograde);
+    assert!(mercury.show_retrograde);
+    let fallback = layout
+        .points
+        .iter()
+        .find(|point| point.point == ceres)
+        .expect("fallback point");
+    assert_eq!(fallback.glyph, "dwarf_ceres");
+    assert_eq!(fallback.name, "Dwarf Ceres");
+    assert!(fallback.glyph_fallback);
+    assert!(!fallback.retrograde);
+}
+
+#[test]
+fn every_aspect_hit_retains_identity_even_without_a_chord() {
+    let (snapshot, mut analysis) = semantic_fixture();
+    let sun = PointId::new("sun").expect("point ID");
+    let moon = PointId::new("moon").expect("point ID");
+    let missing = PointId::new("missing-point").expect("point ID");
+    let fixtures = [
+        ("conjunction", "Conjunction", AspectClass::Major, 0.0),
+        ("opposition", "Opposition", AspectClass::Major, 180.0),
+        ("square", "Square", AspectClass::Major, 90.0),
+        ("trine", "Trine", AspectClass::Major, 120.0),
+        ("sextile", "Sextile", AspectClass::Major, 60.0),
+        ("quincunx", "Quincunx", AspectClass::Minor, 150.0),
+        ("custom-17", "Custom Seventeen", AspectClass::Custom, 17.0),
+    ];
+    analysis.aspects = fixtures
+        .into_iter()
+        .map(|(id, name, classification, separation)| AspectHit {
+            lhs: sun.clone(),
+            rhs: moon.clone(),
+            aspect: AspectId::new(id).expect("aspect ID"),
+            name: name.into(),
+            classification,
+            separation: degrees(separation),
+            orb: degrees(0.5),
+            applying: Some(true),
+        })
+        .chain(std::iter::once(AspectHit {
+            lhs: sun.clone(),
+            rhs: missing,
+            aspect: AspectId::new("missing-anchor").expect("aspect ID"),
+            name: "Missing Anchor".into(),
+            classification: AspectClass::Harmonic,
+            separation: degrees(72.0),
+            orb: degrees(1.0),
+            applying: None,
+        }))
+        .collect();
+
+    let layout = layout_wheel(&snapshot, &analysis, &points(), &wheel()).expect("aspect layout");
+    assert_eq!(layout.aspects.len(), 8);
+    let conjunction = layout
+        .aspects
+        .iter()
+        .find(|aspect| aspect.aspect_id == "conjunction")
+        .expect("conjunction");
+    assert_eq!(conjunction.style, AspectVisualStyle::Conjunction);
+    assert!(!conjunction.draw_chord);
+    let unknown = layout
+        .aspects
+        .iter()
+        .find(|aspect| aspect.aspect_id == "custom-17")
+        .expect("custom aspect");
+    assert_eq!(unknown.style, AspectVisualStyle::Neutral);
+    assert_eq!(unknown.name, "Custom Seventeen");
+    assert_eq!(unknown.classification, AspectClass::Custom);
+    assert!(unknown.draw_chord);
+    let missing = layout
+        .aspects
+        .iter()
+        .find(|aspect| aspect.aspect_id == "missing-anchor")
+        .expect("missing anchor aspect");
+    assert!(!missing.draw_chord);
+    assert_eq!(missing.applying, None);
+}
+
+#[test]
+fn dense_circular_labels_are_bounded_order_independent_and_repeatable() {
+    let (mut snapshot, _) = semantic_fixture();
+    for (point, longitude) in points()
+        .direct_points()
+        .zip([359.4, 359.7, 0.0, 0.2, 0.45, 0.7])
+    {
+        snapshot
+            .calculation
+            .celestial_positions
+            .get_mut(point)
+            .expect("point state")
+            .longitude = degrees(longitude);
+    }
+    let displayed = points();
+    let analysis = AspectAnalyzer::analyze(
+        &snapshot,
+        &displayed,
+        &aspects(8.0),
+        &AnalysisProfile::default(),
+    )
+    .expect("cluster analysis");
+    let compact_bounds = WheelLayoutBounds {
+        width: 320.0,
+        height: 320.0,
+    };
+    let compact = layout_wheel_in_bounds(
+        &snapshot,
+        &analysis,
+        &displayed,
+        &wheel(),
+        None,
+        compact_bounds,
+    )
+    .expect("compact layout");
+    let repeated = layout_wheel_in_bounds(
+        &snapshot,
+        &analysis,
+        &displayed,
+        &wheel(),
+        None,
+        compact_bounds,
+    )
+    .expect("repeated compact layout");
+    assert_eq!(compact, repeated);
+    assert_eq!(compact.points.len(), 6);
+    assert!(compact.points.iter().any(|point| point.leader.is_some()));
+    for point in &compact.points {
+        assert!((0.0..=compact.width).contains(&point.x));
+        assert!((0.0..=compact.height).contains(&point.y));
+        assert!((0.0..=compact.width).contains(&point.label_x));
+        assert!((0.0..=compact.height).contains(&point.label_y));
+        if point.label_lane > 0
+            || (point.longitude_degrees - point.label_angle_degrees)
+                .abs()
+                .rem_euclid(360.0)
+                > 1.5
+        {
+            assert!(point.leader.is_some());
+        }
+    }
+
+    let mut reversed = displayed.clone();
+    reversed.points.reverse();
+    let reversed_layout = layout_wheel_in_bounds(
+        &snapshot,
+        &analysis,
+        &reversed,
+        &wheel(),
+        None,
+        compact_bounds,
+    )
+    .expect("reversed layout");
+    assert_eq!(compact, reversed_layout);
+
+    let regular = layout_wheel_in_bounds(
+        &snapshot,
+        &analysis,
+        &displayed,
+        &wheel(),
+        None,
+        WheelLayoutBounds::default(),
+    )
+    .expect("regular layout");
+    assert_eq!(regular.points.len(), compact.points.len());
+    assert_ne!(regular.key, compact.key);
 }

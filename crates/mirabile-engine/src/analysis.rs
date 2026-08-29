@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use mirabile_core::{
-    AnalysisProfile, Angle, AspectId, AspectSet, HouseSystem, PointId, PointSet, PointState,
+    AnalysisProfile, Angle, AspectClass, AspectId, AspectSet, HouseSystem, PointId, PointSet,
+    PointState,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -13,9 +14,17 @@ pub struct AspectHit {
     pub lhs: PointId,
     pub rhs: PointId,
     pub aspect: AspectId,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default = "default_aspect_classification")]
+    pub classification: AspectClass,
     pub separation: Angle,
     pub orb: Angle,
     pub applying: Option<bool>,
+}
+
+const fn default_aspect_classification() -> AspectClass {
+    AspectClass::Custom
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -86,6 +95,8 @@ impl AspectAnalyzer {
                             lhs: (*lhs_id).clone(),
                             rhs: (*rhs_id).clone(),
                             aspect: definition.id.clone(),
+                            name: definition.name.clone(),
+                            classification: definition.classification,
                             separation,
                             orb: Angle::from_degrees(orb_degrees)
                                 .map_err(|_| AnalysisError::NonFiniteAngle)?,
