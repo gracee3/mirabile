@@ -973,8 +973,9 @@ kbd {
 .scene-frame {
   position: relative;
   display: grid;
-  width: min(100%, 58rem);
-  min-height: 34rem;
+  width: min(100%, 58rem, calc(100vh - 11rem));
+  min-height: 0;
+  height: min(58rem, calc(100vh - 11rem));
   aspect-ratio: 1;
   flex: 1;
   place-items: center;
@@ -1055,7 +1056,7 @@ kbd {
 
 .house-number {
   fill: #c8bfae;
-  font-size: 8px !important;
+  font-size: 9px !important;
   font-weight: 650 !important;
 }
 
@@ -1085,7 +1086,7 @@ kbd {
 .point-label {
   fill: #f2eadc;
   font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", system-ui, sans-serif;
-  font-size: 7.5px !important;
+  font-size: 9.5px !important;
   font-weight: 620 !important;
 }
 

@@ -13,12 +13,12 @@ const CANVAS_MARGIN: f64 = 12.0;
 const ZODIAC_BAND_WIDTH: f64 = 30.0;
 const ZODIAC_GAP: f64 = 8.0;
 const LABEL_OFFSET: f64 = 58.0;
-const LABEL_LANE_SPACING: f64 = 16.0;
+const LABEL_LANE_SPACING: f64 = 20.0;
 const LABEL_LANES: usize = 3;
 const LABEL_LANE_COUNT: f64 = 2.0;
 const LABEL_DISPLACEMENT_THRESHOLD: f64 = 1.5;
 const LABEL_ANGULAR_GAP: f64 = 1.5;
-const LABEL_CHARACTER_WIDTH: f64 = 6.2;
+const LABEL_CHARACTER_WIDTH: f64 = 6.6;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WheelLayoutBounds {
