@@ -5,7 +5,7 @@
 - Base: `8e7b610fb6afd8d72510cb1a0431d946a8c912d8`, the verified squash merge of
   control-cockpit PR #2 on `main`.
 - Branch: `goal/mirabile-professional-wheel`.
-- Current phase: architecture and geometry inventory.
+- Current phase: final exact-head verification and guarded promotion.
 - Delivery: preserve the provider-neutral calculation boundary, extend semantic layout and Scene
   data additively, make the wheel the responsive primary surface, verify the exact pushed head, and
   squash-merge the feature PR without deleting the branch.
@@ -66,5 +66,26 @@
 
 ## Progress
 
-- 2026-08-29: branch created from the exact verified PR #2 merge. No implementation change has yet
-  been made.
+- 2026-08-29: branch created from the exact verified PR #2 merge in commit `9c29df2` and draft PR
+  #3 opened immediately.
+- 2026-08-29: code milestone `01ffc98` added the provider-neutral semantic Scene and wheel layout,
+  actual houses/angles, semantic aspects, deterministic label lanes/leaders, formatted positions,
+  accessible SVG, bounded automation Scene manifest, view rotation plumbing, and wheel-first native
+  disclosure composition. The existing XALEN adapter and calculation boundary were unchanged.
+- 2026-08-29: browser milestone `26d4177` added fixed read-only DOM geometry assertions and the
+  37-step professional-wheel journey. The journey uses real Worker/XALEN output for Example Natal,
+  exercises NoHouses, Equal, and Placidus through typed chart controls, and switches the wheel to
+  Example Event to assert a real retrograde Jupiter and two retained conjunction entries without
+  chords.
+- Focused native evidence: 19 engine architecture/geometry tests and three automation manifest
+  tests pass; strict Clippy passes. The fast gate passes with 189 workspace tests, six CDP-client
+  tests, formatting, strict Clippy, and clean diffs.
+- Responsive browser evidence: the professional journey passes at 1366x768, 1600x1000, the T14's
+  current 1920x1080 display mode, and 800x900. Each run reports twelve zodiac signs, twelve real
+  houses for the final Equal chart, four angles, six true anchors and labels, one actual retrograde
+  marker, two semantic conjunctions, zero label overlaps, no clipping or horizontal overflow, a
+  centered first-surface wheel, accessible title/description, and zero console errors.
+- Pre-final disk gate: 18 GiB available with a 12 GiB repository-local `target`; the required
+  reserve is 17 GiB (`15 GiB + max(2 GiB, 1 GiB observed focused-build growth)`). Ignored browser
+  screenshots are retained under `target/`. Exact final-head timings, SHA, disk values, and merge
+  evidence are recorded on PR #3 after the full gate.
