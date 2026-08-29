@@ -214,6 +214,8 @@ impl RealState {
             repository,
             workspace: WorkspaceReadModel {
                 title: session.working_title.clone(),
+                description: session.working_description.clone(),
+                tags: session.working_tags.clone(),
                 charts: open_charts,
                 active_chart: session.active_chart,
                 selected_charts: session.selected_charts.clone(),
@@ -221,6 +223,13 @@ impl RealState {
                 active_view: session.active_view,
                 document_id: self.workspace.as_ref().map(|document| document.id),
                 document_revision: self.workspace.as_ref().map(|document| document.revision),
+                document_schema_version: self
+                    .workspace
+                    .as_ref()
+                    .map(|document| document.schema_version),
+                document_created_at: self.workspace.as_ref().map(|document| document.created_at),
+                document_modified_at: self.workspace.as_ref().map(|document| document.modified_at),
+                validation: session.metadata_validation(),
                 document_dirty: session.document_dirty,
                 has_temporary_display_override: session
                     .active_view
@@ -246,7 +255,7 @@ impl RealState {
                 drafts: self
                     .resource_drafts
                     .values()
-                    .map(super::resource_editing::GenericResourceDraft::read_model)
+                    .map(|draft| draft.read_model_with_catalog(&self.catalog.current))
                     .collect(),
             },
             parameters: Vec::new(),
@@ -451,7 +460,18 @@ impl RealState {
                 disabled("The draft has no changes"),
             ),
             Some(DraftState::New | DraftState::Dirty { .. }) => {
-                (Availability::Enabled, Availability::Enabled)
+                if self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| !editor.metadata_validation().is_empty())
+                {
+                    (
+                        disabled("Complete every invalid Aspect Set field before saving"),
+                        Availability::Enabled,
+                    )
+                } else {
+                    (Availability::Enabled, Availability::Enabled)
+                }
             }
             Some(DraftState::Creating) => (
                 disabled("The new Aspect Set is currently being created"),
@@ -508,13 +528,19 @@ impl RealState {
         let cancel_chart_draft = save_chart_draft.clone();
         let save_workspace = self.session.as_ref().map_or_else(
             || disabled("No workspace session"),
-            |session| match session.backing {
-                super::WorkspaceDocumentBacking::Unsaved => Availability::Enabled,
-                super::WorkspaceDocumentBacking::Saved { .. } if session.document_dirty => {
-                    Availability::Enabled
-                }
-                super::WorkspaceDocumentBacking::Saved { .. } => {
-                    disabled("The workspace has no durable changes")
+            |session| {
+                if session.metadata_validation().is_empty() {
+                    match session.backing {
+                        super::WorkspaceDocumentBacking::Unsaved => Availability::Enabled,
+                        super::WorkspaceDocumentBacking::Saved { .. } if session.document_dirty => {
+                            Availability::Enabled
+                        }
+                        super::WorkspaceDocumentBacking::Saved { .. } => {
+                            disabled("The workspace has no durable changes")
+                        }
+                    }
+                } else {
+                    disabled("Complete every invalid workspace field before saving")
                 }
             },
         );

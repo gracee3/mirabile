@@ -446,6 +446,10 @@ where
                 self.request_workspace_switch(WorkspaceSwitchTarget::Saved { resource_id })?;
             }
             AppIntent::RenameWorkspace { title } => self.rename_workspace(&title)?,
+            AppIntent::SetWorkspaceDescription { description } => {
+                self.set_workspace_description(description)?;
+            }
+            AppIntent::SetWorkspaceTags { tags } => self.set_workspace_tags(tags)?,
             AppIntent::DiscardWorkspaceChanges => self.discard_workspace_changes()?,
             AppIntent::ResolveWorkspaceSwitch { action } => {
                 self.resolve_workspace_switch(action)?;
@@ -624,8 +628,41 @@ struct ViewCalculationPlan {
 struct AspectSetEditor {
     base: Option<ResourceEnvelope<AspectSet>>,
     title: String,
+    description: Option<String>,
+    tags: Vec<String>,
     draft: AspectSet,
     state: DraftState,
+}
+
+impl AspectSetEditor {
+    fn metadata_validation(&self) -> Vec<crate::ResourceDraftValidationIssue> {
+        let mut issues = Vec::new();
+        if self.title.trim().is_empty() {
+            issues.push(crate::ResourceDraftValidationIssue {
+                field: "aspect_set.title".into(),
+                message: "Aspect Set title is required".into(),
+            });
+        }
+        let mut tags = self
+            .tags
+            .iter()
+            .map(|tag| tag.trim().to_owned())
+            .collect::<Vec<_>>();
+        if tags.iter().any(String::is_empty) {
+            issues.push(crate::ResourceDraftValidationIssue {
+                field: "aspect_set.tags".into(),
+                message: "Tags must not be empty".into(),
+            });
+        }
+        tags.sort();
+        if tags.windows(2).any(|pair| pair[0] == pair[1]) {
+            issues.push(crate::ResourceDraftValidationIssue {
+                field: "aspect_set.tags".into(),
+                message: "Tags must be unique".into(),
+            });
+        }
+        issues
+    }
 }
 
 enum PendingWork {
@@ -732,6 +769,12 @@ fn aspect_editor_read_model(editor: &AspectSetEditor) -> AppResult<AspectSetDraf
     Ok(AspectSetDraftReadModel {
         resource_id: editor.base.as_ref().map(|base| base.id),
         title: editor.title.clone(),
+        description: editor.description.clone(),
+        tags: editor.tags.clone(),
+        schema_version: editor.base.as_ref().map(|base| base.schema_version),
+        created_at: editor.base.as_ref().map(|base| base.created_at),
+        modified_at: editor.base.as_ref().map(|base| base.modified_at),
+        validation: editor.metadata_validation(),
         state: editor.state.clone(),
         aspects: editor
             .draft

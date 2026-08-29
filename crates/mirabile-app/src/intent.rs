@@ -114,6 +114,12 @@ pub enum AppIntent {
     RenameWorkspace {
         title: String,
     },
+    SetWorkspaceDescription {
+        description: Option<String>,
+    },
+    SetWorkspaceTags {
+        tags: Vec<String>,
+    },
     DiscardWorkspaceChanges,
     ResolveWorkspaceSwitch {
         action: WorkspaceSwitchAction,
@@ -169,6 +175,8 @@ pub enum AppIntent {
 #[derive(Clone, Debug, PartialEq)]
 pub enum AspectSetDraftMutation {
     SetTitle(String),
+    SetDescription(Option<String>),
+    SetTags(Vec<String>),
     SetOrb {
         aspect_id: AspectId,
         maximum: Angle,
@@ -236,6 +244,13 @@ impl AppIntent {
             Self::NewWorkspace => "workspace.new".into(),
             Self::OpenWorkspace { resource_id } => format!("workspace.open[{resource_id}]"),
             Self::RenameWorkspace { .. } => "workspace.rename".into(),
+            Self::SetWorkspaceDescription {
+                description: Some(_),
+            } => "workspace.description.set".into(),
+            Self::SetWorkspaceDescription { description: None } => {
+                "workspace.description.clear".into()
+            }
+            Self::SetWorkspaceTags { .. } => "workspace.tags.set".into(),
             Self::DiscardWorkspaceChanges => "workspace.discard".into(),
             Self::ResolveWorkspaceSwitch { action } => match action {
                 WorkspaceSwitchAction::SaveAndSwitch => "workspace.switch.save".into(),
@@ -276,6 +291,15 @@ impl AppIntent {
             Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetTitle(_)) => {
                 "aspect.title.set".into()
             }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetDescription(Some(_))) => {
+                "aspect.description.set".into()
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetDescription(None)) => {
+                "aspect.description.clear".into()
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetTags(_)) => {
+                "aspect.tags.set".into()
+            }
             Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetOrb { aspect_id, maximum }) => {
                 format!(
                     "aspect.maximum-orb[{}]={}",
@@ -310,6 +334,13 @@ impl ChartMutation {
     fn semantic_summary(&self) -> String {
         match self {
             Self::SetTitle(_) => "chart.title.set".into(),
+            Self::SetDefinitionDescription(Some(_)) => "chart.definition.description.set".into(),
+            Self::SetDefinitionDescription(None) => "chart.definition.description.clear".into(),
+            Self::SetDefinitionTags(_) => "chart.definition.tags.set".into(),
+            Self::SetRecordTitle(_) => "chart.record.title.set".into(),
+            Self::SetRecordDescription(Some(_)) => "chart.record.description.set".into(),
+            Self::SetRecordDescription(None) => "chart.record.description.clear".into(),
+            Self::SetRecordTags(_) => "chart.record.tags.set".into(),
             Self::SetEventKind(_) => "chart.event-kind.set".into(),
             Self::SetSubjectName(Some(_)) => "chart.subject-name.set".into(),
             Self::SetSubjectName(None) => "chart.subject-name.clear".into(),

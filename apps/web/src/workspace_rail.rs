@@ -8,7 +8,8 @@ use crate::{
     dispatcher::WorkbenchCoordinator,
     library::LibraryShelf,
     workbench_controls::{
-        ActionControl, BufferedTextField, demo_load_pending, workspace_save_pending,
+        ActionControl, BufferedTextField, demo_load_pending, invalid_buffer_registry,
+        workspace_save_pending,
     },
 };
 
@@ -20,6 +21,7 @@ pub(super) fn WorkspaceRail(
 ) -> impl IntoView {
     let title_buffer = RwSignal::new(String::new());
     let title_error = RwSignal::new(None::<String>);
+    let invalid_buffers = invalid_buffer_registry();
     view! {
         <nav
             id="workspace-chart-rail"
@@ -56,6 +58,41 @@ pub(super) fn WorkspaceRail(
                         Some(ControlAddress::new(ControlId::WORKSPACE_TITLE)),
                     ))
                 />
+                <label>"Workspace description"<textarea
+                    prop:value=move || model.get().workspace.description.unwrap_or_default()
+                    data-mirabile-control=ControlId::WORKSPACE_DESCRIPTION.to_string()
+                    data-mirabile-address=ControlAddress::new(ControlId::WORKSPACE_DESCRIPTION).to_string()
+                    data-mirabile-kind=ControlKind::Text.as_str()
+                    data-mirabile-enabled=move || model.get().workspace.switch_decision.is_none().to_string()
+                    data-mirabile-disabled-reason=move || model.get().workspace.switch_decision.is_some().then_some("Resolve the pending workspace switch first")
+                    disabled=move || model.get().workspace.switch_decision.is_some()
+                    on:change=move |event| { let value=event_target_value(&event); dispatcher.dispatch_from(
+                        AppIntent::SetWorkspaceDescription { description: (!value.trim().is_empty()).then_some(value) },
+                        ActionSource::Human,
+                        Some(ControlAddress::new(ControlId::WORKSPACE_DESCRIPTION)),
+                    ); }
+                /></label>
+                <label>"Workspace tags"<input type="text"
+                    prop:value=move || model.get().workspace.tags.join(", ")
+                    data-mirabile-control=ControlId::WORKSPACE_TAGS.to_string()
+                    data-mirabile-address=ControlAddress::new(ControlId::WORKSPACE_TAGS).to_string()
+                    data-mirabile-kind=ControlKind::Text.as_str()
+                    data-mirabile-enabled=move || model.get().workspace.switch_decision.is_none().to_string()
+                    data-mirabile-disabled-reason=move || model.get().workspace.switch_decision.is_some().then_some("Resolve the pending workspace switch first")
+                    disabled=move || model.get().workspace.switch_decision.is_some()
+                    on:change=move |event| dispatcher.dispatch_from(
+                        AppIntent::SetWorkspaceTags { tags: parse_workspace_tags(&event_target_value(&event)) },
+                        ActionSource::Human,
+                        Some(ControlAddress::new(ControlId::WORKSPACE_TAGS)),
+                    )
+                /></label>
+                {move || {
+                    let workspace=model.get().workspace;
+                    (!workspace.validation.is_empty()).then(|| view! { <ul class="validation-list" role="status">
+                        {workspace.validation.into_iter().map(|issue| view! { <li>{format!("{}: {}", issue.field, issue.message)}</li> }).collect_view()}
+                    </ul> })
+                }}
+                <small class="revision-line">{move || workspace_identity(&model.get().workspace)}</small>
                 <div class="draft-actions">
                     <ActionControl
                         address=ControlAddress::new(ControlId::WORKSPACE_NEW).to_string()
@@ -72,9 +109,14 @@ pub(super) fn WorkspaceRail(
                     <ActionControl
                         address=ControlAddress::new(ControlId::WORKSPACE_SAVE).to_string()
                         label="Save workspace".into()
-                        disabled=Signal::derive(move || !model.get().availability(AppAction::SaveWorkspace).is_enabled())
-                        disabled_reason=Signal::derive(move || model.get().availability(AppAction::SaveWorkspace)
-                            .disabled_reason().map(str::to_owned))
+                        disabled=Signal::derive(move || !model.get().availability(AppAction::SaveWorkspace).is_enabled()
+                            || invalid_buffers.has_prefix("workspace."))
+                        disabled_reason=Signal::derive(move || if invalid_buffers.has_prefix("workspace.") {
+                            Some("Correct invalid local workspace values before saving".to_owned())
+                        } else {
+                            model.get().availability(AppAction::SaveWorkspace)
+                                .disabled_reason().map(str::to_owned)
+                        })
                         pending=Signal::derive(move || workspace_save_pending(&model.get()))
                         on_activate=Callback::new(move |()| dispatcher.dispatch_from(
                             AppIntent::SaveWorkspace,
@@ -278,4 +320,38 @@ pub(super) fn WorkspaceRail(
             <LibraryShelf model dispatcher />
         </nav>
     }
+}
+
+fn parse_workspace_tags(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn workspace_identity(workspace: &mirabile_app::WorkspaceReadModel) -> String {
+    workspace.document_id.map_or_else(
+        || "WorkspaceDocument identity and revisions are allocated on save".into(),
+        |document_id| {
+            format!(
+                "WorkspaceDocument {document_id} · schema {} · r{} · created {} · modified {}",
+                workspace
+                    .document_schema_version
+                    .expect("saved workspace has a schema version"),
+                workspace
+                    .document_revision
+                    .expect("saved workspace has a revision"),
+                workspace
+                    .document_created_at
+                    .expect("saved workspace has a creation timestamp")
+                    .unix_millis(),
+                workspace
+                    .document_modified_at
+                    .expect("saved workspace has a modification timestamp")
+                    .unix_millis(),
+            )
+        },
+    )
 }

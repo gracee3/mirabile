@@ -176,6 +176,8 @@ struct AspectSetFixture {
 struct EditorFixture {
     resource_id: ResourceId,
     title: String,
+    description: Option<String>,
+    tags: Vec<String>,
     state: DraftState,
     conjunction_enabled: bool,
     conjunction_orb: Angle,
@@ -402,6 +404,8 @@ impl MockState {
             repository: RepositoryReadModel::default(),
             workspace: WorkspaceReadModel {
                 title: "Research comparison".into(),
+                description: None,
+                tags: Vec::new(),
                 charts: self.charts.clone(),
                 active_chart: self.active_chart,
                 selected_charts: self.selected_charts.clone(),
@@ -418,6 +422,10 @@ impl MockState {
                 active_view: Some(self.active_view),
                 document_id: Some(parse_resource(WORKSPACE_ID)),
                 document_revision: Some(self.workspace.revision),
+                document_schema_version: Some(mirabile_app::SchemaVersion::V1),
+                document_created_at: Some(mirabile_app::Timestamp::from_unix_millis(1)),
+                document_modified_at: Some(mirabile_app::Timestamp::from_unix_millis(1)),
+                validation: Vec::new(),
                 document_dirty: self.workspace.dirty,
                 has_temporary_display_override: self.workspace.temporary_display_override,
                 switch_decision: None,
@@ -469,6 +477,12 @@ impl MockState {
                 aspect_set: self.editor.as_ref().map(|editor| AspectSetDraftReadModel {
                     resource_id: Some(editor.resource_id),
                     title: editor.title.clone(),
+                    description: editor.description.clone(),
+                    tags: editor.tags.clone(),
+                    schema_version: Some(mirabile_app::SchemaVersion::V1),
+                    created_at: Some(mirabile_app::Timestamp::from_unix_millis(1)),
+                    modified_at: Some(mirabile_app::Timestamp::from_unix_millis(1)),
+                    validation: Vec::new(),
                     state: editor.state.clone(),
                     aspects: vec![AspectDraftValue {
                         aspect_id: conjunction_id(),
@@ -655,6 +669,8 @@ impl MockState {
             AppIntent::NewWorkspace
             | AppIntent::OpenWorkspace { .. }
             | AppIntent::RenameWorkspace { .. }
+            | AppIntent::SetWorkspaceDescription { .. }
+            | AppIntent::SetWorkspaceTags { .. }
             | AppIntent::DiscardWorkspaceChanges
             | AppIntent::ResolveWorkspaceSwitch { .. }
             | AppIntent::LoadDemoBundle => Err(AppError::new(
@@ -897,6 +913,8 @@ impl MockState {
                 self.editor = Some(EditorFixture {
                     resource_id,
                     title: aspect_set.summary.title.clone(),
+                    description: None,
+                    tags: Vec::new(),
                     state: DraftState::Clean {
                         revision: aspect_set.summary.revision,
                     },
@@ -1064,6 +1082,10 @@ impl MockState {
         let base_revision = editor.state.base_revision();
         match mutation {
             AspectSetDraftMutation::SetTitle(title) => editor.title = title,
+            AspectSetDraftMutation::SetDescription(description) => {
+                editor.description = description;
+            }
+            AspectSetDraftMutation::SetTags(tags) => editor.tags = tags,
             AspectSetDraftMutation::SetOrb { aspect_id, maximum } => {
                 if aspect_id != conjunction_id() {
                     return Err(not_found("draft aspect"));

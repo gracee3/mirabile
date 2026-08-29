@@ -97,6 +97,8 @@ impl ControlId {
     pub const ASPECT_NEW: Self = Self(Cow::Borrowed("aspect.new"));
     pub const ASPECT_RESOURCE: Self = Self(Cow::Borrowed("aspect.resource"));
     pub const ASPECT_TITLE: Self = Self(Cow::Borrowed("aspect.title"));
+    pub const ASPECT_DESCRIPTION: Self = Self(Cow::Borrowed("aspect.description"));
+    pub const ASPECT_TAGS: Self = Self(Cow::Borrowed("aspect.tags"));
     pub const ASPECT_NAME: Self = Self(Cow::Borrowed("aspect.name"));
     pub const ASPECT_ANGLE: Self = Self(Cow::Borrowed("aspect.angle"));
     pub const ASPECT_APPLYING_MULTIPLIER: Self = Self(Cow::Borrowed("aspect.applying-multiplier"));
@@ -114,6 +116,7 @@ impl ControlId {
     pub const CHART_EDITOR_SAVE: Self = Self(Cow::Borrowed("chart.editor-save"));
     pub const CHART_EVENT_KIND: Self = Self(Cow::Borrowed("chart.event-kind"));
     pub const CHART_FIXED_OFFSET: Self = Self(Cow::Borrowed("chart.fixed-offset"));
+    pub const CHART_NAMED_ZONE: Self = Self(Cow::Borrowed("chart.named-zone"));
     pub const CHART_HOUSES: Self = Self(Cow::Borrowed("chart.houses"));
     pub const CHART_LATITUDE: Self = Self(Cow::Borrowed("chart.latitude"));
     pub const CHART_LOCATION_ENABLED: Self = Self(Cow::Borrowed("chart.location-enabled"));
@@ -150,6 +153,12 @@ impl ControlId {
         Self(Cow::Borrowed("chart.life-event.note.remove"));
     pub const CHART_TIMEZONE: Self = Self(Cow::Borrowed("chart.timezone"));
     pub const CHART_TITLE: Self = Self(Cow::Borrowed("chart.title"));
+    pub const CHART_DEFINITION_DESCRIPTION: Self =
+        Self(Cow::Borrowed("chart.definition-description"));
+    pub const CHART_DEFINITION_TAGS: Self = Self(Cow::Borrowed("chart.definition-tags"));
+    pub const CHART_RECORD_TITLE: Self = Self(Cow::Borrowed("chart.record-title"));
+    pub const CHART_RECORD_DESCRIPTION: Self = Self(Cow::Borrowed("chart.record-description"));
+    pub const CHART_RECORD_TAGS: Self = Self(Cow::Borrowed("chart.record-tags"));
     pub const CHART_ZODIAC: Self = Self(Cow::Borrowed("chart.zodiac"));
     pub const CHART_LUNAR_NODE: Self = Self(Cow::Borrowed("chart.lunar-node"));
     pub const CHART_BLACK_MOON: Self = Self(Cow::Borrowed("chart.black-moon"));
@@ -218,6 +227,8 @@ impl ControlId {
     pub const WORKSPACE_SWITCH_SAVE: Self = Self(Cow::Borrowed("workspace.switch-save"));
     pub const WORKSPACE_SWITCH_STAY: Self = Self(Cow::Borrowed("workspace.switch-stay"));
     pub const WORKSPACE_TITLE: Self = Self(Cow::Borrowed("workspace.title"));
+    pub const WORKSPACE_DESCRIPTION: Self = Self(Cow::Borrowed("workspace.description"));
+    pub const WORKSPACE_TAGS: Self = Self(Cow::Borrowed("workspace.tags"));
     pub const WORKSPACE_CHART_MOVE: Self = Self(Cow::Borrowed("workspace.chart.move"));
     pub const WORKSPACE_CHART_ADD: Self = Self(Cow::Borrowed("workspace.chart.add"));
     pub const WORKSPACE_CHART_REMOVE: Self = Self(Cow::Borrowed("workspace.chart.remove"));

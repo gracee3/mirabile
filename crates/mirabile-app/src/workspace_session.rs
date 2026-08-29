@@ -5,7 +5,7 @@ use mirabile_core::{
     WorkspaceDocument,
 };
 
-use crate::ChartDraft;
+use crate::{ChartDraft, ResourceDraftValidationIssue};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceSessionDraftChart {
@@ -32,6 +32,8 @@ pub struct WorkspaceSession {
     pub backing: WorkspaceDocumentBacking,
     /// Working title; canonical metadata lives on the saved `ResourceEnvelope`.
     pub working_title: String,
+    pub working_description: Option<String>,
+    pub working_tags: Vec<String>,
     pub document: WorkspaceDocument,
     pub active_chart: Option<InstanceId>,
     pub selected_charts: Vec<InstanceId>,
@@ -54,6 +56,8 @@ impl WorkspaceSession {
                 revision: document.revision,
             },
             working_title: document.title.clone(),
+            working_description: document.description.clone(),
+            working_tags: document.tags.clone(),
             active_chart: document
                 .payload
                 .chart_instances
@@ -78,6 +82,8 @@ impl WorkspaceSession {
         Self {
             backing: WorkspaceDocumentBacking::Unsaved,
             working_title: "Untitled Workspace".into(),
+            working_description: None,
+            working_tags: Vec::new(),
             document,
             active_chart,
             selected_charts: Vec::new(),
@@ -99,6 +105,35 @@ impl WorkspaceSession {
             revision,
         };
         self.document_dirty = false;
+    }
+
+    pub fn metadata_validation(&self) -> Vec<ResourceDraftValidationIssue> {
+        let mut issues = Vec::new();
+        if self.working_title.trim().is_empty() {
+            issues.push(ResourceDraftValidationIssue {
+                field: "workspace.title".into(),
+                message: "Workspace title is required".into(),
+            });
+        }
+        let mut tags = self
+            .working_tags
+            .iter()
+            .map(|tag| tag.trim().to_owned())
+            .collect::<Vec<_>>();
+        if tags.iter().any(String::is_empty) {
+            issues.push(ResourceDraftValidationIssue {
+                field: "workspace.tags".into(),
+                message: "Tags must not be empty".into(),
+            });
+        }
+        tags.sort();
+        if tags.windows(2).any(|pair| pair[0] == pair[1]) {
+            issues.push(ResourceDraftValidationIssue {
+                field: "workspace.tags".into(),
+                message: "Tags must be unique".into(),
+            });
+        }
+        issues
     }
 
     pub fn contains_chart(&self, instance_id: InstanceId) -> bool {

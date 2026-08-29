@@ -191,8 +191,27 @@ pub enum ChartRecordMutation {
 pub enum ChartDefinitionMutation {
     Metadata(ResourceMetadataMutation),
     SetSource(ChartSource),
+    SwitchDerivedRecipe(DerivedRecipeKind),
     MutateDerivedRecipe(DerivedRecipeMutation),
     SetCalculation(CalculationSpec),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DerivedRecipeKind {
+    Transit,
+    Harmonic,
+    Relocation,
+    Composite,
+}
+
+impl DerivedRecipeKind {
+    pub const ALL: [Self; 4] = [
+        Self::Transit,
+        Self::Harmonic,
+        Self::Relocation,
+        Self::Composite,
+    ];
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -242,11 +261,18 @@ pub enum WheelTemplateMutation {
 pub enum ViewDocumentMutation {
     Metadata(ResourceMetadataMutation),
     ChartSlots(DraftListMutation<ChartSlot>),
+    InsertChartSlotDefault {
+        after: Option<DraftItemId>,
+    },
     RenameChartSlot {
         item_id: DraftItemId,
         slot: ChartSlot,
     },
     Objects(DraftListMutation<ViewObject>),
+    PointTablePoints {
+        object_id: DraftItemId,
+        mutation: DraftListMutation<mirabile_core::PointId>,
+    },
     SetLayout(PageLayout),
 }
 
@@ -424,6 +450,19 @@ pub struct LifeEventDraftReadModel {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ViewObjectDraftReadModel {
+    pub item_id: DraftItemId,
+    pub value: ViewObject,
+    pub point_table_points: Vec<StableDraftItemReadModel<mirabile_core::PointId>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResourceDraftValidationIssue {
+    pub field: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct QueryNodeDraftReadModel {
     pub node_id: DraftItemId,
     pub expression: QueryExpr,
@@ -446,7 +485,7 @@ pub enum NestedResourceDraftReadModel {
     WheelTemplate(Vec<StableDraftItemReadModel<RingSpec>>),
     ViewDocument {
         chart_slots: Vec<StableDraftItemReadModel<ChartSlot>>,
-        objects: Vec<StableDraftItemReadModel<ViewObject>>,
+        objects: Vec<ViewObjectDraftReadModel>,
     },
     QueryDefinition(QueryNodeDraftReadModel),
     WorkspaceDocument {

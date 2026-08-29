@@ -40,6 +40,44 @@ where
         state.advance()
     }
 
+    pub(super) fn set_workspace_description(&self, description: Option<String>) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let session = state.session.as_mut().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })?;
+        if session.working_description == description {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                "The workspace description is unchanged",
+            ));
+        }
+        session.working_description = description;
+        session.mark_document_dirty();
+        state.notice = Some(info(
+            "Workspace description changed in the working session; save to publish it",
+        ));
+        state.advance()
+    }
+
+    pub(super) fn set_workspace_tags(&self, tags: Vec<String>) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let session = state.session.as_mut().ok_or_else(|| {
+            AppError::new(AppErrorKind::Unavailable, "No workspace session is active")
+        })?;
+        if session.working_tags == tags {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                "The workspace tags are unchanged",
+            ));
+        }
+        session.working_tags = tags;
+        session.mark_document_dirty();
+        state.notice = Some(info(
+            "Workspace tags changed in the working session; save to publish them",
+        ));
+        state.advance()
+    }
+
     pub(super) fn request_workspace_switch(&self, target: WorkspaceSwitchTarget) -> AppResult<()> {
         let mut state = self.state.borrow_mut();
         if let WorkspaceSwitchTarget::Saved { resource_id } = target
@@ -380,15 +418,23 @@ where
                 },
             )?;
             let timestamp = Timestamp::from_unix_millis(state.next_timestamp);
+            if !session.metadata_validation().is_empty() {
+                return Err(AppError::new(
+                    AppErrorKind::InvalidIntent,
+                    "Complete every invalid workspace field before saving",
+                ));
+            }
             match session.backing {
-                WorkspaceDocumentBacking::Unsaved => (
-                    None,
-                    ResourceEnvelope::new(
+                WorkspaceDocumentBacking::Unsaved => {
+                    let mut next = ResourceEnvelope::new(
                         session.working_title.clone(),
                         session.document.clone(),
                         timestamp,
-                    ),
-                ),
+                    );
+                    next.description.clone_from(&session.working_description);
+                    next.tags.clone_from(&session.working_tags);
+                    (None, next)
+                }
                 WorkspaceDocumentBacking::Saved {
                     document_id,
                     revision,
@@ -416,6 +462,8 @@ where
                             )
                         })?;
                     next.title.clone_from(&session.working_title);
+                    next.description.clone_from(&session.working_description);
+                    next.tags.clone_from(&session.working_tags);
                     (Some(envelope.revision), next)
                 }
             }
@@ -827,6 +875,8 @@ impl RealState {
             | AppIntent::NewWorkspace
             | AppIntent::OpenWorkspace { .. }
             | AppIntent::RenameWorkspace { .. }
+            | AppIntent::SetWorkspaceDescription { .. }
+            | AppIntent::SetWorkspaceTags { .. }
             | AppIntent::DiscardWorkspaceChanges
             | AppIntent::ResolveWorkspaceSwitch { .. }
             | AppIntent::LoadDemoBundle

@@ -7,7 +7,12 @@ use mirabile_app::{
     WorkspaceBindingSlot, WorkspaceCompositionMutation, WorkspaceDocumentMutation,
 };
 
-use crate::{dispatcher::WorkbenchCoordinator, workbench_controls::BufferedNumberField};
+use crate::{
+    dispatcher::WorkbenchCoordinator,
+    workbench_controls::{
+        BufferedInputKind, BufferedNumberField, ValidatedField, invalid_buffer_registry,
+    },
+};
 
 #[component]
 pub(super) fn Cockpit(
@@ -470,7 +475,8 @@ fn ResourceLaboratory(
                         let tags_dispatcher = dispatcher;
                         let save_dispatcher = dispatcher;
                         let cancel_dispatcher = dispatcher;
-                        let save_enabled = matches!(draft.state, DraftState::New | DraftState::Dirty { .. });
+                        let chart_references = model.get().resources.inventories.into_iter().find(|inventory| inventory.kind == mirabile_app::ResourceKind::ChartDefinition).map(|inventory| inventory.resources.into_iter().filter(|resource| Some(resource.resource_id) != draft.resource_id).collect()).unwrap_or_default();
+                        let has_validation = !draft.validation.is_empty();
                         view! {
                             <div class="typed-resource-editor">
                                 <span class="draft-state">{format!("{:?}", draft.state)}</span>
@@ -489,16 +495,11 @@ fn ResourceLaboratory(
                                     data-mirabile-address=resource_address(ControlId::RESOURCE_TAGS, kind, address_resource)
                                     data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true"
                                     on:change=move |event| dispatch_metadata(tags_dispatcher, kind, ResourceMetadataMutation::SetTags(event_target_value(&event).split(',').map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned).collect())) /></label>
-                                <PayloadEditor kind value=draft.value.clone() nested=draft.nested.clone() point_options=model.get().authoring.points dispatcher />
+                                <PayloadEditor kind value=draft.value.clone() nested=draft.nested.clone() point_options=model.get().authoring.points derived_recipe_options=draft.derived_recipe_options chart_references dispatcher />
+                                {(!draft.validation.is_empty()).then(|| view! { <ul class="validation-list" role="status">{draft.validation.into_iter().map(|issue| view! { <li>{format!("{}: {}", issue.field, issue.message)}</li> }).collect_view()}</ul> })}
                                 <p class="persisted-label">{payload_summary(&draft.value)}</p>
                                 <div class="draft-actions">
-                                    <button type="button" class="button primary" disabled=!save_enabled
-                                        data-mirabile-control=ControlId::RESOURCE_SAVE.to_string()
-                                        data-mirabile-address=resource_address(ControlId::RESOURCE_SAVE, kind, address_resource)
-                                        data-mirabile-kind=ControlKind::Action.as_str()
-                                        data-mirabile-enabled=save_enabled.to_string()
-                                        data-mirabile-disabled-reason=(!save_enabled).then_some("Draft has no saveable changes")
-                                        on:click=move |_| save_dispatcher.dispatch(AppIntent::SaveResourceDraft { kind })>"Save"</button>
+                                    <ResourceSaveButton kind state=draft.state has_validation address_resource dispatcher=save_dispatcher />
                                     <button type="button" class="button secondary"
                                         data-mirabile-control=ControlId::RESOURCE_CANCEL.to_string()
                                         data-mirabile-address=resource_address(ControlId::RESOURCE_CANCEL, kind, address_resource)
@@ -511,6 +512,43 @@ fn ResourceLaboratory(
                 </article>
             }
         }).collect_view()}
+    }
+}
+
+#[component]
+fn ResourceSaveButton(
+    kind: ResourceDraftKind,
+    state: DraftState,
+    has_validation: bool,
+    address_resource: Option<mirabile_app::ResourceId>,
+    dispatcher: WorkbenchCoordinator,
+) -> impl IntoView {
+    let invalid_buffers = invalid_buffer_registry();
+    let kind_key = format!("{kind:?}").to_lowercase();
+    let reason_kind_key = kind_key.clone();
+    let base_enabled = matches!(state, DraftState::New | DraftState::Dirty { .. });
+    let enabled = Signal::derive(move || {
+        base_enabled && !has_validation && !invalid_buffers.has_kind(&kind_key)
+    });
+    let reason = move || {
+        if invalid_buffers.has_kind(&reason_kind_key) {
+            Some("Correct invalid local resource values before saving")
+        } else if has_validation {
+            Some("Complete every invalid resource field before saving")
+        } else if !base_enabled {
+            Some("Draft has no saveable changes")
+        } else {
+            None
+        }
+    };
+    view! {
+        <button type="button" class="button primary" disabled=move || !enabled.get()
+            data-mirabile-control=ControlId::RESOURCE_SAVE.to_string()
+            data-mirabile-address=resource_address(ControlId::RESOURCE_SAVE, kind, address_resource)
+            data-mirabile-kind=ControlKind::Action.as_str()
+            data-mirabile-enabled=move || enabled.get().to_string()
+            data-mirabile-disabled-reason=reason
+            on:click=move |_| dispatcher.dispatch(AppIntent::SaveResourceDraft { kind })>"Save"</button>
     }
 }
 
@@ -550,28 +588,108 @@ fn parameter_status(status: &mirabile_app::ParameterStatus) -> String {
 fn DerivedRecipeFields(
     recipe: mirabile_app::DerivationSpec,
     composite_rows: Vec<mirabile_app::StableDraftItemReadModel<mirabile_app::ResourceId>>,
+    chart_references: Vec<mirabile_app::ResourceSummaryReadModel>,
     dispatcher: WorkbenchCoordinator,
 ) -> impl IntoView {
     match recipe {
-        mirabile_app::DerivationSpec::Harmonic { radix, harmonic } => view! { <div class="recipe-fields">
-            <label>"Radix resource ID"<input type="text" prop:value=radix.to_string() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("radix") data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(radix)=event_target_value(&event).parse() { dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetHarmonic { radix, harmonic }); } /></label>
-            <label>"Harmonic"<input type="number" min="0.0001" step="0.1" prop:value=harmonic data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("harmonic") data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(harmonic)=event_target_value(&event).parse() { dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetHarmonic { radix, harmonic }); } /></label>
-        </div> }.into_any(),
-        mirabile_app::DerivationSpec::Transit { at, location } => { let date_at=at.clone(); let time_at=at.clone(); let location_for_date=location.clone(); let location_for_time=location.clone(); view! { <div class="recipe-fields">
-            <label>"Transit date"<input type="date" prop:value=format_recipe_date(at.civil_datetime.date) data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("date") data-mirabile-kind=ControlKind::Date.as_str() data-mirabile-enabled="true" on:change=move |event| if let Some(date)=parse_recipe_date(&event_target_value(&event)) { let mut at=date_at.clone(); at.civil_datetime.date=date; dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetTransit { at, location:location_for_date.clone() }); } /></label>
-            <label>"Transit time"<input type="time" step="1" prop:value=format_recipe_time(at.civil_datetime.time) data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("time") data-mirabile-kind=ControlKind::Time.as_str() data-mirabile-enabled="true" on:change=move |event| if let Some(time)=parse_recipe_time(&event_target_value(&event)) { let mut at=time_at.clone(); at.civil_datetime.time=time; dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetTransit { at, location:location_for_time.clone() }); } /></label>
+        mirabile_app::DerivationSpec::Harmonic { radix, harmonic } => {
+            let options = chart_references.clone();
+            let missing = !options.iter().any(|option| option.resource_id == radix);
+            let available = !options.is_empty();
+            view! { <div class="recipe-fields">
+            <label>"Radix chart"<select prop:value=radix.to_string() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("radix") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled=available.to_string() disabled=!available data-mirabile-disabled-reason=(!available).then_some("No compatible ChartDefinition is available") on:change=move |event| if let Ok(radix)=event_target_value(&event).parse() { dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetHarmonic { radix, harmonic }); }>{missing.then(|| view! { <option value=radix.to_string()>{format!("Missing ChartDefinition {radix}")}</option> })}{options.into_iter().map(|option| view! { <option value=option.resource_id.to_string()>{option.title}</option> }).collect_view()}</select></label>
+            <ValidatedField address=recipe_address("harmonic") label="Harmonic".to_owned() kind=BufferedInputKind::Number
+                authoritative=Signal::derive(move || harmonic.to_string()) disabled=Signal::derive(|| false)
+                parser=Callback::new(|text: String| text.parse::<f64>().ok().filter(|value| value.is_finite()).map(|value| value.to_string()).ok_or_else(|| "Enter a finite harmonic factor".to_owned()))
+                on_commit=Callback::new(move |text: String| if let Ok(harmonic)=text.parse() { dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetHarmonic { radix, harmonic }); }) />
+        </div> }.into_any()
+        }
+        mirabile_app::DerivationSpec::Transit { at, location } => {
+            let date_at = at.clone();
+            let time_at = at.clone();
+            let location_for_date = location.clone();
+            let location_for_time = location.clone();
+            let date_authoritative = format_recipe_date(at.civil_datetime.date);
+            let time_authoritative = format_recipe_time(at.civil_datetime.time);
+            view! { <div class="recipe-fields">
+            <ValidatedField address=recipe_address("date") label="Transit date".to_owned() kind=BufferedInputKind::Date
+                authoritative=Signal::derive(move || date_authoritative.clone()) disabled=Signal::derive(|| false)
+                parser=Callback::new(|text: String| parse_recipe_date(&text).map(format_recipe_date).ok_or_else(|| "Enter a valid civil date".to_owned()))
+                on_commit=Callback::new(move |text: String| if let Some(date)=parse_recipe_date(&text) { let mut at=date_at.clone(); at.civil_datetime.date=date; dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetTransit { at, location:location_for_date.clone() }); }) />
+            <ValidatedField address=recipe_address("time") label="Transit time".to_owned() kind=BufferedInputKind::Time
+                authoritative=Signal::derive(move || time_authoritative.clone()) disabled=Signal::derive(|| false)
+                parser=Callback::new(|text: String| parse_recipe_time(&text).map(format_recipe_time).ok_or_else(|| "Enter a valid civil time".to_owned()))
+                on_commit=Callback::new(move |text: String| if let Some(time)=parse_recipe_time(&text) { let mut at=time_at.clone(); at.civil_datetime.time=time; dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetTransit { at, location:location_for_time.clone() }); }) />
+            <RecipeTemporalFields at=at.clone() location=location.clone() dispatcher />
             <RecipeLocationFields location mutation_kind="transit" at=Some(at) radix=None dispatcher />
-        </div> }.into_any() }
-        mirabile_app::DerivationSpec::Relocation { radix, location } => { let location_for_radix=location.clone(); view! { <div class="recipe-fields">
-            <label>"Radix resource ID"<input type="text" prop:value=radix.to_string() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("radix") data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(next)=event_target_value(&event).parse() { dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetRelocation { radix:next, location:location_for_radix.clone() }); } /></label>
+        </div> }.into_any()
+        }
+        mirabile_app::DerivationSpec::Relocation { radix, location } => {
+            let location_for_radix = location.clone();
+            let options = chart_references.clone();
+            let missing = !options.iter().any(|option| option.resource_id == radix);
+            let available = !options.is_empty();
+            view! { <div class="recipe-fields">
+            <label>"Radix chart"<select prop:value=radix.to_string() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("radix") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled=available.to_string() disabled=!available data-mirabile-disabled-reason=(!available).then_some("No compatible ChartDefinition is available") on:change=move |event| if let Ok(next)=event_target_value(&event).parse() { dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetRelocation { radix:next, location:location_for_radix.clone() }); }>{missing.then(|| view! { <option value=radix.to_string()>{format!("Missing ChartDefinition {radix}")}</option> })}{options.into_iter().map(|option| view! { <option value=option.resource_id.to_string()>{option.title}</option> }).collect_view()}</select></label>
             <RecipeLocationFields location mutation_kind="relocation" at=None radix=Some(radix) dispatcher />
-        </div> }.into_any() },
-        mirabile_app::DerivationSpec::Composite { charts, method } => view! { <div class="recipe-fields">
+        </div> }.into_any()
+        }
+        mirabile_app::DerivationSpec::Composite { charts, method } => {
+            let insert = chart_references
+                .iter()
+                .find(|option| !charts.contains(&option.resource_id))
+                .map(|option| option.resource_id);
+            view! { <div class="recipe-fields">
             <label>"Method"<select prop:value=match method { mirabile_app::CompositeMethod::Midpoint=>"midpoint", mirabile_app::CompositeMethod::Davison=>"davison" } data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("method") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetCompositeMethod(if event_target_value(&event)=="davison" { mirabile_app::CompositeMethod::Davison } else { mirabile_app::CompositeMethod::Midpoint }))><option value="midpoint">"Midpoint"</option><option value="davison">"Davison"</option></select></label>
-            {composite_rows.into_iter().map(|row| { let item_id=row.item_id; view! { <div class="builder-row"><label>"Chart resource ID"<input type="text" prop:value=row.value.to_string() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_RECIPE_FIELD, "chartdefinition", "composite-charts", item_id, Some("resource")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(value)=event_target_value(&event).parse() { dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::CompositeCharts(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label><button type="button" class="button secondary" data-mirabile-control=ControlId::RESOURCE_LIST_MOVE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_MOVE, "chartdefinition", "composite-charts", item_id, Some("end")) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::CompositeCharts(mirabile_app::DraftListMutation::Move { item_id, before:None }))>"Move to end"</button><button type="button" class="button danger" data-mirabile-control=ControlId::RESOURCE_LIST_REMOVE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_REMOVE, "chartdefinition", "composite-charts", item_id, None) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled=(charts.len()>2).to_string() disabled=charts.len()<=2 on:click=move |_| dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::CompositeCharts(mirabile_app::DraftListMutation::Remove { item_id }))>"Remove"</button></div> } }).collect_view()}
-            <button type="button" class="button secondary" data-mirabile-control=ControlId::RESOURCE_LIST_INSERT.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::RESOURCE_LIST_INSERT, [("kind", "chartdefinition"), ("collection", "composite-charts")]).expect("composite address").to_string() data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::CompositeCharts(mirabile_app::DraftListMutation::Insert { after:None, value:mirabile_app::ResourceId::new() }))>"Add chart"</button>
-        </div> }.into_any(),
+            {composite_rows.into_iter().map(|row| { let item_id=row.item_id; let options=chart_references.clone(); let missing=!options.iter().any(|option| option.resource_id==row.value); view! { <div class="builder-row"><label>"Chart"<select prop:value=row.value.to_string() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_RECIPE_FIELD, "chartdefinition", "composite-charts", item_id, Some("resource")) data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(value)=event_target_value(&event).parse() { dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::CompositeCharts(mirabile_app::DraftListMutation::Update { item_id, value })); }>{missing.then(|| view! { <option value=row.value.to_string()>{format!("Missing ChartDefinition {}", row.value)}</option> })}{options.into_iter().map(|option| view! { <option value=option.resource_id.to_string()>{option.title}</option> }).collect_view()}</select></label><button type="button" class="button secondary" data-mirabile-control=ControlId::RESOURCE_LIST_MOVE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_MOVE, "chartdefinition", "composite-charts", item_id, Some("end")) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::CompositeCharts(mirabile_app::DraftListMutation::Move { item_id, before:None }))>"Move to end"</button><button type="button" class="button danger" data-mirabile-control=ControlId::RESOURCE_LIST_REMOVE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_REMOVE, "chartdefinition", "composite-charts", item_id, None) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled=(charts.len()>2).to_string() disabled=charts.len()<=2 data-mirabile-disabled-reason=(charts.len()<=2).then_some("Composite recipes require at least two charts") on:click=move |_| dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::CompositeCharts(mirabile_app::DraftListMutation::Remove { item_id }))>"Remove"</button></div> } }).collect_view()}
+            <button type="button" class="button secondary" disabled=insert.is_none() data-mirabile-control=ControlId::RESOURCE_LIST_INSERT.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::RESOURCE_LIST_INSERT, [("kind", "chartdefinition"), ("collection", "composite-charts")]).expect("composite address").to_string() data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled=insert.is_some().to_string() data-mirabile-disabled-reason=insert.is_none().then_some("No unused compatible ChartDefinition is available") on:click=move |_| if let Some(value)=insert { dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::CompositeCharts(mirabile_app::DraftListMutation::Insert { after:None, value })) }>"Add chart"</button>
+        </div> }.into_any()
+        }
     }
+}
+
+#[component]
+fn RecipeTemporalFields(
+    at: mirabile_app::TemporalAssertion,
+    location: mirabile_app::LocationAssertion,
+    dispatcher: WorkbenchCoordinator,
+) -> impl IntoView {
+    let calendar_base = at.clone();
+    let calendar_identifier_base = at.clone();
+    let zone_base = at.clone();
+    let zone_value_base = at.clone();
+    let disambiguation_base = at.clone();
+    let calendar_location = location.clone();
+    let zone_location = location.clone();
+    let disambiguation_location = location.clone();
+    view! { <div class="temporal-fields">
+        <label>"Calendar"<select prop:value=recipe_calendar_key(&at.calendar) data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("calendar") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut at=calendar_base.clone(); at.calendar=match event_target_value(&event).as_str() { "julian"=>mirabile_app::CalendarSpec::Julian, "historical"=>mirabile_app::CalendarSpec::HistoricalTransition { identifier:"custom-transition".into() }, _=>mirabile_app::CalendarSpec::ProlepticGregorian }; dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetTransit { at, location:calendar_location.clone() }); }><option value="gregorian">"Proleptic Gregorian"</option><option value="julian">"Julian"</option><option value="historical">"Historical transition"</option></select></label>
+        {if let mirabile_app::CalendarSpec::HistoricalTransition { identifier }=&at.calendar { let identifier=identifier.clone(); let location=location.clone(); view! {
+            <ValidatedField address=recipe_address("calendar-identifier") label="Transition identifier".to_owned() kind=BufferedInputKind::Text
+                authoritative=Signal::derive(move || identifier.clone()) disabled=Signal::derive(|| false)
+                parser=Callback::new(|text: String| (!text.trim().is_empty()).then(|| text.trim().to_owned()).ok_or_else(|| "Transition identifier is required".to_owned()))
+                on_commit=Callback::new(move |identifier: String| { let mut at=calendar_identifier_base.clone(); at.calendar=mirabile_app::CalendarSpec::HistoricalTransition { identifier }; dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetTransit { at, location:location.clone() }); }) />
+        }.into_any() } else { ().into_any() }}
+        <label>"Timezone"<select prop:value=recipe_time_zone_key(&at.zone) data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("timezone") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut at=zone_base.clone(); at.zone=match event_target_value(&event).as_str() { "fixed_offset"=>mirabile_app::TimeZoneAssertion::FixedOffset(mirabile_app::Offset::UTC), "named_zone"=>mirabile_app::TimeZoneAssertion::NamedZone("Etc/UTC".into()), "local_mean_time"=>mirabile_app::TimeZoneAssertion::LocalMeanTime, "local_apparent_time"=>mirabile_app::TimeZoneAssertion::LocalApparentTime, "unknown"=>mirabile_app::TimeZoneAssertion::Unknown, _=>mirabile_app::TimeZoneAssertion::UniversalTime }; dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetTransit { at, location:zone_location.clone() }); }><option value="universal_time">"Universal Time"</option><option value="fixed_offset">"Fixed offset"</option><option value="named_zone">"Named zone"</option><option value="local_mean_time">"Local Mean Time"</option><option value="local_apparent_time">"Local Apparent Time"</option><option value="unknown">"Unknown"</option></select></label>
+        {match &at.zone {
+            mirabile_app::TimeZoneAssertion::FixedOffset(offset) => {
+                let minutes=(offset.seconds()/60).to_string(); let location=location.clone(); let base=zone_value_base.clone();
+                view! { <ValidatedField address=recipe_address("timezone-value") label="UTC offset minutes".to_owned() kind=BufferedInputKind::Number
+                    authoritative=Signal::derive(move || minutes.clone()) disabled=Signal::derive(|| false)
+                    parser=Callback::new(|text: String| parse_recipe_offset(&text).map(|offset| (offset.seconds()/60).to_string()).ok_or_else(|| "Enter an offset from -1439 through 1439 minutes".to_owned()))
+                    on_commit=Callback::new(move |text: String| if let Some(offset)=parse_recipe_offset(&text) { let mut at=base.clone(); at.zone=mirabile_app::TimeZoneAssertion::FixedOffset(offset); dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetTransit { at, location:location.clone() }); }) /> }.into_any()
+            },
+            mirabile_app::TimeZoneAssertion::NamedZone(name) => {
+                let name=name.clone(); let location=location.clone(); let base=zone_value_base.clone();
+                view! { <ValidatedField address=recipe_address("timezone-value") label="IANA timezone name".to_owned() kind=BufferedInputKind::Text
+                    authoritative=Signal::derive(move || name.clone()) disabled=Signal::derive(|| false)
+                    parser=Callback::new(|text: String| (!text.trim().is_empty()).then(|| text.trim().to_owned()).ok_or_else(|| "Timezone name is required".to_owned()))
+                    on_commit=Callback::new(move |name: String| { let mut at=base.clone(); at.zone=mirabile_app::TimeZoneAssertion::NamedZone(name); dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetTransit { at, location:location.clone() }); }) /> }.into_any()
+            },
+            _=>().into_any()
+        }}
+        <label>"Ambiguous local time"<select prop:value=recipe_disambiguation_key(at.disambiguation) data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("disambiguation") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut at=disambiguation_base.clone(); at.disambiguation=match event_target_value(&event).as_str() { "earlier"=>Some(mirabile_app::TimeChoice::Earlier), "later"=>Some(mirabile_app::TimeChoice::Later), _=>None }; dispatch_recipe(dispatcher, mirabile_app::DerivedRecipeMutation::SetTransit { at, location:disambiguation_location.clone() }); }><option value="none">"Not specified"</option><option value="earlier">"Earlier occurrence"</option><option value="later">"Later occurrence"</option></select></label>
+    </div> }
 }
 
 #[component]
@@ -585,10 +703,48 @@ fn RecipeLocationFields(
     let name_base = location.clone();
     let latitude_base = location.clone();
     let longitude_base = location.clone();
+    let country_base = location.clone();
+    let atlas_provider_base = location.clone();
+    let atlas_record_base = location.clone();
+    let atlas_version_base = location.clone();
+    let atlas = location.atlas_provenance.clone();
     let name_at = at.clone();
     let latitude_at = at.clone();
-    let longitude_at = at;
-    view! { <div class="location-fields"><label>"Location name"<input type="text" prop:value=location.display_name data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("location-name") data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut location=name_base.clone(); location.display_name=event_target_value(&event); dispatch_recipe_location(dispatcher, mutation_kind, name_at.clone(), radix, location); } /></label><label>"Latitude"<input type="number" min="-90" max="90" step="0.0001" prop:value=location.latitude.degrees() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("latitude") data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(value)=event_target_value(&event).parse() && let Ok(latitude)=mirabile_app::Latitude::from_degrees(value) { let mut location=latitude_base.clone(); location.latitude=latitude; dispatch_recipe_location(dispatcher, mutation_kind, latitude_at.clone(), radix, location); } /></label><label>"Longitude"<input type="number" min="-180" max="180" step="0.0001" prop:value=location.longitude.degrees() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("longitude") data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(value)=event_target_value(&event).parse() && let Ok(longitude)=mirabile_app::Longitude::from_degrees(value) { let mut location=longitude_base.clone(); location.longitude=longitude; dispatch_recipe_location(dispatcher, mutation_kind, longitude_at.clone(), radix, location); } /></label></div> }
+    let longitude_at = at.clone();
+    let country_at = at.clone();
+    let atlas_provider_at = at.clone();
+    let atlas_record_at = at.clone();
+    let atlas_version_at = at;
+    let latitude_authoritative = location.latitude.degrees().to_string();
+    let longitude_authoritative = location.longitude.degrees().to_string();
+    view! { <div class="location-fields"><label>"Location name"<input type="text" prop:value=location.display_name data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("location-name") data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut location=name_base.clone(); location.display_name=event_target_value(&event); dispatch_recipe_location(dispatcher, mutation_kind, name_at.clone(), radix, location); } /></label>
+        <ValidatedField address=recipe_address("latitude") label="Latitude".to_owned() kind=BufferedInputKind::Number
+            authoritative=Signal::derive(move || latitude_authoritative.clone()) disabled=Signal::derive(|| false)
+            parser=Callback::new(|text: String| text.parse::<f64>().ok().and_then(|value| mirabile_app::Latitude::from_degrees(value).ok()).map(|value| value.degrees().to_string()).ok_or_else(|| "Enter a latitude from -90 through 90 degrees".to_owned()))
+            on_commit=Callback::new(move |text: String| if let Ok(value)=text.parse() && let Ok(latitude)=mirabile_app::Latitude::from_degrees(value) { let mut location=latitude_base.clone(); location.latitude=latitude; dispatch_recipe_location(dispatcher, mutation_kind, latitude_at.clone(), radix, location); }) />
+        <ValidatedField address=recipe_address("longitude") label="Longitude".to_owned() kind=BufferedInputKind::Number
+            authoritative=Signal::derive(move || longitude_authoritative.clone()) disabled=Signal::derive(|| false)
+            parser=Callback::new(|text: String| text.parse::<f64>().ok().and_then(|value| mirabile_app::Longitude::from_degrees(value).ok()).map(|value| value.degrees().to_string()).ok_or_else(|| "Enter a longitude from -180 through 180 degrees".to_owned()))
+            on_commit=Callback::new(move |text: String| if let Ok(value)=text.parse() && let Ok(longitude)=mirabile_app::Longitude::from_degrees(value) { let mut location=longitude_base.clone(); location.longitude=longitude; dispatch_recipe_location(dispatcher, mutation_kind, longitude_at.clone(), radix, location); }) />
+        <label>"Country / region"<input type="text" prop:value=location.country_region.unwrap_or_default() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("country-region") data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let raw=event_target_value(&event); let mut location=country_base.clone(); location.country_region=(!raw.trim().is_empty()).then_some(raw); dispatch_recipe_location(dispatcher, mutation_kind, country_at.clone(), radix, location); } /></label>
+        <label>"Atlas provider"<input type="text" prop:value=atlas.as_ref().map(|value| value.provider.clone()).unwrap_or_default() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("atlas-provider") data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut location=atlas_provider_base.clone(); update_recipe_atlas(&mut location, |atlas| atlas.provider=event_target_value(&event)); dispatch_recipe_location(dispatcher, mutation_kind, atlas_provider_at.clone(), radix, location); } /></label>
+        <label>"Atlas record ID"<input type="text" prop:value=atlas.as_ref().and_then(|value| value.record_id.clone()).unwrap_or_default() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("atlas-record") data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let raw=event_target_value(&event); let mut location=atlas_record_base.clone(); update_recipe_atlas(&mut location, |atlas| atlas.record_id=(!raw.trim().is_empty()).then_some(raw)); dispatch_recipe_location(dispatcher, mutation_kind, atlas_record_at.clone(), radix, location); } /></label>
+        <label>"Atlas data version"<input type="text" prop:value=atlas.and_then(|value| value.data_version).unwrap_or_default() data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("atlas-version") data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let raw=event_target_value(&event); let mut location=atlas_version_base.clone(); update_recipe_atlas(&mut location, |atlas| atlas.data_version=(!raw.trim().is_empty()).then_some(raw)); dispatch_recipe_location(dispatcher, mutation_kind, atlas_version_at.clone(), radix, location); } /></label>
+    </div> }
+}
+
+fn update_recipe_atlas(
+    location: &mut mirabile_app::LocationAssertion,
+    update: impl FnOnce(&mut mirabile_app::AtlasRef),
+) {
+    let atlas = location
+        .atlas_provenance
+        .get_or_insert_with(|| mirabile_app::AtlasRef {
+            provider: "Manual".into(),
+            record_id: None,
+            data_version: None,
+        });
+    update(atlas);
 }
 
 fn dispatch_recipe(
@@ -663,6 +819,73 @@ fn parse_recipe_time(value: &str) -> Option<mirabile_app::CivilTime> {
     )
     .ok()
 }
+fn parse_recipe_offset(value: &str) -> Option<mirabile_app::Offset> {
+    let minutes = value.parse::<i32>().ok()?;
+    mirabile_app::Offset::from_seconds(minutes.saturating_mul(60)).ok()
+}
+fn recipe_calendar_key(value: &mirabile_app::CalendarSpec) -> &'static str {
+    match value {
+        mirabile_app::CalendarSpec::ProlepticGregorian => "gregorian",
+        mirabile_app::CalendarSpec::Julian => "julian",
+        mirabile_app::CalendarSpec::HistoricalTransition { .. } => "historical",
+    }
+}
+fn recipe_time_zone_key(value: &mirabile_app::TimeZoneAssertion) -> &'static str {
+    match value {
+        mirabile_app::TimeZoneAssertion::UniversalTime => "universal_time",
+        mirabile_app::TimeZoneAssertion::FixedOffset(_) => "fixed_offset",
+        mirabile_app::TimeZoneAssertion::NamedZone(_) => "named_zone",
+        mirabile_app::TimeZoneAssertion::LocalMeanTime => "local_mean_time",
+        mirabile_app::TimeZoneAssertion::LocalApparentTime => "local_apparent_time",
+        mirabile_app::TimeZoneAssertion::Unknown => "unknown",
+    }
+}
+fn recipe_disambiguation_key(value: Option<mirabile_app::TimeChoice>) -> &'static str {
+    match value {
+        Some(mirabile_app::TimeChoice::Earlier) => "earlier",
+        Some(mirabile_app::TimeChoice::Later) => "later",
+        None => "none",
+    }
+}
+
+#[component]
+fn DerivedCalculationFields(
+    calculation: mirabile_app::CalculationSpec,
+    dispatcher: WorkbenchCoordinator,
+) -> impl IntoView {
+    let zodiac_base = calculation.clone();
+    let ayanamsha_base = calculation.clone();
+    let houses_base = calculation.clone();
+    let coordinates_base = calculation.clone();
+    let lunar_base = calculation.clone();
+    let black_moon_base = calculation.clone();
+    let fortune_base = calculation.clone();
+    view! { <fieldset class="calculation-fields"><legend>"Calculation specification"</legend>
+        <label>"Zodiac"<select prop:value=match &calculation.zodiac { mirabile_app::ZodiacSpec::Tropical=>"tropical", mirabile_app::ZodiacSpec::Sidereal { .. }=>"sidereal" } data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("calculation-zodiac") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut value=zodiac_base.clone(); value.zodiac=if event_target_value(&event)=="sidereal" { mirabile_app::ZodiacSpec::Sidereal { ayanamsha:"lahiri".into() } } else { mirabile_app::ZodiacSpec::Tropical }; dispatch_derived_calculation(dispatcher, value); }><option value="tropical">"Tropical"</option><option value="sidereal">"Sidereal"</option></select></label>
+        {if let mirabile_app::ZodiacSpec::Sidereal { ayanamsha }=&calculation.zodiac { let ayanamsha=ayanamsha.clone(); view! {
+            <ValidatedField address=recipe_address("calculation-ayanamsha") label="Ayanamsha".to_owned() kind=BufferedInputKind::Text
+                authoritative=Signal::derive(move || ayanamsha.clone()) disabled=Signal::derive(|| false)
+                parser=Callback::new(|text: String| (!text.trim().is_empty()).then(|| text.trim().to_owned()).ok_or_else(|| "Ayanamsha identifier is required".to_owned()))
+                on_commit=Callback::new(move |ayanamsha: String| { let mut value=ayanamsha_base.clone(); value.zodiac=mirabile_app::ZodiacSpec::Sidereal { ayanamsha }; dispatch_derived_calculation(dispatcher, value); }) />
+        }.into_any() } else { ().into_any() }}
+        <label>"Houses"<select prop:value=match calculation.houses { mirabile_app::HouseSystem::Placidus=>"placidus", mirabile_app::HouseSystem::WholeSign=>"whole-sign", mirabile_app::HouseSystem::Equal=>"equal", mirabile_app::HouseSystem::NoHouses=>"none" } data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("calculation-houses") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut value=houses_base.clone(); value.houses=match event_target_value(&event).as_str() { "placidus"=>mirabile_app::HouseSystem::Placidus, "whole-sign"=>mirabile_app::HouseSystem::WholeSign, "equal"=>mirabile_app::HouseSystem::Equal, _=>mirabile_app::HouseSystem::NoHouses }; dispatch_derived_calculation(dispatcher, value); }><option value="placidus">"Placidus"</option><option value="whole-sign">"Whole Sign"</option><option value="equal">"Equal"</option><option value="none">"No houses"</option></select></label>
+        <label>"Coordinates"<select prop:value=match calculation.coordinates { mirabile_app::CoordinateSystem::Geocentric=>"geocentric", mirabile_app::CoordinateSystem::Topocentric=>"topocentric", mirabile_app::CoordinateSystem::Heliocentric=>"heliocentric" } data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("calculation-coordinates") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut value=coordinates_base.clone(); value.coordinates=match event_target_value(&event).as_str() { "topocentric"=>mirabile_app::CoordinateSystem::Topocentric, "heliocentric"=>mirabile_app::CoordinateSystem::Heliocentric, _=>mirabile_app::CoordinateSystem::Geocentric }; dispatch_derived_calculation(dispatcher, value); }><option value="geocentric">"Geocentric"</option><option value="topocentric">"Topocentric"</option><option value="heliocentric">"Heliocentric"</option></select></label>
+        <label>"Lunar node"<select prop:value=match calculation.lunar_node { mirabile_app::LunarNodeType::Mean=>"mean", mirabile_app::LunarNodeType::True=>"true" } data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("calculation-lunar-node") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut value=lunar_base.clone(); value.lunar_node=if event_target_value(&event)=="mean" { mirabile_app::LunarNodeType::Mean } else { mirabile_app::LunarNodeType::True }; dispatch_derived_calculation(dispatcher, value); }><option value="mean">"Mean"</option><option value="true">"True"</option></select></label>
+        <label>"Black Moon"<select prop:value=match calculation.black_moon { mirabile_app::BlackMoonType::Mean=>"mean", mirabile_app::BlackMoonType::Osculating=>"osculating" } data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("calculation-black-moon") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut value=black_moon_base.clone(); value.black_moon=if event_target_value(&event)=="osculating" { mirabile_app::BlackMoonType::Osculating } else { mirabile_app::BlackMoonType::Mean }; dispatch_derived_calculation(dispatcher, value); }><option value="mean">"Mean"</option><option value="osculating">"Osculating"</option></select></label>
+        <label>"Fortune formula"<select prop:value=match calculation.fortune_formula { mirabile_app::FortuneFormula::DayNight=>"day-night", mirabile_app::FortuneFormula::AlwaysAscendantPlusMoonMinusSun=>"always" } data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address("calculation-fortune") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut value=fortune_base.clone(); value.fortune_formula=if event_target_value(&event)=="always" { mirabile_app::FortuneFormula::AlwaysAscendantPlusMoonMinusSun } else { mirabile_app::FortuneFormula::DayNight }; dispatch_derived_calculation(dispatcher, value); }><option value="day-night">"Day/night"</option><option value="always">"Always Asc + Moon - Sun"</option></select></label>
+        {[("aberration", calculation.corrections.aberration), ("light-time", calculation.corrections.light_time), ("nutation", calculation.corrections.nutation)].into_iter().map(|(field, checked)| { let base=calculation.clone(); view! { <label class="checkbox-field"><input type="checkbox" prop:checked=checked data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=recipe_address(match field { "aberration"=>"calculation-aberration", "light-time"=>"calculation-light-time", _=>"calculation-nutation" }) data-mirabile-kind=ControlKind::Checkbox.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut value=base.clone(); match field { "aberration"=>value.corrections.aberration=event_target_checked(&event), "light-time"=>value.corrections.light_time=event_target_checked(&event), _=>value.corrections.nutation=event_target_checked(&event) } dispatch_derived_calculation(dispatcher, value); } />{field}</label> } }).collect_view()}
+    </fieldset> }
+}
+
+fn dispatch_derived_calculation(
+    dispatcher: WorkbenchCoordinator,
+    calculation: mirabile_app::CalculationSpec,
+) {
+    dispatch_payload(
+        dispatcher,
+        ResourceMutation::ChartDefinition(ChartDefinitionMutation::SetCalculation(calculation)),
+    );
+}
 
 #[component]
 fn PayloadEditor(
@@ -670,6 +893,8 @@ fn PayloadEditor(
     value: mirabile_app::ResourceDraftValueReadModel,
     nested: mirabile_app::NestedResourceDraftReadModel,
     point_options: Vec<mirabile_app::AuthoringOption<mirabile_app::PointId>>,
+    derived_recipe_options: Vec<mirabile_app::AuthoringOption<mirabile_app::DerivedRecipeKind>>,
+    chart_references: Vec<mirabile_app::ResourceSummaryReadModel>,
     dispatcher: WorkbenchCoordinator,
 ) -> impl IntoView {
     use mirabile_app::ResourceDraftValueReadModel as Value;
@@ -677,10 +902,10 @@ fn PayloadEditor(
     match value {
         Value::ChartDefinition(definition) => {
             let source_kind=match &definition.source { mirabile_app::ChartSource::Radix { .. } => "radix", mirabile_app::ChartSource::Derived { recipe: mirabile_app::DerivationSpec::Transit { .. } } => "transit", mirabile_app::ChartSource::Derived { recipe: mirabile_app::DerivationSpec::Harmonic { .. } } => "harmonic", mirabile_app::ChartSource::Derived { recipe: mirabile_app::DerivationSpec::Relocation { .. } } => "relocation", mirabile_app::ChartSource::Derived { recipe: mirabile_app::DerivationSpec::Composite { .. } } => "composite" };
-            let fallback=recipe_reference(&definition).unwrap_or_default();
             view! { <fieldset class="payload-fields"><legend>"Persisted derived recipe"</legend>
-                <label>"Recipe type"<select prop:value=source_kind data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=qualified_resource_address(ControlId::RESOURCE_RECIPE_FIELD, kind, "field", "type") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let source=match event_target_value(&event).as_str() { "transit" => mirabile_app::ChartSource::Derived { recipe: default_transit_recipe() }, "relocation" => mirabile_app::ChartSource::Derived { recipe: mirabile_app::DerivationSpec::Relocation { radix: fallback, location: default_recipe_location() } }, "composite" => mirabile_app::ChartSource::Derived { recipe: mirabile_app::DerivationSpec::Composite { charts: vec![fallback, mirabile_app::ResourceId::new()], method: mirabile_app::CompositeMethod::Midpoint } }, _ => mirabile_app::ChartSource::Derived { recipe: mirabile_app::DerivationSpec::Harmonic { radix: fallback, harmonic: 2.0 } } }; dispatch_payload(dispatcher, ResourceMutation::ChartDefinition(ChartDefinitionMutation::SetSource(source))); }><option value="transit">"Transit"</option><option value="harmonic">"Harmonic"</option><option value="relocation">"Relocation"</option><option value="composite">"Composite"</option></select></label>
-                {if let mirabile_app::ChartSource::Derived { recipe }=definition.source { let composite_rows=match nested { mirabile_app::NestedResourceDraftReadModel::ChartDefinition { composite_charts } => composite_charts, _ => Vec::new() }; view! { <DerivedRecipeFields recipe composite_rows dispatcher /> }.into_any() } else { view! { <small>"Radix charts are edited through the atomic chart editor."</small> }.into_any() }}
+                <label>"Recipe type"<select prop:value=source_kind data-mirabile-control=ControlId::RESOURCE_RECIPE_FIELD.to_string() data-mirabile-address=qualified_resource_address(ControlId::RESOURCE_RECIPE_FIELD, kind, "field", "type") data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| { let kind=match event_target_value(&event).as_str() { "transit" => mirabile_app::DerivedRecipeKind::Transit, "relocation" => mirabile_app::DerivedRecipeKind::Relocation, "composite" => mirabile_app::DerivedRecipeKind::Composite, _ => mirabile_app::DerivedRecipeKind::Harmonic }; dispatch_payload(dispatcher, ResourceMutation::ChartDefinition(ChartDefinitionMutation::SwitchDerivedRecipe(kind))); }>{derived_recipe_options.into_iter().map(|option| { let value=match option.value { mirabile_app::DerivedRecipeKind::Transit=>"transit", mirabile_app::DerivedRecipeKind::Harmonic=>"harmonic", mirabile_app::DerivedRecipeKind::Relocation=>"relocation", mirabile_app::DerivedRecipeKind::Composite=>"composite" }; view! { <option value=value disabled=!option.enabled title=option.disabled_reason>{option.label}</option> } }).collect_view()}</select></label>
+                {if let mirabile_app::ChartSource::Derived { recipe }=definition.source { let composite_rows=match nested { mirabile_app::NestedResourceDraftReadModel::ChartDefinition { composite_charts } => composite_charts, _ => Vec::new() }; view! { <DerivedRecipeFields recipe composite_rows chart_references dispatcher /> }.into_any() } else { view! { <small>"Radix charts are edited through the atomic chart editor."</small> }.into_any() }}
+                <DerivedCalculationFields calculation=definition.calculation dispatcher />
                 <small>"Derived recipes are persisted-only and are not executable."</small>
             </fieldset> }.into_any()
         }
@@ -706,6 +931,7 @@ fn PayloadEditor(
             let applying = profile.clone();
             let patterns = profile.clone();
             let maximum = profile.clone();
+            let maximum_authoritative = profile.maximum_hits.map(|value| value.to_string()).unwrap_or_default();
             view! {
                 <fieldset class="payload-fields"><legend>"Analysis options"</legend>
                     <label class="checkbox-field"><input type="checkbox" prop:checked=profile.include_applying_state
@@ -718,11 +944,10 @@ fn PayloadEditor(
                         data-mirabile-address=resource_address(ControlId::RESOURCE_ANALYSIS_PATTERNS, kind, None)
                         data-mirabile-kind=ControlKind::Toggle.as_str() data-mirabile-enabled="true"
                         on:change=move |event| { let mut next=patterns.clone(); next.include_patterns=event_target_checked(&event); dispatch_payload(dispatcher, ResourceMutation::AnalysisProfile(AnalysisProfileMutation::SetProfile(next))); } />"Include patterns"</label>
-                    <label>"Maximum hits (blank means unlimited)"<input type="number" min="1" prop:value=profile.maximum_hits.map(|value| value.to_string()).unwrap_or_default()
-                        data-mirabile-control=ControlId::RESOURCE_ANALYSIS_MAXIMUM_HITS.to_string()
-                        data-mirabile-address=resource_address(ControlId::RESOURCE_ANALYSIS_MAXIMUM_HITS, kind, None)
-                        data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true"
-                        on:change=move |event| { let mut next=maximum.clone(); let raw=event_target_value(&event); next.maximum_hits=if raw.trim().is_empty() { None } else { raw.parse().ok() }; dispatch_payload(dispatcher, ResourceMutation::AnalysisProfile(AnalysisProfileMutation::SetProfile(next))); } /></label>
+                    <ValidatedField address=resource_address(ControlId::RESOURCE_ANALYSIS_MAXIMUM_HITS, kind, None) label="Maximum hits (blank means unlimited)".to_owned() kind=BufferedInputKind::Number
+                        authoritative=Signal::derive(move || maximum_authoritative.clone()) disabled=Signal::derive(|| false)
+                        parser=Callback::new(|text: String| if text.trim().is_empty() { Ok(String::new()) } else { text.parse::<u32>().ok().filter(|value| *value > 0).map(|value| value.to_string()).ok_or_else(|| "Enter a positive whole number or leave blank".to_owned()) })
+                        on_commit=Callback::new(move |text: String| { let mut next=maximum.clone(); next.maximum_hits=if text.is_empty() { None } else { text.parse().ok() }; dispatch_payload(dispatcher, ResourceMutation::AnalysisProfile(AnalysisProfileMutation::SetProfile(next))); }) />
                 </fieldset>
             }.into_any()
         }
@@ -756,17 +981,17 @@ fn PayloadEditor(
                 ("Show retrograde", "label-retrograde", template.labels.show_retrograde),
             ];
             let radius=template.clone();
+            let radius_authoritative=template.aspect_field.radius.to_string();
             view! { <fieldset class="payload-fields"><legend>"Wheel geometry and display"</legend>
                 {fields.into_iter().map(|(label, field, checked)| { let base=template.clone(); view! { <label class="checkbox-field"><input type="checkbox" prop:checked=checked
                     data-mirabile-control=ControlId::RESOURCE_WHEEL_FIELD.to_string()
                     data-mirabile-address=qualified_resource_address(ControlId::RESOURCE_WHEEL_FIELD, kind, "field", field)
                     data-mirabile-kind=ControlKind::Toggle.as_str() data-mirabile-enabled="true"
                     on:change=move |event| { let mut next=base.clone(); let value=event_target_checked(&event); match field { "house-cusps" => next.houses.show_cusps=value, "house-numbers" => next.houses.show_numbers=value, "zodiac-boundaries" => next.zodiac.show_boundaries=value, "zodiac-labels" => next.zodiac.show_labels=value, "label-degrees" => next.labels.show_degrees=value, _ => next.labels.show_retrograde=value } dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::SetTemplateFields(next))); } />{label}</label> } }).collect_view()}
-                <label>"Aspect field radius"<input type="number" min="0.01" step="0.01" prop:value=template.aspect_field.radius
-                    data-mirabile-control=ControlId::RESOURCE_WHEEL_FIELD.to_string()
-                    data-mirabile-address=qualified_resource_address(ControlId::RESOURCE_WHEEL_FIELD, kind, "field", "aspect-radius")
-                    data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true"
-                    on:change=move |event| if let Ok(value)=event_target_value(&event).parse() { let mut next=radius.clone(); next.aspect_field.radius=value; dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::SetTemplateFields(next))); } /></label>
+                <ValidatedField address=qualified_resource_address(ControlId::RESOURCE_WHEEL_FIELD, kind, "field", "aspect-radius") label="Aspect field radius".to_owned() kind=BufferedInputKind::Number
+                    authoritative=Signal::derive(move || radius_authoritative.clone()) disabled=Signal::derive(|| false)
+                    parser=Callback::new(|text: String| text.parse::<f64>().ok().filter(|value| value.is_finite()).map(|value| value.to_string()).ok_or_else(|| "Enter a finite radius".to_owned()))
+                    on_commit=Callback::new(move |text: String| if let Ok(value)=text.parse() { let mut next=radius.clone(); next.aspect_field.radius=value; dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::SetTemplateFields(next))); }) />
                 <small>{format!("{} stable ring row(s)", template.rings.len())}</small>
                 <WheelRingBuilder rows=ring_rows dispatcher />
             </fieldset> }.into_any()
@@ -775,19 +1000,19 @@ fn PayloadEditor(
             let (slot_rows, object_rows)=match &nested { mirabile_app::NestedResourceDraftReadModel::ViewDocument { chart_slots, objects } => (chart_slots.clone(), objects.clone()), _ => (Vec::new(), Vec::new()) };
             let width = document.layout.clone();
             let height = document.layout.clone();
+            let width_authoritative=document.layout.width.to_string();
+            let height_authoritative=document.layout.height.to_string();
             view! { <fieldset class="payload-fields"><legend>"Page layout"</legend>
-                <label>"Width"<input type="number" min="1" step="1" prop:value=document.layout.width
-                    data-mirabile-control=ControlId::RESOURCE_VIEW_WIDTH.to_string()
-                    data-mirabile-address=resource_address(ControlId::RESOURCE_VIEW_WIDTH, kind, None)
-                    data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true"
-                    on:change=move |event| if let Ok(value)=event_target_value(&event).parse() { let mut next=width.clone(); next.width=value; dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::SetLayout(next))); } /></label>
-                <label>"Height"<input type="number" min="1" step="1" prop:value=document.layout.height
-                    data-mirabile-control=ControlId::RESOURCE_VIEW_HEIGHT.to_string()
-                    data-mirabile-address=resource_address(ControlId::RESOURCE_VIEW_HEIGHT, kind, None)
-                    data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true"
-                    on:change=move |event| if let Ok(value)=event_target_value(&event).parse() { let mut next=height.clone(); next.height=value; dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::SetLayout(next))); } /></label>
+                <ValidatedField address=resource_address(ControlId::RESOURCE_VIEW_WIDTH, kind, None) label="Width".to_owned() kind=BufferedInputKind::Number
+                    authoritative=Signal::derive(move || width_authoritative.clone()) disabled=Signal::derive(|| false)
+                    parser=Callback::new(parse_finite_number)
+                    on_commit=Callback::new(move |text: String| if let Ok(value)=text.parse() { let mut next=width.clone(); next.width=value; dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::SetLayout(next))); }) />
+                <ValidatedField address=resource_address(ControlId::RESOURCE_VIEW_HEIGHT, kind, None) label="Height".to_owned() kind=BufferedInputKind::Number
+                    authoritative=Signal::derive(move || height_authoritative.clone()) disabled=Signal::derive(|| false)
+                    parser=Callback::new(parse_finite_number)
+                    on_commit=Callback::new(move |text: String| if let Ok(value)=text.parse() { let mut next=height.clone(); next.height=value; dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::SetLayout(next))); }) />
                 <small>{format!("{} slot(s); {} dormant or rendered object(s)", document.chart_slots.len(), document.objects.len())}</small>
-                <ViewSlotBuilder rows=slot_rows objects=object_rows dispatcher />
+                <ViewSlotBuilder rows=slot_rows objects=object_rows point_options dispatcher />
             </fieldset> }.into_any()
         }
         Value::QueryDefinition(query) => {
@@ -851,14 +1076,20 @@ fn WheelRingBuilder(
     dispatcher: WorkbenchCoordinator,
 ) -> impl IntoView {
     view! { <div class="nested-builder"><h4>"Stable ring rows"</h4>
-        {rows.into_iter().map(|row| { let item_id=row.item_id; let slot_base=row.value.clone(); let role_base=row.value.clone(); let inner_base=row.value.clone(); let outer_base=row.value.clone(); let remove=dispatcher; let mover=dispatcher;
+        {rows.into_iter().map(|row| { let item_id=row.item_id; let slot_base=row.value.clone(); let role_base=row.value.clone(); let inner_base=row.value.clone(); let outer_base=row.value.clone(); let remove=dispatcher; let mover=dispatcher; let slot_authoritative=row.value.chart_slot.to_string(); let inner_authoritative=row.value.geometry.inner_radius.to_string(); let outer_authoritative=row.value.geometry.outer_radius.to_string();
             view! { <div class="builder-row ring-row">
-                <label>"Slot"<input type="text" prop:value=row.value.chart_slot.to_string() data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "wheeltemplate", "rings", item_id, Some("slot")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true"
-                    on:change=move |event| if let Ok(value)=mirabile_app::ChartSlotId::new(event_target_value(&event)) { let mut next=slot_base.clone(); next.chart_slot=value; dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::Rings(mirabile_app::DraftListMutation::Update { item_id, value: next }))); } /></label>
+                <ValidatedField address=list_address(ControlId::RESOURCE_LIST_FIELD, "wheeltemplate", "rings", item_id, Some("slot")) label="Slot".to_owned() kind=BufferedInputKind::Text
+                    authoritative=Signal::derive(move || slot_authoritative.clone()) disabled=Signal::derive(|| false)
+                    parser=Callback::new(|text: String| mirabile_app::ChartSlotId::new(text).map(|value| value.to_string()).map_err(|error| error.to_string()))
+                    on_commit=Callback::new(move |text: String| if let Ok(value)=mirabile_app::ChartSlotId::new(text) { let mut next=slot_base.clone(); next.chart_slot=value; dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::Rings(mirabile_app::DraftListMutation::Update { item_id, value: next }))); }) />
                 <label>"Role"<select prop:value=format!("{:?}", row.value.point_role).to_lowercase() data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "wheeltemplate", "rings", item_id, Some("role")) data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true"
                     on:change=move |event| { let mut next=role_base.clone(); next.point_role=match event_target_value(&event).as_str() { "transit" => mirabile_app::PointRole::Transit, "progressed" => mirabile_app::PointRole::Progressed, "comparison" => mirabile_app::PointRole::Comparison, _ => mirabile_app::PointRole::Primary }; dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::Rings(mirabile_app::DraftListMutation::Update { item_id, value: next }))); }><option value="primary">"Primary"</option><option value="transit">"Transit"</option><option value="progressed">"Progressed"</option><option value="comparison">"Comparison"</option></select></label>
-                <label>"Inner"<input type="number" step="0.01" prop:value=row.value.geometry.inner_radius data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "wheeltemplate", "rings", item_id, Some("inner-radius")) data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(value)=event_target_value(&event).parse() { let mut next=inner_base.clone(); next.geometry.inner_radius=value; dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::Rings(mirabile_app::DraftListMutation::Update { item_id, value: next }))); } /></label>
-                <label>"Outer"<input type="number" step="0.01" prop:value=row.value.geometry.outer_radius data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "wheeltemplate", "rings", item_id, Some("outer-radius")) data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(value)=event_target_value(&event).parse() { let mut next=outer_base.clone(); next.geometry.outer_radius=value; dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::Rings(mirabile_app::DraftListMutation::Update { item_id, value: next }))); } /></label>
+                <ValidatedField address=list_address(ControlId::RESOURCE_LIST_FIELD, "wheeltemplate", "rings", item_id, Some("inner-radius")) label="Inner".to_owned() kind=BufferedInputKind::Number
+                    authoritative=Signal::derive(move || inner_authoritative.clone()) disabled=Signal::derive(|| false) parser=Callback::new(parse_finite_number)
+                    on_commit=Callback::new(move |text: String| if let Ok(value)=text.parse() { let mut next=inner_base.clone(); next.geometry.inner_radius=value; dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::Rings(mirabile_app::DraftListMutation::Update { item_id, value: next }))); }) />
+                <ValidatedField address=list_address(ControlId::RESOURCE_LIST_FIELD, "wheeltemplate", "rings", item_id, Some("outer-radius")) label="Outer".to_owned() kind=BufferedInputKind::Number
+                    authoritative=Signal::derive(move || outer_authoritative.clone()) disabled=Signal::derive(|| false) parser=Callback::new(parse_finite_number)
+                    on_commit=Callback::new(move |text: String| if let Ok(value)=text.parse() { let mut next=outer_base.clone(); next.geometry.outer_radius=value; dispatch_payload(dispatcher, ResourceMutation::WheelTemplate(WheelTemplateMutation::Rings(mirabile_app::DraftListMutation::Update { item_id, value: next }))); }) />
                 <button type="button" class="button secondary" data-mirabile-control=ControlId::RESOURCE_LIST_MOVE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_MOVE, "wheeltemplate", "rings", item_id, Some("end")) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| mover.dispatch(AppIntent::ApplyResourceMutation(Box::new(ResourceMutation::WheelTemplate(WheelTemplateMutation::Rings(mirabile_app::DraftListMutation::Move { item_id, before: None })))))>"Move to end"</button>
                 <button type="button" class="button danger" data-mirabile-control=ControlId::RESOURCE_LIST_REMOVE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_REMOVE, "wheeltemplate", "rings", item_id, None) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| remove.dispatch(AppIntent::ApplyResourceMutation(Box::new(ResourceMutation::WheelTemplate(WheelTemplateMutation::Rings(mirabile_app::DraftListMutation::Remove { item_id })))))>"Remove"</button>
             </div> }
@@ -871,7 +1102,8 @@ fn WheelRingBuilder(
 #[component]
 fn ViewSlotBuilder(
     rows: Vec<mirabile_app::StableDraftItemReadModel<mirabile_app::ChartSlot>>,
-    objects: Vec<mirabile_app::StableDraftItemReadModel<mirabile_app::ViewObject>>,
+    objects: Vec<mirabile_app::ViewObjectDraftReadModel>,
+    point_options: Vec<mirabile_app::AuthoringOption<mirabile_app::PointId>>,
     dispatcher: WorkbenchCoordinator,
 ) -> impl IntoView {
     let first_slot = rows.first().map_or_else(
@@ -879,16 +1111,19 @@ fn ViewSlotBuilder(
         |row| row.value.id.clone(),
     );
     view! { <div class="nested-builder"><h4>"Chart slots and View Objects"</h4>
-        {rows.into_iter().map(|row| { let item_id=row.item_id; let id_base=row.value.clone(); let label_base=row.value.clone(); let required_base=row.value.clone(); let remove=dispatcher;
+        {rows.into_iter().map(|row| { let item_id=row.item_id; let id_base=row.value.clone(); let label_base=row.value.clone(); let required_base=row.value.clone(); let remove=dispatcher; let id_authoritative=row.value.id.to_string();
             view! { <div class="builder-row">
-                <label>"ID"<input type="text" prop:value=row.value.id.to_string() data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "chart-slots", item_id, Some("id")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(id)=mirabile_app::ChartSlotId::new(event_target_value(&event)) { let mut slot=id_base.clone(); slot.id=id; dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::RenameChartSlot { item_id, slot })); } /></label>
+                <ValidatedField address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "chart-slots", item_id, Some("id")) label="ID".to_owned() kind=BufferedInputKind::Text
+                    authoritative=Signal::derive(move || id_authoritative.clone()) disabled=Signal::derive(|| false)
+                    parser=Callback::new(|text: String| mirabile_app::ChartSlotId::new(text).map(|value| value.to_string()).map_err(|error| error.to_string()))
+                    on_commit=Callback::new(move |text: String| if let Ok(id)=mirabile_app::ChartSlotId::new(text) { let mut slot=id_base.clone(); slot.id=id; dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::RenameChartSlot { item_id, slot })); }) />
                 <label>"Label"<input type="text" prop:value=row.value.label data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "chart-slots", item_id, Some("label")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut value=label_base.clone(); value.label=event_target_value(&event); dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::ChartSlots(mirabile_app::DraftListMutation::Update { item_id, value }))); } /></label>
                 <label class="checkbox-field"><input type="checkbox" prop:checked=row.value.required data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "chart-slots", item_id, Some("required")) data-mirabile-kind=ControlKind::Checkbox.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut value=required_base.clone(); value.required=event_target_checked(&event); dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::ChartSlots(mirabile_app::DraftListMutation::Update { item_id, value }))); } />"Required"</label>
                 <button type="button" class="button danger" data-mirabile-control=ControlId::RESOURCE_LIST_REMOVE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_REMOVE, "viewdocument", "chart-slots", item_id, None) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| remove.dispatch(AppIntent::ApplyResourceMutation(Box::new(ResourceMutation::ViewDocument(ViewDocumentMutation::ChartSlots(mirabile_app::DraftListMutation::Remove { item_id })))))>"Remove slot"</button>
             </div> }
         }).collect_view()}
-        <button type="button" class="button secondary" data-mirabile-control=ControlId::RESOURCE_LIST_INSERT.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::RESOURCE_LIST_INSERT, [("kind", "viewdocument"), ("collection", "chart-slots")]).expect("slot address").to_string() data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| dispatcher.dispatch(AppIntent::ApplyResourceMutation(Box::new(ResourceMutation::ViewDocument(ViewDocumentMutation::ChartSlots(mirabile_app::DraftListMutation::Insert { after: None, value: mirabile_app::ChartSlot { id: mirabile_app::ChartSlotId::new("new-slot").expect("slot"), label: "New slot".into(), required: false } })))))>"Add slot"</button>
-        {objects.into_iter().map(|row| view! { <ViewObjectEditor row dispatcher /> }).collect_view()}
+        <button type="button" class="button secondary" data-mirabile-control=ControlId::RESOURCE_LIST_INSERT.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::RESOURCE_LIST_INSERT, [("kind", "viewdocument"), ("collection", "chart-slots")]).expect("slot address").to_string() data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| dispatcher.dispatch(AppIntent::ApplyResourceMutation(Box::new(ResourceMutation::ViewDocument(ViewDocumentMutation::InsertChartSlotDefault { after: None }))))>"Add slot"</button>
+        {objects.into_iter().map(|row| view! { <ViewObjectEditor row point_options=point_options.clone() dispatcher /> }).collect_view()}
         <label>"Add View Object"<select data-mirabile-control=ControlId::RESOURCE_LIST_INSERT.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::RESOURCE_LIST_INSERT, [("kind", "viewdocument"), ("collection", "objects")]).expect("object address").to_string() data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| {
             let frame=mirabile_app::ObjectFrame { x: 0.0, y: 0.0, width: 400.0, height: 400.0 };
             let value=match event_target_value(&event).as_str() {
@@ -906,7 +1141,8 @@ fn ViewSlotBuilder(
 
 #[component]
 fn ViewObjectEditor(
-    row: mirabile_app::StableDraftItemReadModel<mirabile_app::ViewObject>,
+    row: mirabile_app::ViewObjectDraftReadModel,
+    point_options: Vec<mirabile_app::AuthoringOption<mirabile_app::PointId>>,
     dispatcher: WorkbenchCoordinator,
 ) -> impl IntoView {
     let item_id = row.item_id;
@@ -917,8 +1153,12 @@ fn ViewObjectEditor(
             let next=view_object_with_kind(&event_target_value(&event), &variant_base);
             dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: next })));
         }><option value="wheel">"Wheel"</option><option value="aspect-grid">"Aspect grid"</option><option value="chart-details">"Chart details"</option><option value="point-table">"Point table"</option><option value="aspect-table">"Aspect table"</option><option value="text">"Text"</option></select></label>
-        {[("x", frame.x), ("y", frame.y), ("width", frame.width), ("height", frame.height)].into_iter().map(|(field, current)| { let base=row.value.clone(); view! { <label>{field}<input type="number" step="1" prop:value=current data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some(field)) data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(value)=event_target_value(&event).parse() { let mut object=base.clone(); let frame=view_object_frame_mut(&mut object); match field { "x" => frame.x=value, "y" => frame.y=value, "width" => frame.width=value, _ => frame.height=value } dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: object }))); } /></label> } }).collect_view()}
-        <ViewObjectFields value=row.value.clone() item_id dispatcher />
+        {[("x", frame.x), ("y", frame.y), ("width", frame.width), ("height", frame.height)].into_iter().map(|(field, current)| { let base=row.value.clone(); let authoritative=current.to_string(); view! {
+            <ValidatedField address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some(field)) label=field.to_owned() kind=BufferedInputKind::Number
+                authoritative=Signal::derive(move || authoritative.clone()) disabled=Signal::derive(|| false) parser=Callback::new(parse_finite_number)
+                on_commit=Callback::new(move |text: String| if let Ok(value)=text.parse() { let mut object=base.clone(); let frame=view_object_frame_mut(&mut object); match field { "x" => frame.x=value, "y" => frame.y=value, "width" => frame.width=value, _ => frame.height=value } dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: object }))); }) />
+        } }).collect_view()}
+        <ViewObjectFields value=row.value.clone() point_rows=row.point_table_points item_id point_options dispatcher />
         <button type="button" class="button secondary" data-mirabile-control=ControlId::RESOURCE_LIST_MOVE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_MOVE, "viewdocument", "objects", item_id, Some("end")) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Move { item_id, before: None })))>"Move to end"</button>
         <button type="button" class="button danger" data-mirabile-control=ControlId::RESOURCE_LIST_REMOVE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_REMOVE, "viewdocument", "objects", item_id, None) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| dispatcher.dispatch(AppIntent::ApplyResourceMutation(Box::new(ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Remove { item_id })))))>"Remove object"</button>
     </div> }
@@ -927,7 +1167,9 @@ fn ViewObjectEditor(
 #[component]
 fn ViewObjectFields(
     value: mirabile_app::ViewObject,
+    point_rows: Vec<mirabile_app::StableDraftItemReadModel<mirabile_app::PointId>>,
     item_id: mirabile_app::DraftItemId,
+    point_options: Vec<mirabile_app::AuthoringOption<mirabile_app::PointId>>,
     dispatcher: WorkbenchCoordinator,
 ) -> impl IntoView {
     let slot_value = value.clone();
@@ -939,8 +1181,44 @@ fn ViewObjectFields(
         _ => None,
     };
     view! { <div class="object-fields">
-        {slot.map(|slot| view! { <label>"Chart slot"<input type="text" prop:value=slot.to_string() data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some("slot")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(slot)=mirabile_app::ChartSlotId::new(event_target_value(&event)) { let mut next=slot_value.clone(); set_view_object_slot(&mut next, slot); dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: next }))); } /></label> })}
-        {if let mirabile_app::ViewObject::AspectGrid(grid)=value.clone() { let lhs_base=value.clone(); let rhs_base=value.clone(); view! { <><label>"LHS slot"<input type="text" prop:value=grid.lhs.to_string() data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some("lhs")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(slot)=mirabile_app::ChartSlotId::new(event_target_value(&event)) { let mut next=lhs_base.clone(); if let mirabile_app::ViewObject::AspectGrid(v)=&mut next { v.lhs=slot; } dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: next }))); } /></label><label>"RHS slot (blank for same chart)"<input type="text" prop:value=grid.rhs.map(|v| v.to_string()).unwrap_or_default() data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some("rhs")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let raw=event_target_value(&event); let rhs=if raw.trim().is_empty() { Some(None) } else { mirabile_app::ChartSlotId::new(raw).ok().map(Some) }; if let Some(rhs)=rhs { let mut next=rhs_base.clone(); if let mirabile_app::ViewObject::AspectGrid(v)=&mut next { v.rhs=rhs; } dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: next }))); } } /></label></> }.into_any() } else if let mirabile_app::ViewObject::PointTable(table)=value.clone() { let base=value.clone(); let points_text=table.points.iter().map(ToString::to_string).collect::<Vec<_>>().join(","); view! { <label>"Points (comma separated IDs)"<input type="text" prop:value=points_text data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some("points")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let points=event_target_value(&event).split(',').filter_map(|raw| mirabile_app::PointId::new(raw.trim()).ok()).collect(); let mut next=base.clone(); if let mirabile_app::ViewObject::PointTable(v)=&mut next { v.points=points; } dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: next }))); } /></label> }.into_any() } else if let mirabile_app::ViewObject::Text(text)=value.clone() { let base=value.clone(); view! { <label>"Text"<textarea prop:value=text.text data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some("text")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut next=base.clone(); if let mirabile_app::ViewObject::Text(v)=&mut next { v.text=event_target_value(&event); } dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: next }))); } /></label> }.into_any() } else { view! { <small>{format!("Slots: {}", view_object_slots(&value))}</small> }.into_any() }}
+        {slot.map(|slot| { let authoritative=slot.to_string(); view! {
+            <ValidatedField address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some("slot")) label="Chart slot".to_owned() kind=BufferedInputKind::Text
+                authoritative=Signal::derive(move || authoritative.clone()) disabled=Signal::derive(|| false)
+                parser=Callback::new(parse_chart_slot)
+                on_commit=Callback::new(move |text: String| if let Ok(slot)=mirabile_app::ChartSlotId::new(text) { let mut next=slot_value.clone(); set_view_object_slot(&mut next, slot); dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: next }))); }) />
+        } })}
+        {if let mirabile_app::ViewObject::AspectGrid(grid)=value.clone() { let lhs_base=value.clone(); let rhs_base=value.clone(); let lhs_authoritative=grid.lhs.to_string(); let rhs_authoritative=grid.rhs.map(|v| v.to_string()).unwrap_or_default(); view! { <>
+            <ValidatedField address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some("lhs")) label="LHS slot".to_owned() kind=BufferedInputKind::Text
+                authoritative=Signal::derive(move || lhs_authoritative.clone()) disabled=Signal::derive(|| false) parser=Callback::new(parse_chart_slot)
+                on_commit=Callback::new(move |text: String| if let Ok(slot)=mirabile_app::ChartSlotId::new(text) { let mut next=lhs_base.clone(); if let mirabile_app::ViewObject::AspectGrid(v)=&mut next { v.lhs=slot; } dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: next }))); }) />
+            <ValidatedField address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some("rhs")) label="RHS slot (blank for same chart)".to_owned() kind=BufferedInputKind::Text
+                authoritative=Signal::derive(move || rhs_authoritative.clone()) disabled=Signal::derive(|| false)
+                parser=Callback::new(|text: String| if text.trim().is_empty() { Ok(String::new()) } else { parse_chart_slot(text) })
+                on_commit=Callback::new(move |text: String| { let rhs=if text.is_empty() { None } else { mirabile_app::ChartSlotId::new(text).ok() }; let mut next=rhs_base.clone(); if let mirabile_app::ViewObject::AspectGrid(v)=&mut next { v.rhs=rhs; } dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: next }))); }) />
+        </> }.into_any() } else if matches!(value, mirabile_app::ViewObject::PointTable(_)) { view! { <PointTablePointBuilder object_id=item_id rows=point_rows options=point_options dispatcher /> }.into_any() } else if let mirabile_app::ViewObject::Text(text)=value.clone() { let base=value.clone(); view! { <label>"Text"<textarea prop:value=text.text data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", "objects", item_id, Some("text")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| { let mut next=base.clone(); if let mirabile_app::ViewObject::Text(v)=&mut next { v.text=event_target_value(&event); } dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::Objects(mirabile_app::DraftListMutation::Update { item_id, value: next }))); } /></label> }.into_any() } else { view! { <small>{format!("Slots: {}", view_object_slots(&value))}</small> }.into_any() }}
+    </div> }
+}
+
+#[component]
+fn PointTablePointBuilder(
+    object_id: mirabile_app::DraftItemId,
+    rows: Vec<mirabile_app::StableDraftItemReadModel<mirabile_app::PointId>>,
+    options: Vec<mirabile_app::AuthoringOption<mirabile_app::PointId>>,
+    dispatcher: WorkbenchCoordinator,
+) -> impl IntoView {
+    let collection = "point-table-points";
+    let first = options
+        .iter()
+        .find(|option| option.enabled)
+        .map(|option| option.value.clone());
+    let last = rows.last().map(|row| row.item_id);
+    view! { <div class="nested-builder point-table-points"><h5>"PointTable points"</h5>
+        {rows.into_iter().map(|row| { let item_id=row.item_id; let row_options=options.clone(); view! { <div class="builder-row">
+            <label>"Point"<select prop:value=row.value.to_string() data-mirabile-control=ControlId::RESOURCE_LIST_FIELD.to_string() data-mirabile-address=nested_resource_list_address(ControlId::RESOURCE_LIST_FIELD, "viewdocument", collection, object_id, item_id, Some("point")) data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(value)=mirabile_app::PointId::new(event_target_value(&event)) { dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::PointTablePoints { object_id, mutation:mirabile_app::DraftListMutation::Update { item_id, value } })); }>{row_options.into_iter().map(|option| view! { <option value=option.value.to_string() disabled=!option.enabled>{option.label}</option> }).collect_view()}</select></label>
+            <button type="button" class="button secondary" data-mirabile-control=ControlId::RESOURCE_LIST_MOVE.to_string() data-mirabile-address=nested_resource_list_address(ControlId::RESOURCE_LIST_MOVE, "viewdocument", collection, object_id, item_id, Some("end")) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::PointTablePoints { object_id, mutation:mirabile_app::DraftListMutation::Move { item_id, before:None } }))>"Move to end"</button>
+            <button type="button" class="button danger" data-mirabile-control=ControlId::RESOURCE_LIST_REMOVE.to_string() data-mirabile-address=nested_resource_list_address(ControlId::RESOURCE_LIST_REMOVE, "viewdocument", collection, object_id, item_id, None) data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled="true" on:click=move |_| dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::PointTablePoints { object_id, mutation:mirabile_app::DraftListMutation::Remove { item_id } }))>"Remove point"</button>
+        </div> } }).collect_view()}
+        <button type="button" class="button secondary" disabled=first.is_none() data-mirabile-control=ControlId::RESOURCE_LIST_INSERT.to_string() data-mirabile-address=ControlAddress::qualified(ControlId::RESOURCE_LIST_INSERT, [("kind", "viewdocument".to_owned()), ("collection", collection.to_owned()), ("object", object_id.to_string())]).expect("point-table point address").to_string() data-mirabile-kind=ControlKind::Action.as_str() data-mirabile-enabled=first.is_some().to_string() data-mirabile-disabled-reason=first.is_none().then_some("No supported point is available") on:click=move |_| if let Some(value)=first.clone() { dispatch_payload(dispatcher, ResourceMutation::ViewDocument(ViewDocumentMutation::PointTablePoints { object_id, mutation:mirabile_app::DraftListMutation::Insert { after:last, value } })); }>"Add point"</button>
     </div> }
 }
 
@@ -1153,7 +1431,13 @@ fn QueryPredicateFields(
             sign_index,
         }) => {
             let point_base = point.clone();
-            view! { <div class="query-fields"><label>"Point"<input type="text" prop:value=point.to_string() data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("point")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(point)=mirabile_app::PointId::new(event_target_value(&event)) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::InSign { point, sign_index })); } /></label><label>"Sign"<select prop:value=sign_index.to_string() data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("sign")) data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(sign_index)=event_target_value(&event).parse() { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::InSign { point: point_base.clone(), sign_index })); }>{(0_u8..12).map(|index| view! { <option value=index.to_string()>{index+1}</option> }).collect_view()}</select></label></div> }.into_any()
+            let point_authoritative = point.to_string();
+            view! { <div class="query-fields">
+                <ValidatedField address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("point")) label="Point".to_owned() kind=BufferedInputKind::Text
+                    authoritative=Signal::derive(move || point_authoritative.clone()) disabled=Signal::derive(|| false) parser=Callback::new(parse_point_id)
+                    on_commit=Callback::new(move |text: String| if let Ok(point)=mirabile_app::PointId::new(text) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::InSign { point, sign_index })); }) />
+                <label>"Sign"<select prop:value=sign_index.to_string() data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("sign")) data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(sign_index)=event_target_value(&event).parse() { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::InSign { point: point_base.clone(), sign_index })); }>{(0_u8..12).map(|index| view! { <option value=index.to_string()>{index+1}</option> }).collect_view()}</select></label>
+            </div> }.into_any()
         }
         mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Aspect {
             lhs,
@@ -1173,7 +1457,27 @@ fn QueryPredicateFields(
             let orb_lhs = orb_override;
             let orb_rhs = orb_override;
             let orb_aspect = orb_override;
-            view! { <div class="query-fields"><label>"LHS point"<input type="text" prop:value=lhs.to_string() data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("lhs")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(lhs)=mirabile_app::PointId::new(event_target_value(&event)) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Aspect { lhs, rhs:rhs_for_lhs.clone(), aspect:aspect_for_lhs.clone(), orb_override:orb_lhs })); } /></label><label>"RHS point"<input type="text" prop:value=rhs.to_string() data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("rhs")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(rhs)=mirabile_app::PointId::new(event_target_value(&event)) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Aspect { lhs:lhs_for_rhs.clone(), rhs, aspect:aspect_for_rhs.clone(), orb_override:orb_rhs })); } /></label><label>"Aspect ID"<input type="text" prop:value=aspect.to_string() data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("aspect")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(aspect)=mirabile_app::AspectId::new(event_target_value(&event)) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Aspect { lhs:lhs_for_aspect.clone(), rhs:rhs_for_aspect.clone(), aspect, orb_override:orb_aspect })); } /></label><label>"Orb override (blank for default)"<input type="number" min="0" max="180" step="0.1" prop:value=orb_override.map(|v| v.degrees().to_string()).unwrap_or_default() data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("orb")) data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true" on:change=move |event| { let raw=event_target_value(&event); let orb_override=if raw.trim().is_empty() { Some(None) } else { raw.parse().ok().and_then(|degrees| mirabile_app::Angle::from_degrees(degrees).ok()).map(Some) }; if let Some(orb_override)=orb_override { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Aspect { lhs:lhs_for_orb.clone(), rhs:rhs_for_orb.clone(), aspect:aspect_for_orb.clone(), orb_override })); } } /></label></div> }.into_any()
+            let lhs_authoritative = lhs.to_string();
+            let rhs_authoritative = rhs.to_string();
+            let aspect_authoritative = aspect.to_string();
+            let orb_authoritative = orb_override
+                .map(|value| value.degrees().to_string())
+                .unwrap_or_default();
+            view! { <div class="query-fields">
+                <ValidatedField address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("lhs")) label="LHS point".to_owned() kind=BufferedInputKind::Text
+                    authoritative=Signal::derive(move || lhs_authoritative.clone()) disabled=Signal::derive(|| false) parser=Callback::new(parse_point_id)
+                    on_commit=Callback::new(move |text: String| if let Ok(lhs)=mirabile_app::PointId::new(text) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Aspect { lhs, rhs:rhs_for_lhs.clone(), aspect:aspect_for_lhs.clone(), orb_override:orb_lhs })); }) />
+                <ValidatedField address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("rhs")) label="RHS point".to_owned() kind=BufferedInputKind::Text
+                    authoritative=Signal::derive(move || rhs_authoritative.clone()) disabled=Signal::derive(|| false) parser=Callback::new(parse_point_id)
+                    on_commit=Callback::new(move |text: String| if let Ok(rhs)=mirabile_app::PointId::new(text) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Aspect { lhs:lhs_for_rhs.clone(), rhs, aspect:aspect_for_rhs.clone(), orb_override:orb_rhs })); }) />
+                <ValidatedField address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("aspect")) label="Aspect ID".to_owned() kind=BufferedInputKind::Text
+                    authoritative=Signal::derive(move || aspect_authoritative.clone()) disabled=Signal::derive(|| false)
+                    parser=Callback::new(|text: String| mirabile_app::AspectId::new(text).map(|value| value.to_string()).map_err(|error| error.to_string()))
+                    on_commit=Callback::new(move |text: String| if let Ok(aspect)=mirabile_app::AspectId::new(text) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Aspect { lhs:lhs_for_aspect.clone(), rhs:rhs_for_aspect.clone(), aspect, orb_override:orb_aspect })); }) />
+                <ValidatedField address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("orb")) label="Orb override (blank for default)".to_owned() kind=BufferedInputKind::Number
+                    authoritative=Signal::derive(move || orb_authoritative.clone()) disabled=Signal::derive(|| false) parser=Callback::new(parse_optional_angle)
+                    on_commit=Callback::new(move |text: String| { let orb_override=if text.is_empty() { None } else { text.parse().ok().and_then(|degrees| mirabile_app::Angle::from_degrees(degrees).ok()) }; replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Aspect { lhs:lhs_for_orb.clone(), rhs:rhs_for_orb.clone(), aspect:aspect_for_orb.clone(), orb_override })); }) />
+            </div> }.into_any()
         }
         mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Longitude {
             point,
@@ -1182,7 +1486,18 @@ fn QueryPredicateFields(
         }) => {
             let point_for_value = point.clone();
             let point_for_comparison = point.clone();
-            view! { <div class="query-fields"><label>"Point"<input type="text" prop:value=point.to_string() data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("point")) data-mirabile-kind=ControlKind::Text.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(point)=mirabile_app::PointId::new(event_target_value(&event)) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Longitude { point, comparison, value })); } /></label><label>"Comparison"<select prop:value=numeric_comparison_key(comparison) data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("comparison")) data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Longitude { point:point_for_comparison.clone(), comparison:parse_numeric_comparison(&event_target_value(&event)), value }))><option value="lt">"Less than"</option><option value="le">"Less than or equal"</option><option value="eq">"Equal"</option><option value="ge">"Greater than or equal"</option><option value="gt">"Greater than"</option></select></label><label>"Longitude"<input type="number" min="0" max="359.999" step="0.1" prop:value=value.degrees() data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("value")) data-mirabile-kind=ControlKind::Number.as_str() data-mirabile-enabled="true" on:change=move |event| if let Ok(degrees)=event_target_value(&event).parse() && let Ok(value)=mirabile_app::Angle::from_degrees(degrees) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Longitude { point:point_for_value.clone(), comparison, value })); } /></label></div> }.into_any()
+            let point_authoritative = point.to_string();
+            let value_authoritative = value.degrees().to_string();
+            view! { <div class="query-fields">
+                <ValidatedField address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("point")) label="Point".to_owned() kind=BufferedInputKind::Text
+                    authoritative=Signal::derive(move || point_authoritative.clone()) disabled=Signal::derive(|| false) parser=Callback::new(parse_point_id)
+                    on_commit=Callback::new(move |text: String| if let Ok(point)=mirabile_app::PointId::new(text) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Longitude { point, comparison, value })); }) />
+                <label>"Comparison"<select prop:value=numeric_comparison_key(comparison) data-mirabile-control=ControlId::RESOURCE_QUERY_NODE.to_string() data-mirabile-address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("comparison")) data-mirabile-kind=ControlKind::Select.as_str() data-mirabile-enabled="true" on:change=move |event| replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Longitude { point:point_for_comparison.clone(), comparison:parse_numeric_comparison(&event_target_value(&event)), value }))><option value="lt">"Less than"</option><option value="le">"Less than or equal"</option><option value="eq">"Equal"</option><option value="ge">"Greater than or equal"</option><option value="gt">"Greater than"</option></select></label>
+                <ValidatedField address=list_address(ControlId::RESOURCE_QUERY_NODE, "querydefinition", "tree", node_id, Some("value")) label="Longitude".to_owned() kind=BufferedInputKind::Number
+                    authoritative=Signal::derive(move || value_authoritative.clone()) disabled=Signal::derive(|| false)
+                    parser=Callback::new(|text: String| text.parse::<f64>().ok().and_then(|degrees| mirabile_app::Angle::from_degrees(degrees).ok()).filter(|value| value.degrees() < 360.0).map(|value| value.degrees().to_string()).ok_or_else(|| "Enter a longitude from 0 up to but not including 360 degrees".to_owned()))
+                    on_commit=Callback::new(move |text: String| if let Ok(degrees)=text.parse() && let Ok(value)=mirabile_app::Angle::from_degrees(degrees) { replace(mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::Longitude { point:point_for_value.clone(), comparison, value })); }) />
+            </div> }.into_any()
         }
         mirabile_app::QueryExpr::Predicate(mirabile_app::Predicate::ChartField {
             field,
@@ -1251,50 +1566,6 @@ fn default_query_predicate() -> mirabile_app::QueryExpr {
     })
 }
 
-fn recipe_reference(
-    definition: &mirabile_app::ChartDefinition,
-) -> Option<mirabile_app::ResourceId> {
-    match &definition.source {
-        mirabile_app::ChartSource::Radix { record } => Some(*record),
-        mirabile_app::ChartSource::Derived {
-            recipe:
-                mirabile_app::DerivationSpec::Harmonic { radix, .. }
-                | mirabile_app::DerivationSpec::Relocation { radix, .. },
-        } => Some(*radix),
-        mirabile_app::ChartSource::Derived {
-            recipe: mirabile_app::DerivationSpec::Composite { charts, .. },
-        } => charts.first().copied(),
-        mirabile_app::ChartSource::Derived {
-            recipe: mirabile_app::DerivationSpec::Transit { .. },
-        } => None,
-    }
-}
-
-fn default_recipe_location() -> mirabile_app::LocationAssertion {
-    mirabile_app::LocationAssertion {
-        display_name: "Location".into(),
-        country_region: None,
-        latitude: mirabile_app::Latitude::from_degrees(0.0).expect("latitude"),
-        longitude: mirabile_app::Longitude::from_degrees(0.0).expect("longitude"),
-        atlas_provenance: None,
-    }
-}
-
-fn default_transit_recipe() -> mirabile_app::DerivationSpec {
-    mirabile_app::DerivationSpec::Transit {
-        at: mirabile_app::TemporalAssertion {
-            civil_datetime: mirabile_app::CivilDateTime {
-                date: mirabile_app::CivilDate::new(2000, 1, 1).expect("date"),
-                time: mirabile_app::CivilTime::new(12, 0, 0).expect("time"),
-            },
-            calendar: mirabile_app::CalendarSpec::ProlepticGregorian,
-            zone: mirabile_app::TimeZoneAssertion::UniversalTime,
-            disambiguation: None,
-        },
-        location: default_recipe_location(),
-    }
-}
-
 fn list_address(
     control: ControlId,
     kind: &str,
@@ -1312,6 +1583,28 @@ fn list_address(
     }
     ControlAddress::qualified(control, qualifiers)
         .expect("list address")
+        .to_string()
+}
+
+fn nested_resource_list_address(
+    control: ControlId,
+    kind: &str,
+    collection: &str,
+    parent_id: mirabile_app::DraftItemId,
+    item_id: mirabile_app::DraftItemId,
+    field: Option<&str>,
+) -> String {
+    let mut qualifiers = vec![
+        ("kind", kind.to_owned()),
+        ("collection", collection.to_owned()),
+        ("parent", parent_id.to_string()),
+        ("draft-item", item_id.to_string()),
+    ];
+    if let Some(field) = field {
+        qualifiers.push(("field", field.to_owned()));
+    }
+    ControlAddress::qualified(control, qualifiers)
+        .expect("nested list address")
         .to_string()
 }
 
@@ -1479,6 +1772,40 @@ fn qualified_resource_address(
     )
     .expect("qualified resource address")
     .to_string()
+}
+
+fn parse_finite_number(text: String) -> Result<String, String> {
+    let text = text.into_boxed_str();
+    text.parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .map(|value| value.to_string())
+        .ok_or_else(|| "Enter a finite number".to_owned())
+}
+
+fn parse_chart_slot(text: String) -> Result<String, String> {
+    mirabile_app::ChartSlotId::new(text)
+        .map(|value| value.to_string())
+        .map_err(|error| error.to_string())
+}
+
+fn parse_point_id(text: String) -> Result<String, String> {
+    mirabile_app::PointId::new(text)
+        .map(|value| value.to_string())
+        .map_err(|error| error.to_string())
+}
+
+fn parse_optional_angle(text: String) -> Result<String, String> {
+    let text = text.into_boxed_str();
+    if text.trim().is_empty() {
+        return Ok(String::new());
+    }
+    text.parse::<f64>()
+        .ok()
+        .and_then(|degrees| mirabile_app::Angle::from_degrees(degrees).ok())
+        .filter(|value| value.degrees() <= 180.0)
+        .map(|value| value.degrees().to_string())
+        .ok_or_else(|| "Enter an orb from 0 through 180 degrees or leave blank".to_owned())
 }
 
 fn payload_summary(value: &mirabile_app::ResourceDraftValueReadModel) -> String {

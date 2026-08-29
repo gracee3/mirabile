@@ -1,6 +1,8 @@
 use std::fmt;
 
-use mirabile_core::{CoordinateSystem, CorrectionSpec, HouseSystem, ResourceKind, Timestamp};
+use mirabile_core::{
+    CoordinateSystem, CorrectionSpec, HouseSystem, ResourceKind, SchemaVersion, Timestamp,
+};
 use mirabile_engine::{BackendDescriptor, ZodiacMode};
 use serde::{Deserialize, Serialize};
 
@@ -167,6 +169,7 @@ pub enum TimezoneAuthoringMode {
     NamedZone,
     LocalMeanTime,
     LocalApparentTime,
+    Unknown,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -258,7 +261,7 @@ impl AuthoringCapabilitiesReadModel {
         })
         .collect();
         let deferred_timezone =
-            "This timezone mode is deferred until a provider-backed authoring workflow exists";
+            "This timezone mode is persisted but unavailable to the active calculation provider";
         let timezone_modes = vec![
             AuthoringOption::enabled(TimezoneAuthoringMode::UniversalTime, "Universal Time"),
             AuthoringOption::enabled(TimezoneAuthoringMode::FixedOffset, "Fixed offset"),
@@ -267,15 +270,24 @@ impl AuthoringCapabilitiesReadModel {
                 "Named zone",
                 deferred_timezone,
             ),
-            AuthoringOption::disabled(
-                TimezoneAuthoringMode::LocalMeanTime,
-                "Local Mean Time",
-                deferred_timezone,
-            ),
+            if complete_location {
+                AuthoringOption::enabled(TimezoneAuthoringMode::LocalMeanTime, "Local Mean Time")
+            } else {
+                AuthoringOption::disabled(
+                    TimezoneAuthoringMode::LocalMeanTime,
+                    "Local Mean Time",
+                    "A complete manual location is required for Local Mean Time",
+                )
+            },
             AuthoringOption::disabled(
                 TimezoneAuthoringMode::LocalApparentTime,
                 "Local Apparent Time",
                 deferred_timezone,
+            ),
+            AuthoringOption::disabled(
+                TimezoneAuthoringMode::Unknown,
+                "Unknown",
+                "An unknown timezone cannot produce an astronomical instant",
             ),
         ];
         let points = descriptor
@@ -506,6 +518,8 @@ pub struct AspectSetSummary {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorkspaceReadModel {
     pub title: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
     pub charts: Vec<OpenChartSummary>,
     pub active_chart: Option<InstanceId>,
     pub selected_charts: Vec<InstanceId>,
@@ -513,6 +527,10 @@ pub struct WorkspaceReadModel {
     pub active_view: Option<ViewInstanceId>,
     pub document_id: Option<ResourceId>,
     pub document_revision: Option<Revision>,
+    pub document_schema_version: Option<SchemaVersion>,
+    pub document_created_at: Option<Timestamp>,
+    pub document_modified_at: Option<Timestamp>,
+    pub validation: Vec<crate::ResourceDraftValidationIssue>,
     pub document_dirty: bool,
     pub has_temporary_display_override: bool,
     pub switch_decision: Option<WorkspaceSwitchDecisionReadModel>,
@@ -700,6 +718,8 @@ pub struct TypedResourceDraftReadModel {
     pub tags: Vec<String>,
     pub state: DraftState,
     pub conflicts: Vec<crate::ResourceDraftConflictReadModel>,
+    pub validation: Vec<crate::ResourceDraftValidationIssue>,
+    pub derived_recipe_options: Vec<crate::AuthoringOption<crate::DerivedRecipeKind>>,
     pub nested: crate::NestedResourceDraftReadModel,
     pub value: crate::ResourceDraftValueReadModel,
 }
@@ -708,6 +728,12 @@ pub struct TypedResourceDraftReadModel {
 pub struct AspectSetDraftReadModel {
     pub resource_id: Option<ResourceId>,
     pub title: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub schema_version: Option<SchemaVersion>,
+    pub created_at: Option<Timestamp>,
+    pub modified_at: Option<Timestamp>,
+    pub validation: Vec<crate::ResourceDraftValidationIssue>,
     pub state: DraftState,
     pub aspects: Vec<AspectDraftValue>,
 }

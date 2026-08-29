@@ -1398,6 +1398,14 @@ fn save_and_switch_publishes_working_title_before_opening_target() {
     }))
     .expect("working title changes");
     assert!(renamed.workspace.document_dirty);
+    block_on(application.dispatch(AppIntent::SetWorkspaceDescription {
+        description: Some("Independent workspace metadata".into()),
+    }))
+    .expect("description changes");
+    block_on(application.dispatch(AppIntent::SetWorkspaceTags {
+        tags: vec!["workspace".into(), "saved".into()],
+    }))
+    .expect("tags change");
     let requested = block_on(application.dispatch(AppIntent::OpenWorkspace {
         resource_id: second_id,
     }))
@@ -1422,7 +1430,43 @@ fn save_and_switch_publishes_working_title_before_opening_target() {
         .expect("first read")
         .expect("first exists");
     assert_eq!(first_saved.title(), "Renamed First Workspace");
+    assert_eq!(
+        first_saved.description(),
+        Some("Independent workspace metadata")
+    );
+    assert_eq!(first_saved.tags(), &["workspace", "saved"]);
     assert_eq!(first_saved.revision().get(), 2);
+}
+
+#[test]
+fn invalid_workspace_metadata_is_retained_and_blocks_save_until_corrected() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository);
+    ready(&application);
+    let invalid = block_on(application.dispatch(AppIntent::SetWorkspaceTags {
+        tags: vec!["duplicate".into(), "duplicate".into()],
+    }))
+    .expect("temporarily invalid tags are retained");
+    assert_eq!(invalid.workspace.tags, ["duplicate", "duplicate"]);
+    assert_eq!(invalid.workspace.validation[0].field, "workspace.tags");
+    assert_eq!(
+        invalid
+            .availability(crate::AppAction::SaveWorkspace)
+            .disabled_reason(),
+        Some("Complete every invalid workspace field before saving")
+    );
+    assert!(matches!(
+        block_on(application.dispatch(AppIntent::SaveWorkspace)),
+        Err(AppError {
+            kind: AppErrorKind::InvalidIntent,
+            ..
+        })
+    ));
+    let corrected = block_on(application.dispatch(AppIntent::SetWorkspaceTags {
+        tags: vec!["workspace".into()],
+    }))
+    .expect("tags corrected");
+    assert!(corrected.workspace.validation.is_empty());
 }
 
 #[test]
@@ -1942,7 +1986,7 @@ fn typed_new_chart_authoring_retains_last_valid_preview_and_saves_atomically() {
         .expect("typed chart editor begins");
     let instance_id = started.workspace.active_chart.expect("new chart is active");
     let editor = started.chart_editor.as_ref().expect("editor projection");
-    assert_eq!(editor.fields.title, "Untitled Chart");
+    assert_eq!(editor.fields.definition_metadata.title, "Untitled Chart");
     assert_eq!(editor.fields.event_kind, EventKind::Birth);
     assert_eq!(editor.fields.houses, HouseSystem::NoHouses);
     assert_eq!(editor.fields.coordinates, CoordinateSystem::Geocentric);
@@ -2098,6 +2142,16 @@ fn saved_chart_definition_only_edit_checks_record_without_revising_it() {
     )))
     .expect("title mutation");
     settle(&application, changed);
+    let changed = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetDefinitionDescription(Some("Definition metadata".into())),
+    )))
+    .expect("description mutation");
+    settle(&application, changed);
+    let changed = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetDefinitionTags(vec!["definition".into(), "atomic".into()]),
+    )))
+    .expect("tags mutation");
+    settle(&application, changed);
     let saving = block_on(application.dispatch(AppIntent::SaveChartEditor))
         .expect("saved edit begins observable save");
     assert!(matches!(
@@ -2124,10 +2178,78 @@ fn saved_chart_definition_only_edit_checks_record_without_revising_it() {
         .expect("definition exists");
     assert_eq!(definition.revision().get(), 2);
     assert_eq!(definition.title(), "Definition-only title");
+    assert_eq!(definition.description(), Some("Definition metadata"));
+    assert_eq!(definition.tags(), &["definition", "atomic"]);
     assert_eq!(
         initial.workspace.document_revision, saved.workspace.document_revision,
         "editing chart resources does not invent a workspace revision"
     );
+}
+
+#[test]
+fn saved_chart_persists_record_and_definition_metadata_atomically() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    ready(&application);
+    let ids = demo_ids();
+
+    let opened = block_on(application.dispatch(AppIntent::BeginSavedChartEdit {
+        instance_id: ids.chart_instance_a,
+    }))
+    .expect("saved editor opens");
+    let editor = opened.chart_editor.as_ref().expect("editor projection");
+    assert_eq!(
+        editor.fields.record_metadata.resource_id,
+        Some(ids.chart_record_a)
+    );
+    assert_eq!(
+        editor.fields.definition_metadata.resource_id,
+        Some(ids.chart_definition_a)
+    );
+    assert_eq!(
+        editor.fields.record_metadata.revision,
+        Some(Revision::INITIAL)
+    );
+    settle(&application, opened);
+
+    for mutation in [
+        ChartMutation::SetRecordTitle("Independent record title".into()),
+        ChartMutation::SetRecordDescription(Some("Record metadata".into())),
+        ChartMutation::SetRecordTags(vec!["facts".into(), "source".into()]),
+        ChartMutation::SetDefinitionDescription(Some("Definition metadata".into())),
+        ChartMutation::SetDefinitionTags(vec!["calculation".into()]),
+    ] {
+        let changed = block_on(application.dispatch(AppIntent::ApplyChartMutation(mutation)))
+            .expect("metadata mutation");
+        settle(&application, changed);
+    }
+    let saving = block_on(application.dispatch(AppIntent::SaveChartEditor)).expect("save begins");
+    settle(&application, saving);
+
+    let CanonicalResource::ChartRecord(record) = block_on(repository.get(ids.chart_record_a))
+        .expect("record read")
+        .expect("record exists")
+    else {
+        panic!("record kind");
+    };
+    assert_eq!(record.revision.get(), 2);
+    assert_eq!(record.title, "Independent record title");
+    assert_eq!(record.description.as_deref(), Some("Record metadata"));
+    assert_eq!(record.tags, ["facts", "source"]);
+
+    let CanonicalResource::ChartDefinition(definition) =
+        block_on(repository.get(ids.chart_definition_a))
+            .expect("definition read")
+            .expect("definition exists")
+    else {
+        panic!("definition kind");
+    };
+    assert_eq!(definition.revision.get(), 2);
+    assert_eq!(
+        definition.description.as_deref(),
+        Some("Definition metadata")
+    );
+    assert_eq!(definition.tags, ["calculation"]);
 }
 
 #[test]
@@ -2211,7 +2333,7 @@ fn saved_chart_batch_reports_both_component_conflicts_and_retains_local_editor()
         .as_ref()
         .expect("local editor retained");
     assert_eq!(editor.state, ChartEditorState::Conflict);
-    assert_eq!(editor.fields.title, "First local title");
+    assert_eq!(editor.fields.definition_metadata.title, "First local title");
     assert_eq!(editor.conflicts.len(), 2);
     assert!(
         !conflicted
@@ -2303,6 +2425,7 @@ fn shared_chart_record_blocks_factual_edits_but_allows_definition_edits() {
             .as_ref()
             .expect("editor")
             .fields
+            .definition_metadata
             .title,
         "Allowed definition title"
     );
@@ -2707,6 +2830,7 @@ fn aspect_preview_cancel_and_save_reuse_calculation_value() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
     let repository = MemoryRepository::default();
     let application = demo_application(repository.clone());
@@ -2734,6 +2858,35 @@ fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
         AspectSetDraftMutation::SetTitle("Research Orbs".into()),
     )))
     .expect("title changes");
+    block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        AspectSetDraftMutation::SetDescription(Some("Research metadata".into())),
+    )))
+    .expect("description changes");
+    let invalid = block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        AspectSetDraftMutation::SetTags(vec!["duplicate".into(), "duplicate".into()]),
+    )))
+    .expect("invalid tags retained");
+    assert_eq!(
+        invalid
+            .resource_editor
+            .aspect_set
+            .as_ref()
+            .expect("editor")
+            .validation[0]
+            .field,
+        "aspect_set.tags"
+    );
+    assert!(matches!(
+        block_on(application.dispatch(AppIntent::SaveDraft)),
+        Err(AppError {
+            kind: AppErrorKind::InvalidIntent,
+            ..
+        })
+    ));
+    block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        AspectSetDraftMutation::SetTags(vec!["research".into(), "orbs".into()]),
+    )))
+    .expect("tags corrected");
     block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
         AspectSetDraftMutation::SetEnabled {
             aspect_id: mirabile_core::AspectId::new("conjunction").expect("aspect ID"),
@@ -2773,17 +2926,22 @@ fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
         panic!("created resource is an Aspect Set")
     };
     assert_eq!(created_resource.title, "Research Orbs");
+    assert_eq!(
+        created_resource.description.as_deref(),
+        Some("Research metadata")
+    );
+    assert_eq!(created_resource.tags, ["research", "orbs"]);
     assert_eq!(created_resource.payload.aspects.len(), 2);
 
-    let standard_id = demo_ids().aspect_set_standard;
-    let CanonicalResource::AspectSet(standard) = block_on(repository.get(standard_id))
+    let source_id = created_id;
+    let CanonicalResource::AspectSet(source) = block_on(repository.get(source_id))
         .expect("source reads")
         .expect("source exists")
     else {
         panic!("source is an Aspect Set")
     };
     let duplicated = block_on(application.dispatch(AppIntent::DuplicateAspectSet {
-        resource_id: standard_id,
+        resource_id: source_id,
     }))
     .expect("duplicate opens");
     let duplicate = duplicated
@@ -2792,8 +2950,10 @@ fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
         .as_ref()
         .expect("duplicate editor");
     assert!(matches!(duplicate.state, DraftState::New));
-    assert_eq!(duplicate.title, format!("{} Copy", standard.title));
-    assert_eq!(duplicate.aspects.len(), standard.payload.aspects.len());
+    assert_eq!(duplicate.title, format!("{} Copy", source.title));
+    assert_eq!(duplicate.description, source.description);
+    assert_eq!(duplicate.tags, source.tags);
+    assert_eq!(duplicate.aspects.len(), source.payload.aspects.len());
     let creating = block_on(application.dispatch(AppIntent::SaveDraft)).expect("duplicate creates");
     let duplicated = settle(&application, creating);
     let duplicate_id = duplicated
@@ -2802,14 +2962,16 @@ fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
         .as_ref()
         .and_then(|editor| editor.resource_id)
         .expect("duplicate canonical identity");
-    assert_ne!(duplicate_id, standard_id);
+    assert_ne!(duplicate_id, source_id);
     let CanonicalResource::AspectSet(duplicate) = block_on(repository.get(duplicate_id))
         .expect("duplicate reads")
         .expect("duplicate exists")
     else {
         panic!("duplicate is an Aspect Set")
     };
-    assert_eq!(duplicate.payload, standard.payload);
+    assert_eq!(duplicate.description, source.description);
+    assert_eq!(duplicate.tags, source.tags);
+    assert_eq!(duplicate.payload, source.payload);
 }
 
 #[test]

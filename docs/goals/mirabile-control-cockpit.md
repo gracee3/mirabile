@@ -6,10 +6,11 @@
   2026-08-28 after squash-merging PR #1)
 - Branch: `goal/mirabile-control-cockpit`
 - Worktree: `/home/emmy/mirabile` (the existing checkout; no additional worktree or Cargo target)
-- Current phase: 8 - handoff and feature PR
-- Delivery: focused commits pushed regularly; open a feature PR but do not merge it
-- Fast baseline: `./scripts/check.sh` passes 155 Rust tests and 5 Python tests, strict
-  Clippy, formatting, and staged plus unstaged diff checks
+- Current phase: final field-ledger verification and authorized feature-PR merge
+- Delivery: focused commits pushed regularly; mark PR #2 ready and squash-merge it only after the
+  exact pushed head passes every completion gate
+- Current fast gate: `scripts/check.sh` passes 182 Rust tests and 6 Python tests, strict Clippy,
+  formatting, and staged plus unstaged diff checks
 
 ## Frozen boundaries
 
@@ -36,11 +37,11 @@
 | 1. Baseline and goal | Complete | Correct and merge PR #1; capture disk, normal application, console, display, and screenshot baseline | `./scripts/check.sh`; clean fast-forwarded `main`; normal non-automation XALEN initialization | `774d54c` |
 | 2. Repository and inventory | Complete | Present/deleted heads; selected-resource revisions; inventories for all ten canonical resource types | 157 Rust tests; WASM check; IndexedDB browser contract; `./scripts/check.sh` | `85bfead` |
 | 3. General typed drafts | Complete | Typed mutations, lifecycle/conflict projections, one draft per type, stable nested item IDs | 161 Rust tests; 5 Python tests; strict Clippy; `./scripts/check.sh` | `4aae865` |
-| 4. Complete editors | In progress | Stable typed nested projections and mutations are implemented; complete chart, recipe, View Object, query-predicate, and workspace composition controls remain | Native and browser authoring coverage | `b2292ef` (partial) |
+| 4. Complete editors | Complete pending final commit | Every modeled field is accounted for in the field ledger; typed nested projections, mutations, validation, macro actions, persistence, and visible journeys are implemented | Native and browser authoring coverage; `mirabile-control-cockpit-fields.md` | `8b746bb` through working tree after `e6b8182` |
 | 5. Bindings and outputs | Complete | Writable Follow/Pinned/Inline bindings, provider-neutral tables, provenance, parameter status, and last-good retention | Focused binding and last-good regressions | `8b2b44e` |
 | 6. Cockpit composition | Complete | Document-height eight-section cockpit, sticky navigation/search/fold controls, and semantic addresses | Cockpit manifest plus four responsive captures | `534a277`, `057c5e3` |
 | 7. History and deletion | Complete | Revision inspection, reference-aware two-step deletion, tombstones, stale-delete conflicts, and reload | Store/application tests plus browser reload journey | `8b2b44e`, `057c5e3` |
-| 8. Handoff | Complete | Viewport captures, docs, final gates, pushed feature PR left open | T14 acceptance matrix and remote verification | `4550ff2`, PR #2 |
+| 8. Handoff | In progress | Exact-head full gate, normal browser acceptance, evidence update, and authorized squash merge | T14 acceptance matrix and remote verification | PR #2 |
 
 ## Phase records
 
@@ -228,11 +229,9 @@ that work is explicitly deferred in the frozen boundaries above.
 | Collision-aware placement | Not delivered | The current layout places every point label at a fixed radial offset from its longitude. It has no clustering, displacement, leader-line, or collision-resolution pass. |
 | Wheel-dominant cockpit | Not delivered | PR #2 deliberately replaces the fixed workstation with an eight-section document-height control laboratory. The retained wheel is a preview, not the dominant professional-wheel surface. |
 
-The remaining nested object/query/recipe builders are also not merely optional polish: complete
-modeled resource editors and typed list/tree builders were explicit control-cockpit acceptance
-criteria. Their incomplete UI depth is therefore an independent reason for PR #2 to remain draft;
-finishing them would complete the cockpit scope but would still not complete the professional-wheel
-sprint.
+The nested object, query, recipe, chart-fact, workspace-composition, and macro builders are now
+complete through typed application interfaces. That closes the cockpit scope while leaving the
+professional-wheel criteria above truthfully deferred to the next branch.
 
 Reconciliation snapshot on 2026-08-28:
 
@@ -252,52 +251,19 @@ Reconciliation snapshot on 2026-08-28:
 
 ## Blockers
 
-- PR #2 cannot move out of draft yet. The 2026-08-28 completion audit found that the passing
-  coverage registry and browser matrix do not prove every field required by Phase 4:
-  - View Document now creates and switches all six `ViewObject` variants and exposes frames, slot
-    references, optional grid RHS, text, PointTable membership, and object ordering through typed
-    mutations. The focused `nested-builder-control` journey saves and reloads a populated
-    PointTable.
-  - Query Definition now exposes every predicate operand, comparison variant, optional orb, and
-    value, plus application-validated moves between boolean groups. Version-1 macros now capture
-    query nodes as root-relative child-index paths, resolve them against fresh application-owned
-    node IDs at replay time, and stop with an explicit topology mismatch when the tree shape no
-    longer matches.
-  - The atomic ChartRecord editor now exposes custom event labels, subject pronouns, calendar and
-    ambiguity choice, country/region and atlas provenance, and complete source provenance; the
-    visible new-chart journey saves these fields atomically. Notes, life events, and nested
-    life-event notes now use application-owned stable draft IDs with insert/update/move/remove,
-    atomic materialization, shared-record protection, and save/reopen browser assertions.
-    Derived-recipe controls now cover Transit
-    date/time/location, Harmonic radix/factor, Relocation radix/location, and ordered Composite
-    charts/method; full temporal/location provenance remains part of the field-ledger pass.
-  - Active workspace composition now routes through `WorkspaceSession`: the cockpit can add/remove
-    and order saved charts and views, add Follow-bound ViewDocuments with application-owned IDs and
-    required-slot defaults, edit durable rotation and hidden points, use the existing typed slot
-    assignments, and change all seven profile bindings plus the active ViewDocument binding. A
-    focused native test proves domain equality after save/reopen, while
-    `workspace-composition-control` performs the same visible-control sequence through IndexedDB.
-    Version-1 macros now capture and replay the workspace mutations and generalized binding
-    changes through symbolic resource/view bindings rather than runtime IDs.
-- Fresh gate evidence for `b2292ef`: `./scripts/check.sh` passed; focused
-  `cockpit-manifest-control`, `resource-authoring-control`, and `nested-builder-control` journeys
-  passed; and the complete `./scripts/verify.sh` passed, including native, XALEN known-answer,
-  WASM, IndexedDB/Worker, diagnostics, history/delete, workspace, macro, conflict, and expected-
-  failure artifact coverage. The full gate completed at 2026-08-28 22:01 EDT in roughly four
-  minutes.
-- Final-gate disk measurement before verification was 26,817,978,368 available bytes. Observed
-  focused-build growth was 273,978,930 bytes, so the required threshold was the 18,253,611,008-byte
-  floor and passed by 8,564,367,360 bytes. Post-verification measurements are 25,188,667,392 bytes
-  available and 15,676,665,382 bytes in `target/`; no cleanup was performed.
-- Workspace-composition checkpoint: 84 `mirabile-app` tests and strict focused Clippy pass; the new
-  browser journey passes create/add/order/rotate/hide/save/reload/remove through semantic controls.
-  The post-journey disk snapshot is 23,125,602,304 bytes available with 16,293,625,214 bytes in the
-  repository-local `target/`.
-- Structural-macro checkpoint: 86 `mirabile-app` tests and strict focused Clippy pass. The
-  `nested-macro-control` journey records and replays nested Point Set and Query Definition edits
-  after fresh draft IDs are allocated; `macro-topology-failure-control` proves an unresolved query
-  path fails at the recorded semantic control without dispatching a partial mutation. Macro schema
-  version 1 remains unchanged and no `DraftItemId` is serialized.
-- Next action: finish the controls listed above, add field-level native and browser assertions that
-  cannot be satisfied by registry declarations alone, rerun the disk gate and full verification,
-  and only then mark PR #2 ready and perform the squash-merge/branch handoff.
+- No implementation or external blocker is currently known. The field-level completion contract is
+  recorded in `mirabile-control-cockpit-fields.md` with projection, semantic address, typed
+  mutation, macro selector, persistence, deletion, and browser evidence for every modeled field.
+- Current focused evidence on the uncommitted completion slice: 94 `mirabile-app` tests and 22
+  `mirabile-web` tests pass; `scripts/check.sh` passes 182 Rust tests and 6 Python tests with strict
+  Clippy and formatting in 9.5 seconds on the warm target. The expanded
+  `workspace-lifecycle-control`, `aspect-set-control`, `new-chart-control`, and
+  `nested-builder-control` journeys pass through real controls and IndexedDB reload; the expanded
+  `history-delete-control` journey proves blocked-then-valid deletion after a durable rebind.
+- Current disk checkpoint is 18,954,059,776 available bytes and 17,455,870,533 bytes in `target/`.
+  The final disk threshold and exact pushed-head full gates still need to be recorded before PR #2
+  can be marked ready.
+- Next action: commit and push this completion slice, run `scripts/check.sh`, calculate the final
+  disk gate, run `scripts/verify.sh`, perform normal non-automation viewport acceptance, update the
+  PR with exact evidence, and execute the authorized squash merge only if remote state remains
+  clean.

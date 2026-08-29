@@ -9,8 +9,9 @@ use mirabile_app::{
 use crate::{
     dispatcher::WorkbenchCoordinator,
     workbench_controls::{
-        ActionControl, BufferedDateField, BufferedNumberField, BufferedTextField,
-        BufferedTimeField, EnumSelect, Toggle, chart_save_pending,
+        ActionControl, BufferedDateField, BufferedInputKind, BufferedNumberField,
+        BufferedTextField, BufferedTimeField, EnumSelect, Toggle, ValidatedField,
+        chart_save_pending, invalid_buffer_registry,
     },
 };
 
@@ -22,6 +23,8 @@ pub(super) fn ChartAuthoring(
 ) -> impl IntoView {
     let title_buffer = RwSignal::new(String::new());
     let title_error = RwSignal::new(None::<String>);
+    let record_title_buffer = RwSignal::new(String::new());
+    let record_title_error = RwSignal::new(None::<String>);
     let subject_buffer = RwSignal::new(String::new());
     let subject_error = RwSignal::new(None::<String>);
     let date_buffer = RwSignal::new(String::new());
@@ -30,12 +33,15 @@ pub(super) fn ChartAuthoring(
     let time_error = RwSignal::new(None::<String>);
     let offset_buffer = RwSignal::new(String::new());
     let offset_error = RwSignal::new(None::<String>);
+    let named_zone_buffer = RwSignal::new(String::new());
+    let named_zone_error = RwSignal::new(None::<String>);
     let location_buffer = RwSignal::new(String::new());
     let location_error = RwSignal::new(None::<String>);
     let latitude_buffer = RwSignal::new(String::new());
     let latitude_error = RwSignal::new(None::<String>);
     let longitude_buffer = RwSignal::new(String::new());
     let longitude_error = RwSignal::new(None::<String>);
+    let invalid_buffers = invalid_buffer_registry();
     let disabled = Signal::derive(move || {
         model.get().chart_editor.is_some_and(|editor| {
             matches!(
@@ -151,7 +157,7 @@ pub(super) fn ChartAuthoring(
                         <BufferedTextField
                             address=ControlAddress::new(ControlId::CHART_TITLE).to_string()
                             label="Title".into()
-                            authoritative=Signal::derive(move || model.get().chart_editor.map_or_else(String::new, |editor| editor.fields.title))
+                            authoritative=Signal::derive(move || model.get().chart_editor.map_or_else(String::new, |editor| editor.fields.definition_metadata.title))
                             disabled
                             disabled_reason=editor_disabled_reason
                             buffer=title_buffer
@@ -163,6 +169,57 @@ pub(super) fn ChartAuthoring(
                                 ChartMutation::SetTitle(value),
                             ))
                         />
+                        <label>"ChartDefinition description"<textarea
+                            prop:value=editor.fields.definition_metadata.description.clone().unwrap_or_default()
+                            data-mirabile-control=ControlId::CHART_DEFINITION_DESCRIPTION.to_string()
+                            data-mirabile-address=ControlAddress::new(ControlId::CHART_DEFINITION_DESCRIPTION).to_string()
+                            data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string()
+                            disabled=disabled
+                            on:change=move |event| { let value=event_target_value(&event); dispatch_mutation(dispatcher, ControlId::CHART_DEFINITION_DESCRIPTION, ChartMutation::SetDefinitionDescription((!value.trim().is_empty()).then_some(value))); }
+                        /></label>
+                        <label>"ChartDefinition tags"<input type="text"
+                            prop:value=editor.fields.definition_metadata.tags.join(", ")
+                            data-mirabile-control=ControlId::CHART_DEFINITION_TAGS.to_string()
+                            data-mirabile-address=ControlAddress::new(ControlId::CHART_DEFINITION_TAGS).to_string()
+                            data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string()
+                            disabled=disabled
+                            on:change=move |event| dispatch_mutation(dispatcher, ControlId::CHART_DEFINITION_TAGS, ChartMutation::SetDefinitionTags(parse_tags(&event_target_value(&event))))
+                        /></label>
+                        <BufferedTextField
+                            address=ControlAddress::new(ControlId::CHART_RECORD_TITLE).to_string()
+                            label="ChartRecord title".into()
+                            authoritative=Signal::derive(move || model.get().chart_editor.map_or_else(String::new, |editor| editor.fields.record_metadata.title))
+                            disabled=factual_disabled
+                            disabled_reason=factual_disabled_reason
+                            buffer=record_title_buffer
+                            error=record_title_error
+                            parser=Callback::new(Ok::<String, String>)
+                            on_commit=Callback::new(move |value: String| dispatch_mutation(
+                                dispatcher,
+                                ControlId::CHART_RECORD_TITLE,
+                                ChartMutation::SetRecordTitle(value),
+                            ))
+                        />
+                        <label>"ChartRecord description"<textarea
+                            prop:value=editor.fields.record_metadata.description.clone().unwrap_or_default()
+                            data-mirabile-control=ControlId::CHART_RECORD_DESCRIPTION.to_string()
+                            data-mirabile-address=ControlAddress::new(ControlId::CHART_RECORD_DESCRIPTION).to_string()
+                            data-mirabile-kind="text" data-mirabile-enabled=move || (!factual_disabled.get()).to_string()
+                            data-mirabile-disabled-reason=move || factual_disabled_reason.get()
+                            disabled=factual_disabled
+                            on:change=move |event| { let value=event_target_value(&event); dispatch_mutation(dispatcher, ControlId::CHART_RECORD_DESCRIPTION, ChartMutation::SetRecordDescription((!value.trim().is_empty()).then_some(value))); }
+                        /></label>
+                        <label>"ChartRecord tags"<input type="text"
+                            prop:value=editor.fields.record_metadata.tags.join(", ")
+                            data-mirabile-control=ControlId::CHART_RECORD_TAGS.to_string()
+                            data-mirabile-address=ControlAddress::new(ControlId::CHART_RECORD_TAGS).to_string()
+                            data-mirabile-kind="text" data-mirabile-enabled=move || (!factual_disabled.get()).to_string()
+                            data-mirabile-disabled-reason=move || factual_disabled_reason.get()
+                            disabled=factual_disabled
+                            on:change=move |event| dispatch_mutation(dispatcher, ControlId::CHART_RECORD_TAGS, ChartMutation::SetRecordTags(parse_tags(&event_target_value(&event))))
+                        /></label>
+                        <small class="revision-line">{component_identity("ChartDefinition", &editor.fields.definition_metadata)}</small>
+                        <small class="revision-line">{component_identity("ChartRecord", &editor.fields.record_metadata)}</small>
                         <BufferedTextField
                             address=ControlAddress::new(ControlId::CHART_SUBJECT_NAME).to_string()
                             label="Subject name (optional)".into()
@@ -235,6 +292,10 @@ pub(super) fn ChartAuthoring(
                             value=Signal::derive(move || model.get().chart_editor.map_or_else(String::new, |editor| match editor.fields.timezone {
                                 ChartTimezone::UniversalTime => "universal_time".into(),
                                 ChartTimezone::FixedOffset(_) => "fixed_offset".into(),
+                                ChartTimezone::NamedZone(_) => "named_zone".into(),
+                                ChartTimezone::LocalMeanTime => "local_mean_time".into(),
+                                ChartTimezone::LocalApparentTime => "local_apparent_time".into(),
+                                ChartTimezone::Unknown => "unknown".into(),
                             }))
                             options=Signal::derive(move || timezone_options(&model.get()))
                             disabled=factual_disabled
@@ -242,6 +303,10 @@ pub(super) fn ChartAuthoring(
                             on_change=Callback::new(move |value: String| match value.as_str() {
                                 "universal_time" => dispatch_mutation(dispatcher, ControlId::CHART_TIMEZONE, ChartMutation::SetTimezone(ChartTimezone::UniversalTime)),
                                 "fixed_offset" => dispatch_mutation(dispatcher, ControlId::CHART_TIMEZONE, ChartMutation::SetTimezone(ChartTimezone::FixedOffset(Offset::UTC))),
+                                "named_zone" => dispatch_mutation(dispatcher, ControlId::CHART_TIMEZONE, ChartMutation::SetTimezone(ChartTimezone::NamedZone("Etc/UTC".into()))),
+                                "local_mean_time" => dispatch_mutation(dispatcher, ControlId::CHART_TIMEZONE, ChartMutation::SetTimezone(ChartTimezone::LocalMeanTime)),
+                                "local_apparent_time" => dispatch_mutation(dispatcher, ControlId::CHART_TIMEZONE, ChartMutation::SetTimezone(ChartTimezone::LocalApparentTime)),
+                                "unknown" => dispatch_mutation(dispatcher, ControlId::CHART_TIMEZONE, ChartMutation::SetTimezone(ChartTimezone::Unknown)),
                                 _ => {}
                             })
                         />
@@ -251,7 +316,7 @@ pub(super) fn ChartAuthoring(
                                 label="UTC offset minutes".into()
                                 authoritative=Signal::derive(move || model.get().chart_editor.map_or_else(String::new, |editor| match editor.fields.timezone {
                                     ChartTimezone::FixedOffset(offset) => (offset.seconds() / 60).to_string(),
-                                    ChartTimezone::UniversalTime => "0".into(),
+                                    _ => "0".into(),
                                 }))
                                 disabled=factual_disabled
                                 disabled_reason=factual_disabled_reason
@@ -263,6 +328,22 @@ pub(super) fn ChartAuthoring(
                                         dispatch_mutation(dispatcher, ControlId::CHART_FIXED_OFFSET, ChartMutation::SetTimezone(ChartTimezone::FixedOffset(offset)));
                                     }
                                 })
+                            />
+                        </Show>
+                        <Show when=move || model.get().chart_editor.is_some_and(|editor| matches!(editor.fields.timezone, ChartTimezone::NamedZone(_)))>
+                            <BufferedTextField
+                                address=ControlAddress::new(ControlId::CHART_NAMED_ZONE).to_string()
+                                label="IANA timezone name".into()
+                                authoritative=Signal::derive(move || model.get().chart_editor.map_or_else(String::new, |editor| match editor.fields.timezone {
+                                    ChartTimezone::NamedZone(name) => name,
+                                    _ => String::new(),
+                                }))
+                                disabled=factual_disabled
+                                disabled_reason=factual_disabled_reason
+                                buffer=named_zone_buffer
+                                error=named_zone_error
+                                parser=Callback::new(|value: String| if value.trim().is_empty() { Err("Timezone name is required".into()) } else { Ok(value) })
+                                on_commit=Callback::new(move |value: String| dispatch_mutation(dispatcher, ControlId::CHART_NAMED_ZONE, ChartMutation::SetTimezone(ChartTimezone::NamedZone(value))))
                             />
                         </Show>
                         <Toggle
@@ -368,9 +449,14 @@ pub(super) fn ChartAuthoring(
                             <ActionControl
                                 address=ControlAddress::new(ControlId::CHART_EDITOR_SAVE).to_string()
                                 label="Save chart".into()
-                                disabled=Signal::derive(move || !model.get().availability(AppAction::SaveChartEditor).is_enabled())
-                                disabled_reason=Signal::derive(move || model.get().availability(AppAction::SaveChartEditor)
-                                    .disabled_reason().map(str::to_owned))
+                                disabled=Signal::derive(move || !model.get().availability(AppAction::SaveChartEditor).is_enabled()
+                                    || invalid_buffers.has_prefix("chart."))
+                                disabled_reason=Signal::derive(move || if invalid_buffers.has_prefix("chart.") {
+                                    Some("Correct invalid local chart values before saving".to_owned())
+                                } else {
+                                    model.get().availability(AppAction::SaveChartEditor)
+                                        .disabled_reason().map(str::to_owned)
+                                })
                                 pending=Signal::derive(move || chart_save_pending(&model.get()))
                                 on_activate=Callback::new(move |()| dispatcher.dispatch_from(
                                     AppIntent::SaveChartEditor,
@@ -408,6 +494,7 @@ fn ChartRecordDetails(
     let custom_base = record.clone();
     let pronouns_base = record.clone();
     let calendar_base = record.clone();
+    let calendar_identifier_base = record.clone();
     let disambiguation_base = record.clone();
     let country_base = record.clone();
     let atlas_provider_base = record.clone();
@@ -437,7 +524,13 @@ fn ChartRecordDetails(
     view! { <fieldset class="payload-fields chart-record-details"><legend>"Complete factual provenance"</legend>
         <label>"Custom event label (sets Other when nonempty)"<input type="text" prop:value=custom data-mirabile-control=ControlId::CHART_CUSTOM_EVENT_KIND.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_CUSTOM_EVENT_KIND).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() data-mirabile-disabled-reason=move || disabled_reason.get() disabled=disabled on:change=move |event| { let value=event_target_value(&event); if !value.trim().is_empty() { let mut next=custom_base.clone(); next.event_kind=EventKind::Other(value); dispatch_record(dispatcher, ControlId::CHART_CUSTOM_EVENT_KIND, next); } } /></label>
         <label>"Pronouns"<input type="text" prop:value=pronouns data-mirabile-control=ControlId::CHART_SUBJECT_PRONOUNS.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_SUBJECT_PRONOUNS).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let value=event_target_value(&event); let mut next=pronouns_base.clone(); if let Some(subject)=&mut next.subject { subject.pronouns=(!value.trim().is_empty()).then_some(value); dispatch_record(dispatcher, ControlId::CHART_SUBJECT_PRONOUNS, next); } } /></label>
-        <label>"Calendar"<select prop:value=calendar_key(&record.time.calendar) data-mirabile-control=ControlId::CHART_CALENDAR.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_CALENDAR).to_string() data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut next=calendar_base.clone(); next.time.calendar=if event_target_value(&event)=="julian" { mirabile_app::CalendarSpec::Julian } else { mirabile_app::CalendarSpec::ProlepticGregorian }; dispatch_record(dispatcher, ControlId::CHART_CALENDAR, next); }><option value="gregorian">"Proleptic Gregorian"</option><option value="julian">"Julian"</option></select></label>
+        <label>"Calendar"<select prop:value=calendar_key(&record.time.calendar) data-mirabile-control=ControlId::CHART_CALENDAR.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_CALENDAR).to_string() data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut next=calendar_base.clone(); next.time.calendar=match event_target_value(&event).as_str() { "julian" => mirabile_app::CalendarSpec::Julian, "historical" => mirabile_app::CalendarSpec::HistoricalTransition { identifier:"custom-transition".into() }, _ => mirabile_app::CalendarSpec::ProlepticGregorian }; dispatch_record(dispatcher, ControlId::CHART_CALENDAR, next); }><option value="gregorian">"Proleptic Gregorian"</option><option value="julian">"Julian"</option><option value="historical">"Historical transition"</option></select></label>
+        {if let mirabile_app::CalendarSpec::HistoricalTransition { identifier }=&record.time.calendar { let identifier=identifier.clone(); view! {
+            <ValidatedField address=ControlAddress::qualified(ControlId::CHART_CALENDAR, [("field", "identifier")]).expect("calendar identifier address").to_string() label="Calendar transition identifier".to_owned() kind=BufferedInputKind::Text
+                authoritative=Signal::derive(move || identifier.clone()) disabled disabled_reason=disabled_reason
+                parser=Callback::new(|text: String| (!text.trim().is_empty()).then(|| text.trim().to_owned()).ok_or_else(|| "Transition identifier is required".to_owned()))
+                on_commit=Callback::new(move |value: String| { let mut next=calendar_identifier_base.clone(); next.time.calendar=mirabile_app::CalendarSpec::HistoricalTransition { identifier:value }; dispatch_record(dispatcher, ControlId::CHART_CALENDAR, next); }) />
+        }.into_any() } else { ().into_any() }}
         <label>"Ambiguous local time"<select prop:value=disambiguation_key(record.time.disambiguation) data-mirabile-control=ControlId::CHART_DISAMBIGUATION.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_DISAMBIGUATION).to_string() data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut next=disambiguation_base.clone(); next.time.disambiguation=match event_target_value(&event).as_str() { "earlier"=>Some(mirabile_app::TimeChoice::Earlier), "later"=>Some(mirabile_app::TimeChoice::Later), _=>None }; dispatch_record(dispatcher, ControlId::CHART_DISAMBIGUATION, next); }><option value="none">"Not specified"</option><option value="earlier">"Earlier occurrence"</option><option value="later">"Later occurrence"</option></select></label>
         <label>"Country / region"<input type="text" prop:value=country data-mirabile-control=ControlId::CHART_COUNTRY_REGION.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_COUNTRY_REGION).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let value=event_target_value(&event); let mut next=country_base.clone(); if let Some(location)=&mut next.location { location.country_region=(!value.trim().is_empty()).then_some(value); dispatch_record(dispatcher, ControlId::CHART_COUNTRY_REGION, next); } } /></label>
         <label>"Atlas provider"<input type="text" prop:value=atlas.as_ref().map(|value| value.provider.clone()).unwrap_or_default() data-mirabile-control=ControlId::CHART_ATLAS_PROVIDER.to_string() data-mirabile-address=ControlAddress::new(ControlId::CHART_ATLAS_PROVIDER).to_string() data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut next=atlas_provider_base.clone(); update_atlas(&mut next, |atlas| atlas.provider=event_target_value(&event)); dispatch_record(dispatcher, ControlId::CHART_ATLAS_PROVIDER, next); } /></label>
@@ -478,7 +571,8 @@ fn update_atlas(
 fn calendar_key(value: &mirabile_app::CalendarSpec) -> &'static str {
     match value {
         mirabile_app::CalendarSpec::Julian => "julian",
-        _ => "gregorian",
+        mirabile_app::CalendarSpec::HistoricalTransition { .. } => "historical",
+        mirabile_app::CalendarSpec::ProlepticGregorian => "gregorian",
     }
 }
 fn disambiguation_key(value: Option<mirabile_app::TimeChoice>) -> &'static str {
@@ -487,6 +581,26 @@ fn disambiguation_key(value: Option<mirabile_app::TimeChoice>) -> &'static str {
         Some(mirabile_app::TimeChoice::Later) => "later",
         None => "none",
     }
+}
+fn time_zone_key(value: &mirabile_app::TimeZoneAssertion) -> &'static str {
+    match value {
+        mirabile_app::TimeZoneAssertion::UniversalTime => "universal_time",
+        mirabile_app::TimeZoneAssertion::FixedOffset(_) => "fixed_offset",
+        mirabile_app::TimeZoneAssertion::NamedZone(_) => "named_zone",
+        mirabile_app::TimeZoneAssertion::LocalMeanTime => "local_mean_time",
+        mirabile_app::TimeZoneAssertion::LocalApparentTime => "local_apparent_time",
+        mirabile_app::TimeZoneAssertion::Unknown => "unknown",
+    }
+}
+fn time_zone_options() -> impl IntoView {
+    view! { <>
+        <option value="universal_time">"Universal Time"</option>
+        <option value="fixed_offset">"Fixed offset"</option>
+        <option value="named_zone">"Named zone"</option>
+        <option value="local_mean_time">"Local Mean Time"</option>
+        <option value="local_apparent_time">"Local Apparent Time"</option>
+        <option value="unknown">"Unknown"</option>
+    </> }
 }
 fn source_type_options() -> [(&'static str, &'static str); 7] {
     [
@@ -553,11 +667,48 @@ fn ChartLifeEventRow(
     let title_base = row.value.clone();
     let date_base = row.value.clone();
     let time_base = row.value.clone();
+    let calendar_base = row.value.clone();
+    let calendar_identifier_base = row.value.clone();
+    let timezone_base = row.value.clone();
+    let timezone_value_base = row.value.clone();
+    let disambiguation_base = row.value.clone();
     let location_toggle_base = row.value.clone();
     let last_note = row.notes.last().map(|note| note.item_id);
+    let date_authoritative = format_date(row.value.time.civil_datetime.date);
+    let time_authoritative = format_time(row.value.time.civil_datetime.time);
     view! { <div class="builder-row life-event-row"><label>"Title"<input type="text" prop:value=row.value.title.clone() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("title")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut value=title_base.clone(); value.title=event_target_value(&event); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
-        <label>"Date"<input type="date" prop:value=format_date(row.value.time.civil_datetime.date) data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("date")) data-mirabile-kind="date" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| if let Ok(date)=parse_date(&event_target_value(&event)) { let mut value=date_base.clone(); value.time.civil_datetime.date=date; dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
-        <label>"Time"<input type="time" step="1" prop:value=format_time(row.value.time.civil_datetime.time) data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("time")) data-mirabile-kind="time" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| if let Ok(time)=parse_time(&event_target_value(&event)) { let mut value=time_base.clone(); value.time.civil_datetime.time=time; dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
+        <ValidatedField address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("date")) label="Date".to_owned() kind=BufferedInputKind::Date
+            authoritative=Signal::derive(move || date_authoritative.clone()) disabled
+            parser=Callback::new(|text: String| parse_date(&text).map(format_date).map_err(|_| "Enter a valid civil date".to_owned()))
+            on_commit=Callback::new(move |text: String| if let Ok(date)=parse_date(&text) { let mut value=date_base.clone(); value.time.civil_datetime.date=date; dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); }) />
+        <ValidatedField address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("time")) label="Time".to_owned() kind=BufferedInputKind::Time
+            authoritative=Signal::derive(move || time_authoritative.clone()) disabled
+            parser=Callback::new(|text: String| parse_time(&text).map(format_time).map_err(|_| "Enter a valid civil time".to_owned()))
+            on_commit=Callback::new(move |text: String| if let Ok(time)=parse_time(&text) { let mut value=time_base.clone(); value.time.civil_datetime.time=time; dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); }) />
+        <label>"Calendar"<select prop:value=calendar_key(&row.value.time.calendar) data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("calendar")) data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut value=calendar_base.clone(); value.time.calendar=match event_target_value(&event).as_str() { "julian"=>mirabile_app::CalendarSpec::Julian, "historical"=>mirabile_app::CalendarSpec::HistoricalTransition { identifier:"custom-transition".into() }, _=>mirabile_app::CalendarSpec::ProlepticGregorian }; dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); }><option value="gregorian">"Proleptic Gregorian"</option><option value="julian">"Julian"</option><option value="historical">"Historical transition"</option></select></label>
+        {if let mirabile_app::CalendarSpec::HistoricalTransition { identifier }=&row.value.time.calendar { let identifier=identifier.clone(); view! {
+            <ValidatedField address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("calendar-identifier")) label="Transition identifier".to_owned() kind=BufferedInputKind::Text
+                authoritative=Signal::derive(move || identifier.clone()) disabled
+                parser=Callback::new(|text: String| (!text.trim().is_empty()).then(|| text.trim().to_owned()).ok_or_else(|| "Transition identifier is required".to_owned()))
+                on_commit=Callback::new(move |next: String| { let mut value=calendar_identifier_base.clone(); value.time.calendar=mirabile_app::CalendarSpec::HistoricalTransition { identifier:next }; dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); }) />
+        }.into_any() } else { ().into_any() }}
+        <label>"Timezone"<select prop:value=time_zone_key(&row.value.time.zone) data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("timezone")) data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut value=timezone_base.clone(); value.time.zone=match event_target_value(&event).as_str() { "fixed_offset"=>mirabile_app::TimeZoneAssertion::FixedOffset(mirabile_app::Offset::UTC), "named_zone"=>mirabile_app::TimeZoneAssertion::NamedZone("Etc/UTC".into()), "local_mean_time"=>mirabile_app::TimeZoneAssertion::LocalMeanTime, "local_apparent_time"=>mirabile_app::TimeZoneAssertion::LocalApparentTime, "unknown"=>mirabile_app::TimeZoneAssertion::Unknown, _=>mirabile_app::TimeZoneAssertion::UniversalTime }; dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); }>{time_zone_options()}</select></label>
+        {match &row.value.time.zone {
+            mirabile_app::TimeZoneAssertion::FixedOffset(offset) => { let minutes=(offset.seconds()/60).to_string(); let base=timezone_value_base.clone(); view! {
+                <ValidatedField address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("timezone-value")) label="UTC offset minutes".to_owned() kind=BufferedInputKind::Number
+                    authoritative=Signal::derive(move || minutes.clone()) disabled
+                    parser=Callback::new(|text: String| parse_offset(&text).map(|offset| (offset.seconds()/60).to_string()).map_err(|_| "Enter an offset from -1439 through 1439 minutes".to_owned()))
+                    on_commit=Callback::new(move |text: String| if let Ok(offset)=parse_offset(&text) { let mut value=base.clone(); value.time.zone=mirabile_app::TimeZoneAssertion::FixedOffset(offset); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); }) />
+            }.into_any() },
+            mirabile_app::TimeZoneAssertion::NamedZone(name) => { let name=name.clone(); let base=timezone_value_base.clone(); view! {
+                <ValidatedField address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("timezone-value")) label="IANA timezone name".to_owned() kind=BufferedInputKind::Text
+                    authoritative=Signal::derive(move || name.clone()) disabled
+                    parser=Callback::new(|text: String| (!text.trim().is_empty()).then(|| text.trim().to_owned()).ok_or_else(|| "Timezone name is required".to_owned()))
+                    on_commit=Callback::new(move |name: String| { let mut value=base.clone(); value.time.zone=mirabile_app::TimeZoneAssertion::NamedZone(name); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); }) />
+            }.into_any() },
+            _ => ().into_any()
+        }}
+        <label>"Ambiguous local time"<select prop:value=disambiguation_key(row.value.time.disambiguation) data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("disambiguation")) data-mirabile-kind="select" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut value=disambiguation_base.clone(); value.time.disambiguation=match event_target_value(&event).as_str() { "earlier"=>Some(mirabile_app::TimeChoice::Earlier), "later"=>Some(mirabile_app::TimeChoice::Later), _=>None }; dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); }><option value="none">"Not specified"</option><option value="earlier">"Earlier occurrence"</option><option value="later">"Later occurrence"</option></select></label>
         <label class="checkbox-field"><input type="checkbox" prop:checked=row.value.location.is_some() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("location-enabled")) data-mirabile-kind="toggle" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut value=location_toggle_base.clone(); value.location=event_target_checked(&event).then(|| mirabile_app::LocationAssertion { display_name:"Location".into(), country_region:None, latitude:mirabile_app::Latitude::from_degrees(0.0).expect("latitude"), longitude:mirabile_app::Longitude::from_degrees(0.0).expect("longitude"), atlas_provenance:None }); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } />"Use location"</label>
         {row.value.location.clone().map(|location| view! { <LifeEventLocation item_id event=row.value.clone() location disabled dispatcher /> })}
         {row.notes.into_iter().map(|note| { let note_id=note.item_id; let update=note.value.clone(); view! { <div class="nested-note"><label>"Life-event note"<textarea prop:value=note.value.text data-mirabile-control=ControlId::CHART_LIFE_EVENT_NOTE_FIELD.to_string() data-mirabile-address=chart_nested_item_address(ControlId::CHART_LIFE_EVENT_NOTE_FIELD, item_id, note_id, Some("text")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |event| { let mut value=update.clone(); value.text=event_target_value(&event); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_NOTE_FIELD, ChartMutation::LifeEventNotes { life_event_id:item_id, mutation:mirabile_app::DraftListMutation::Update { item_id:note_id, value } }); } /></label><button type="button" class="button danger" data-mirabile-control=ControlId::CHART_LIFE_EVENT_NOTE_REMOVE.to_string() data-mirabile-address=chart_nested_item_address(ControlId::CHART_LIFE_EVENT_NOTE_REMOVE, item_id, note_id, None) data-mirabile-kind="action" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:click=move |_| dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_NOTE_REMOVE, ChartMutation::LifeEventNotes { life_event_id:item_id, mutation:mirabile_app::DraftListMutation::Remove { item_id:note_id } })>"Remove note"</button></div> } }).collect_view()}
@@ -576,8 +727,44 @@ fn LifeEventLocation(
 ) -> impl IntoView {
     let name_base = event.clone();
     let latitude_base = event.clone();
-    let longitude_base = event;
-    view! { <div class="location-fields"><label>"Event location"<input type="text" prop:value=location.display_name data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("location-name")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| { let mut value=name_base.clone(); if let Some(location)=&mut value.location { location.display_name=event_target_value(&change); } dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label><label>"Latitude"<input type="number" prop:value=location.latitude.degrees() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("latitude")) data-mirabile-kind="number" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| if let Ok(degrees)=event_target_value(&change).parse() && let Ok(latitude)=mirabile_app::Latitude::from_degrees(degrees) { let mut value=latitude_base.clone(); if let Some(location)=&mut value.location { location.latitude=latitude; } dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label><label>"Longitude"<input type="number" prop:value=location.longitude.degrees() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("longitude")) data-mirabile-kind="number" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| if let Ok(degrees)=event_target_value(&change).parse() && let Ok(longitude)=mirabile_app::Longitude::from_degrees(degrees) { let mut value=longitude_base.clone(); if let Some(location)=&mut value.location { location.longitude=longitude; } dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label></div> }
+    let longitude_base = event.clone();
+    let country_base = event.clone();
+    let atlas_provider_base = event.clone();
+    let atlas_record_base = event.clone();
+    let atlas_version_base = event;
+    let atlas = location.atlas_provenance.clone();
+    let latitude_authoritative = location.latitude.degrees().to_string();
+    let longitude_authoritative = location.longitude.degrees().to_string();
+    view! { <div class="location-fields"><label>"Event location"<input type="text" prop:value=location.display_name data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("location-name")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| { let mut value=name_base.clone(); if let Some(location)=&mut value.location { location.display_name=event_target_value(&change); } dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
+        <ValidatedField address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("latitude")) label="Latitude".to_owned() kind=BufferedInputKind::Number
+            authoritative=Signal::derive(move || latitude_authoritative.clone()) disabled
+            parser=Callback::new(|text: String| text.parse::<f64>().ok().and_then(|degrees| mirabile_app::Latitude::from_degrees(degrees).ok()).map(|value| value.degrees().to_string()).ok_or_else(|| "Enter a latitude from -90 through 90 degrees".to_owned()))
+            on_commit=Callback::new(move |text: String| if let Ok(degrees)=text.parse() && let Ok(latitude)=mirabile_app::Latitude::from_degrees(degrees) { let mut value=latitude_base.clone(); if let Some(location)=&mut value.location { location.latitude=latitude; } dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); }) />
+        <ValidatedField address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("longitude")) label="Longitude".to_owned() kind=BufferedInputKind::Number
+            authoritative=Signal::derive(move || longitude_authoritative.clone()) disabled
+            parser=Callback::new(|text: String| text.parse::<f64>().ok().and_then(|degrees| mirabile_app::Longitude::from_degrees(degrees).ok()).map(|value| value.degrees().to_string()).ok_or_else(|| "Enter a longitude from -180 through 180 degrees".to_owned()))
+            on_commit=Callback::new(move |text: String| if let Ok(degrees)=text.parse() && let Ok(longitude)=mirabile_app::Longitude::from_degrees(degrees) { let mut value=longitude_base.clone(); if let Some(location)=&mut value.location { location.longitude=longitude; } dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); }) />
+        <label>"Country / region"<input type="text" prop:value=location.country_region.unwrap_or_default() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("country-region")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| { let raw=event_target_value(&change); let mut value=country_base.clone(); if let Some(location)=&mut value.location { location.country_region=(!raw.trim().is_empty()).then_some(raw); } dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
+        <label>"Atlas provider"<input type="text" prop:value=atlas.as_ref().map(|value| value.provider.clone()).unwrap_or_default() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("atlas-provider")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| { let mut value=atlas_provider_base.clone(); update_event_atlas(&mut value, |atlas| atlas.provider=event_target_value(&change)); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
+        <label>"Atlas record ID"<input type="text" prop:value=atlas.as_ref().and_then(|value| value.record_id.clone()).unwrap_or_default() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("atlas-record")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| { let raw=event_target_value(&change); let mut value=atlas_record_base.clone(); update_event_atlas(&mut value, |atlas| atlas.record_id=(!raw.trim().is_empty()).then_some(raw)); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
+        <label>"Atlas data version"<input type="text" prop:value=atlas.and_then(|value| value.data_version).unwrap_or_default() data-mirabile-control=ControlId::CHART_LIFE_EVENT_FIELD.to_string() data-mirabile-address=chart_item_address(ControlId::CHART_LIFE_EVENT_FIELD, "life-event", item_id, Some("atlas-version")) data-mirabile-kind="text" data-mirabile-enabled=move || (!disabled.get()).to_string() disabled=disabled on:change=move |change| { let raw=event_target_value(&change); let mut value=atlas_version_base.clone(); update_event_atlas(&mut value, |atlas| atlas.data_version=(!raw.trim().is_empty()).then_some(raw)); dispatch_mutation(dispatcher, ControlId::CHART_LIFE_EVENT_FIELD, ChartMutation::LifeEvents(mirabile_app::DraftListMutation::Update { item_id, value })); } /></label>
+    </div> }
+}
+
+fn update_event_atlas(
+    event: &mut mirabile_app::LifeEvent,
+    update: impl FnOnce(&mut mirabile_app::AtlasRef),
+) {
+    if let Some(location) = &mut event.location {
+        let atlas = location
+            .atlas_provenance
+            .get_or_insert_with(|| mirabile_app::AtlasRef {
+                provider: "Manual".into(),
+                record_id: None,
+                data_version: None,
+            });
+        update(atlas);
+    }
 }
 
 fn chart_item_address(
@@ -774,6 +961,7 @@ fn timezone_options(model: &AppReadModel) -> Vec<ControlOptionDescriptor> {
                     TimezoneAuthoringMode::NamedZone => "named_zone",
                     TimezoneAuthoringMode::LocalMeanTime => "local_mean_time",
                     TimezoneAuthoringMode::LocalApparentTime => "local_apparent_time",
+                    TimezoneAuthoringMode::Unknown => "unknown",
                 },
                 &choice.label,
                 choice.enabled,
@@ -861,6 +1049,41 @@ fn parse_longitude(value: &str) -> Result<Longitude, String> {
             .map_err(|_| "Enter a longitude from -180 through 180")?,
     )
     .map_err(|error| error.to_string())
+}
+
+fn parse_tags(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn component_identity(
+    kind: &str,
+    metadata: &mirabile_app::ChartComponentMetadataReadModel,
+) -> String {
+    metadata.resource_id.map_or_else(
+        || format!("{kind}: identity and revisions are allocated by the atomic save"),
+        |resource_id| {
+            format!(
+                "{kind}: {resource_id} · schema {} · r{} · created {} · modified {}",
+                metadata
+                    .schema_version
+                    .expect("saved component has a schema version"),
+                metadata.revision.expect("saved component has a revision"),
+                metadata
+                    .created_at
+                    .expect("saved component has a creation timestamp")
+                    .unix_millis(),
+                metadata
+                    .modified_at
+                    .expect("saved component has a modification timestamp")
+                    .unix_millis(),
+            )
+        },
+    )
 }
 
 #[cfg(test)]

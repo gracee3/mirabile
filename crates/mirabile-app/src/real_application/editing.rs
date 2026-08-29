@@ -207,6 +207,11 @@ where
                 ensure_option_enabled(&capabilities.house_systems, &value.houses)?;
             }
             ChartMutation::SetTitle(_)
+            | ChartMutation::SetDefinitionDescription(_)
+            | ChartMutation::SetDefinitionTags(_)
+            | ChartMutation::SetRecordTitle(_)
+            | ChartMutation::SetRecordDescription(_)
+            | ChartMutation::SetRecordTags(_)
             | ChartMutation::SetEventKind(_)
             | ChartMutation::SetSubjectName(_)
             | ChartMutation::SetCivilDate(_)
@@ -343,11 +348,18 @@ where
         };
         let timestamp = Timestamp::from_unix_millis(state.next_timestamp);
         let mut changes = Vec::new();
-        if draft.record != bases.record.payload {
-            let next = bases
+        if draft.record != bases.record.payload
+            || draft.record_title != bases.record.title
+            || draft.record_description != bases.record.description
+            || draft.record_tags != bases.record.tags
+        {
+            let mut next = bases
                 .record
                 .next_with_payload(draft.record, timestamp)
                 .map_err(|error| AppError::new(AppErrorKind::Unavailable, error.to_string()))?;
+            next.title = draft.record_title;
+            next.description = draft.record_description;
+            next.tags = draft.record_tags;
             changes.push(CanonicalResource::ChartRecord(next));
         }
         let next_definition_payload = ChartDefinition {
@@ -356,12 +368,16 @@ where
         };
         if next_definition_payload != bases.definition.payload
             || draft.title != bases.definition.title
+            || draft.definition_description != bases.definition.description
+            || draft.definition_tags != bases.definition.tags
         {
             let mut next = bases
                 .definition
                 .next_with_payload(next_definition_payload, timestamp)
                 .map_err(|error| AppError::new(AppErrorKind::Unavailable, error.to_string()))?;
             next.title = draft.title;
+            next.description = draft.definition_description;
+            next.tags = draft.definition_tags;
             changes.push(CanonicalResource::ChartDefinition(next));
         }
         let batch = AtomicSaveBatch {
@@ -539,13 +555,12 @@ where
                 })?;
             let timestamp = Timestamp::from_unix_millis(state.next_timestamp);
             let record_id = ResourceId::new();
-            let record = ResourceEnvelope::with_id(
-                record_id,
-                format!("{} source", draft.title),
-                draft.record,
-                timestamp,
-            );
-            let definition = ResourceEnvelope::with_id(
+            let record =
+                ResourceEnvelope::with_id(record_id, draft.record_title, draft.record, timestamp);
+            let mut record = record;
+            record.description = draft.record_description;
+            record.tags = draft.record_tags;
+            let mut definition = ResourceEnvelope::with_id(
                 ResourceId::new(),
                 draft.title,
                 ChartDefinition {
@@ -554,6 +569,8 @@ where
                 },
                 timestamp,
             );
+            definition.description = draft.definition_description;
+            definition.tags = draft.definition_tags;
             state.saving_chart_drafts.insert(instance_id);
             (record, definition)
         };
@@ -703,6 +720,8 @@ where
         state.editor = Some(AspectSetEditor {
             base: Some(envelope.clone()),
             title: envelope.title.clone(),
+            description: envelope.description.clone(),
+            tags: envelope.tags.clone(),
             draft: envelope.payload,
             state: DraftState::Clean {
                 revision: envelope.revision,
@@ -718,6 +737,8 @@ where
         state.editor = Some(AspectSetEditor {
             base: None,
             title: "Untitled Aspect Set".into(),
+            description: None,
+            tags: Vec::new(),
             draft: authoring_aspect_set(),
             state: DraftState::New,
         });
@@ -738,6 +759,8 @@ where
         state.editor = Some(AspectSetEditor {
             base: None,
             title: format!("{} Copy", source.title),
+            description: source.description,
+            tags: source.tags,
             draft: source.payload,
             state: DraftState::New,
         });
@@ -779,6 +802,14 @@ where
                     ));
                 }
                 editor.title = title.into();
+                false
+            }
+            AspectSetDraftMutation::SetDescription(description) => {
+                editor.description = description;
+                false
+            }
+            AspectSetDraftMutation::SetTags(tags) => {
+                editor.tags = tags;
                 false
             }
             AspectSetDraftMutation::SetOrb { aspect_id, maximum } => {
@@ -909,6 +940,12 @@ where
                 "There is no Aspect Set draft to save",
             )
         })?;
+        if !editor.metadata_validation().is_empty() {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                "Complete every invalid Aspect Set field before saving",
+            ));
+        }
         let (expected_revision, mut next) = match editor.state {
             DraftState::New => (
                 None,
@@ -940,6 +977,8 @@ where
             }
         };
         next.title.clone_from(&editor.title);
+        next.description.clone_from(&editor.description);
+        next.tags.clone_from(&editor.tags);
         next.validate().map_err(|error| {
             AppError::new(
                 AppErrorKind::InvalidIntent,
@@ -990,6 +1029,8 @@ where
         let editor = state.editor.as_mut().expect("editor was checked");
         editor.base = Some(canonical.clone());
         editor.title.clone_from(&canonical.title);
+        editor.description.clone_from(&canonical.description);
+        editor.tags.clone_from(&canonical.tags);
         editor.draft = canonical.payload;
         editor.state = DraftState::Clean {
             revision: canonical.revision,
@@ -1037,6 +1078,8 @@ where
                 }) {
                     editor.base = Some(next.clone());
                     editor.title.clone_from(&next.title);
+                    editor.description.clone_from(&next.description);
+                    editor.tags.clone_from(&next.tags);
                     editor.draft = next.payload;
                     editor.state = DraftState::Clean {
                         revision: next.revision,

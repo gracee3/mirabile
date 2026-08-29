@@ -213,6 +213,7 @@ pub enum MacroResourceMutationV1 {
         mutation: MacroListMutationV1<mirabile_core::Note>,
     },
     ChartDefinitionSource(mirabile_core::ChartSource),
+    ChartDefinitionSwitch(crate::DerivedRecipeKind),
     ChartDefinitionRecipe(MacroDerivedRecipeMutationV1),
     ChartDefinitionCalculation(mirabile_core::CalculationSpec),
     PointSetSelectors(MacroListMutationV1<mirabile_core::PointSelector>),
@@ -221,11 +222,18 @@ pub enum MacroResourceMutationV1 {
     WheelTemplateRings(MacroListMutationV1<mirabile_core::RingSpec>),
     WheelTemplateFields(mirabile_core::WheelTemplate),
     ViewDocumentChartSlots(MacroListMutationV1<mirabile_core::ChartSlot>),
+    ViewDocumentInsertChartSlotDefault {
+        after: Option<MacroListItemSelectorV1>,
+    },
     ViewDocumentRenameChartSlot {
         item: MacroListItemSelectorV1,
         slot: mirabile_core::ChartSlot,
     },
     ViewDocumentObjects(MacroListMutationV1<mirabile_core::ViewObject>),
+    ViewDocumentPointTablePoints {
+        object: MacroListItemSelectorV1,
+        mutation: MacroListMutationV1<mirabile_core::PointId>,
+    },
     ViewDocumentLayout(mirabile_core::PageLayout),
     Theme(mirabile_core::Theme),
     QueryDescription(Option<String>),
@@ -356,6 +364,12 @@ pub enum SemanticActionV1 {
     RenameWorkspace {
         title: String,
     },
+    SetWorkspaceDescription {
+        description: Option<String>,
+    },
+    SetWorkspaceTags {
+        tags: Vec<String>,
+    },
     DiscardWorkspaceChanges,
     ResolveWorkspaceSwitch {
         resolution: WorkspaceSwitchAction,
@@ -365,6 +379,21 @@ pub enum SemanticActionV1 {
     CancelChartEditor,
     SetChartTitle {
         title: String,
+    },
+    SetChartDefinitionDescription {
+        description: Option<String>,
+    },
+    SetChartDefinitionTags {
+        tags: Vec<String>,
+    },
+    SetChartRecordTitle {
+        title: String,
+    },
+    SetChartRecordDescription {
+        description: Option<String>,
+    },
+    SetChartRecordTags {
+        tags: Vec<String>,
     },
     SetChartEventKind {
         event_kind: EventKind,
@@ -470,6 +499,12 @@ pub enum SemanticActionV1 {
     SetAspectTitle {
         title: String,
     },
+    SetAspectDescription {
+        description: Option<String>,
+    },
+    SetAspectTags {
+        tags: Vec<String>,
+    },
     InsertAspect {
         after: Option<AspectId>,
         aspect: mirabile_core::AspectDefinition,
@@ -532,6 +567,25 @@ impl SemanticActionV1 {
                 ChartMutation::SetTitle(title) => Self::SetChartTitle {
                     title: title.clone(),
                 },
+                ChartMutation::SetDefinitionDescription(description) => {
+                    Self::SetChartDefinitionDescription {
+                        description: description.clone(),
+                    }
+                }
+                ChartMutation::SetDefinitionTags(tags) => {
+                    Self::SetChartDefinitionTags { tags: tags.clone() }
+                }
+                ChartMutation::SetRecordTitle(title) => Self::SetChartRecordTitle {
+                    title: title.clone(),
+                },
+                ChartMutation::SetRecordDescription(description) => {
+                    Self::SetChartRecordDescription {
+                        description: description.clone(),
+                    }
+                }
+                ChartMutation::SetRecordTags(tags) => {
+                    Self::SetChartRecordTags { tags: tags.clone() }
+                }
                 ChartMutation::SetEventKind(event_kind) => Self::SetChartEventKind {
                     event_kind: event_kind.clone(),
                 },
@@ -541,7 +595,7 @@ impl SemanticActionV1 {
                 ChartMutation::SetCivilDate(date) => Self::SetChartCivilDate { date: *date },
                 ChartMutation::SetCivilTime(time) => Self::SetChartCivilTime { time: *time },
                 ChartMutation::SetTimezone(timezone) => Self::SetChartTimezone {
-                    timezone: *timezone,
+                    timezone: timezone.clone(),
                 },
                 ChartMutation::SetLocationEnabled(enabled) => {
                     Self::SetChartLocationEnabled { enabled: *enabled }
@@ -667,6 +721,10 @@ impl SemanticActionV1 {
             AppIntent::RenameWorkspace { title } => Self::RenameWorkspace {
                 title: title.clone(),
             },
+            AppIntent::SetWorkspaceDescription { description } => Self::SetWorkspaceDescription {
+                description: description.clone(),
+            },
+            AppIntent::SetWorkspaceTags { tags } => Self::SetWorkspaceTags { tags: tags.clone() },
             AppIntent::DiscardWorkspaceChanges => Self::DiscardWorkspaceChanges,
             AppIntent::ResolveWorkspaceSwitch { action } => Self::ResolveWorkspaceSwitch {
                 resolution: *action,
@@ -691,6 +749,10 @@ impl SemanticActionV1 {
                 AspectSetDraftMutation::SetTitle(title) => Self::SetAspectTitle {
                     title: title.clone(),
                 },
+                AspectSetDraftMutation::SetDescription(description) => Self::SetAspectDescription {
+                    description: description.clone(),
+                },
+                AspectSetDraftMutation::SetTags(tags) => Self::SetAspectTags { tags: tags.clone() },
                 AspectSetDraftMutation::SetOrb { aspect_id, maximum } => Self::UpdateAspectOrb {
                     aspect_id: aspect_id.clone(),
                     degrees: maximum.degrees(),
@@ -808,6 +870,10 @@ impl SemanticActionV1 {
             Self::RenameWorkspace { title } => AppIntent::RenameWorkspace {
                 title: title.clone(),
             },
+            Self::SetWorkspaceDescription { description } => AppIntent::SetWorkspaceDescription {
+                description: description.clone(),
+            },
+            Self::SetWorkspaceTags { tags } => AppIntent::SetWorkspaceTags { tags: tags.clone() },
             Self::DiscardWorkspaceChanges => AppIntent::DiscardWorkspaceChanges,
             Self::ResolveWorkspaceSwitch { resolution } => AppIntent::ResolveWorkspaceSwitch {
                 action: *resolution,
@@ -817,6 +883,21 @@ impl SemanticActionV1 {
             Self::CancelChartEditor => AppIntent::CancelChartEditor,
             Self::SetChartTitle { title } => {
                 AppIntent::ApplyChartMutation(ChartMutation::SetTitle(title.clone()))
+            }
+            Self::SetChartDefinitionDescription { description } => AppIntent::ApplyChartMutation(
+                ChartMutation::SetDefinitionDescription(description.clone()),
+            ),
+            Self::SetChartDefinitionTags { tags } => {
+                AppIntent::ApplyChartMutation(ChartMutation::SetDefinitionTags(tags.clone()))
+            }
+            Self::SetChartRecordTitle { title } => {
+                AppIntent::ApplyChartMutation(ChartMutation::SetRecordTitle(title.clone()))
+            }
+            Self::SetChartRecordDescription { description } => AppIntent::ApplyChartMutation(
+                ChartMutation::SetRecordDescription(description.clone()),
+            ),
+            Self::SetChartRecordTags { tags } => {
+                AppIntent::ApplyChartMutation(ChartMutation::SetRecordTags(tags.clone()))
             }
             Self::SetChartEventKind { event_kind } => {
                 AppIntent::ApplyChartMutation(ChartMutation::SetEventKind(event_kind.clone()))
@@ -831,7 +912,7 @@ impl SemanticActionV1 {
                 AppIntent::ApplyChartMutation(ChartMutation::SetCivilTime(*time))
             }
             Self::SetChartTimezone { timezone } => {
-                AppIntent::ApplyChartMutation(ChartMutation::SetTimezone(*timezone))
+                AppIntent::ApplyChartMutation(ChartMutation::SetTimezone(timezone.clone()))
             }
             Self::SetChartLocationEnabled { enabled } => {
                 AppIntent::ApplyChartMutation(ChartMutation::SetLocationEnabled(*enabled))
@@ -971,6 +1052,12 @@ impl SemanticActionV1 {
             }
             Self::SetAspectTitle { title } => {
                 AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetTitle(title.clone()))
+            }
+            Self::SetAspectDescription { description } => AppIntent::UpdateAspectSetDraft(
+                AspectSetDraftMutation::SetDescription(description.clone()),
+            ),
+            Self::SetAspectTags { tags } => {
+                AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::SetTags(tags.clone()))
             }
             Self::InsertAspect { after, aspect } => {
                 AppIntent::UpdateAspectSetDraft(AspectSetDraftMutation::Insert {
@@ -1385,6 +1472,18 @@ fn life_event_rows(
         .collect()
 }
 
+fn view_object_rows(
+    objects: &[crate::ViewObjectDraftReadModel],
+) -> Vec<crate::StableDraftItemReadModel<mirabile_core::ViewObject>> {
+    objects
+        .iter()
+        .map(|object| crate::StableDraftItemReadModel {
+            item_id: object.item_id,
+            value: object.value.clone(),
+        })
+        .collect()
+}
+
 fn capture_list_selector<T, F>(
     item_id: crate::DraftItemId,
     rows: &[crate::StableDraftItemReadModel<T>],
@@ -1552,6 +1651,11 @@ fn slot_key(value: &mirabile_core::ChartSlot) -> Option<String> {
 
 #[allow(clippy::unnecessary_wraps)]
 fn resource_key(value: &ResourceId) -> Option<String> {
+    Some(value.to_string())
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn point_id_key(value: &mirabile_core::PointId) -> Option<String> {
     Some(value.to_string())
 }
 
@@ -1756,6 +1860,9 @@ fn capture_resource_mutation(
             crate::ChartDefinitionMutation::SetSource(value) => {
                 MacroResourceMutationV1::ChartDefinitionSource(value.clone())
             }
+            crate::ChartDefinitionMutation::SwitchDerivedRecipe(kind) => {
+                MacroResourceMutationV1::ChartDefinitionSwitch(*kind)
+            }
             crate::ChartDefinitionMutation::SetCalculation(value) => {
                 MacroResourceMutationV1::ChartDefinitionCalculation(value.clone())
             }
@@ -1861,6 +1968,23 @@ fn capture_resource_mutation(
                     slot_key,
                 )?)
             }
+            crate::ViewDocumentMutation::InsertChartSlotDefault { after } => {
+                let Nested::ViewDocument { chart_slots, .. } = &draft.nested else {
+                    return Err(topology("ViewDocument slot topology is unavailable"));
+                };
+                MacroResourceMutationV1::ViewDocumentInsertChartSlotDefault {
+                    after: after
+                        .map(|item_id| {
+                            capture_list_selector(
+                                item_id,
+                                chart_slots,
+                                "resource.view_document.chart_slots",
+                                slot_key,
+                            )
+                        })
+                        .transpose()?,
+                }
+            }
             crate::ViewDocumentMutation::RenameChartSlot { item_id, slot } => {
                 let Nested::ViewDocument { chart_slots, .. } = &draft.nested else {
                     return Err(topology("ViewDocument slot topology is unavailable"));
@@ -1879,12 +2003,40 @@ fn capture_resource_mutation(
                 let Nested::ViewDocument { objects, .. } = &draft.nested else {
                     return Err(topology("ViewDocument object topology is unavailable"));
                 };
+                let rows = view_object_rows(objects);
                 MacroResourceMutationV1::ViewDocumentObjects(capture_list_mutation(
                     value,
-                    objects,
+                    &rows,
                     "resource.view_document.objects",
                     |_| None,
                 )?)
+            }
+            crate::ViewDocumentMutation::PointTablePoints {
+                object_id,
+                mutation,
+            } => {
+                let Nested::ViewDocument { objects, .. } = &draft.nested else {
+                    return Err(topology("ViewDocument object topology is unavailable"));
+                };
+                let rows = view_object_rows(objects);
+                let object = objects
+                    .iter()
+                    .find(|object| object.item_id == *object_id)
+                    .ok_or_else(|| topology("PointTable object was not found"))?;
+                MacroResourceMutationV1::ViewDocumentPointTablePoints {
+                    object: capture_list_selector(
+                        *object_id,
+                        &rows,
+                        "resource.view_document.objects",
+                        |_| None,
+                    )?,
+                    mutation: capture_list_mutation(
+                        mutation,
+                        &object.point_table_points,
+                        "resource.view_document.objects.point_table_points",
+                        point_id_key,
+                    )?,
+                }
             }
             crate::ViewDocumentMutation::SetLayout(value) => {
                 MacroResourceMutationV1::ViewDocumentLayout(value.clone())
@@ -2016,6 +2168,11 @@ fn resolve_resource_mutation(
                 value.clone(),
             ))
         }
+        MacroResourceMutationV1::ChartDefinitionSwitch(kind) => {
+            crate::ResourceMutation::ChartDefinition(
+                crate::ChartDefinitionMutation::SwitchDerivedRecipe(*kind),
+            )
+        }
         MacroResourceMutationV1::ChartDefinitionCalculation(value) => {
             crate::ResourceMutation::ChartDefinition(
                 crate::ChartDefinitionMutation::SetCalculation(value.clone()),
@@ -2112,6 +2269,26 @@ fn resolve_resource_mutation(
                 )?,
             ))
         }
+        MacroResourceMutationV1::ViewDocumentInsertChartSlotDefault { after } => {
+            let Nested::ViewDocument { chart_slots, .. } = &draft.nested else {
+                return Err(topology("ViewDocument slot topology is unavailable"));
+            };
+            crate::ResourceMutation::ViewDocument(
+                crate::ViewDocumentMutation::InsertChartSlotDefault {
+                    after: after
+                        .as_ref()
+                        .map(|selector| {
+                            resolve_list_selector(
+                                selector,
+                                chart_slots,
+                                "resource.view_document.chart_slots",
+                                slot_key,
+                            )
+                        })
+                        .transpose()?,
+                },
+            )
+        }
         MacroResourceMutationV1::ViewDocumentRenameChartSlot { item, slot } => {
             let Nested::ViewDocument { chart_slots, .. } = &draft.nested else {
                 return Err(topology("ViewDocument slot topology is unavailable"));
@@ -2130,9 +2307,31 @@ fn resolve_resource_mutation(
             let Nested::ViewDocument { objects, .. } = &draft.nested else {
                 return Err(topology("ViewDocument object topology is unavailable"));
             };
+            let rows = view_object_rows(objects);
             crate::ResourceMutation::ViewDocument(crate::ViewDocumentMutation::Objects(
-                resolve_list_mutation(value, objects, "resource.view_document.objects", |_| None)?,
+                resolve_list_mutation(value, &rows, "resource.view_document.objects", |_| None)?,
             ))
+        }
+        MacroResourceMutationV1::ViewDocumentPointTablePoints { object, mutation } => {
+            let Nested::ViewDocument { objects, .. } = &draft.nested else {
+                return Err(topology("ViewDocument object topology is unavailable"));
+            };
+            let rows = view_object_rows(objects);
+            let object_id =
+                resolve_list_selector(object, &rows, "resource.view_document.objects", |_| None)?;
+            let object = objects
+                .iter()
+                .find(|object| object.item_id == object_id)
+                .ok_or_else(|| topology("PointTable object topology changed"))?;
+            crate::ResourceMutation::ViewDocument(crate::ViewDocumentMutation::PointTablePoints {
+                object_id,
+                mutation: resolve_list_mutation(
+                    mutation,
+                    &object.point_table_points,
+                    "resource.view_document.objects.point_table_points",
+                    point_id_key,
+                )?,
+            })
         }
         MacroResourceMutationV1::ViewDocumentLayout(value) => {
             crate::ResourceMutation::ViewDocument(crate::ViewDocumentMutation::SetLayout(
@@ -2887,6 +3086,8 @@ mod tests {
                     tags: Vec::new(),
                     state: crate::DraftState::New,
                     conflicts: Vec::new(),
+                    validation: Vec::new(),
+                    derived_recipe_options: Vec::new(),
                     nested: crate::NestedResourceDraftReadModel::PointSet(rows.clone()),
                     value: crate::ResourceDraftValueReadModel::PointSet(mirabile_core::PointSet {
                         points: rows.into_iter().map(|row| row.value).collect(),
@@ -2970,6 +3171,8 @@ mod tests {
                     tags: Vec::new(),
                     state: crate::DraftState::New,
                     conflicts: Vec::new(),
+                    validation: Vec::new(),
+                    derived_recipe_options: Vec::new(),
                     nested: crate::NestedResourceDraftReadModel::QueryDefinition(
                         crate::QueryNodeDraftReadModel {
                             node_id: crate::DraftItemId::new(),
@@ -3027,6 +3230,122 @@ mod tests {
         assert!(matches!(
             action.resolve(&model_with_query(1), &MacroBindings::default()),
             Err(MacroError::TopologyMismatch(_))
+        ));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn point_table_rows_use_composed_structural_selectors() {
+        fn model_with_point_table(points: &[&str]) -> AppReadModel {
+            let object_id = crate::DraftItemId::new();
+            let point_rows = points
+                .iter()
+                .map(|point| crate::StableDraftItemReadModel {
+                    item_id: crate::DraftItemId::new(),
+                    value: PointId::new(*point).expect("point ID"),
+                })
+                .collect::<Vec<_>>();
+            let slot = crate::ChartSlotId::new("primary").expect("slot");
+            let object = crate::ViewObject::PointTable(crate::PointTableObject {
+                slot: slot.clone(),
+                points: point_rows.iter().map(|row| row.value.clone()).collect(),
+                frame: crate::ObjectFrame {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 100.0,
+                },
+            });
+            let mut model = AppReadModel::initializing();
+            model
+                .resource_editor
+                .drafts
+                .push(crate::TypedResourceDraftReadModel {
+                    kind: crate::ResourceDraftKind::ViewDocument,
+                    resource_id: None,
+                    title: "Point table".into(),
+                    description: None,
+                    tags: Vec::new(),
+                    state: crate::DraftState::New,
+                    conflicts: Vec::new(),
+                    validation: Vec::new(),
+                    derived_recipe_options: Vec::new(),
+                    nested: crate::NestedResourceDraftReadModel::ViewDocument {
+                        chart_slots: vec![crate::StableDraftItemReadModel {
+                            item_id: crate::DraftItemId::new(),
+                            value: crate::ChartSlot {
+                                id: slot.clone(),
+                                label: "Primary".into(),
+                                required: true,
+                            },
+                        }],
+                        objects: vec![crate::ViewObjectDraftReadModel {
+                            item_id: object_id,
+                            value: object.clone(),
+                            point_table_points: point_rows,
+                        }],
+                    },
+                    value: crate::ResourceDraftValueReadModel::ViewDocument(
+                        mirabile_core::ViewDocument {
+                            chart_slots: vec![crate::ChartSlot {
+                                id: slot,
+                                label: "Primary".into(),
+                                required: true,
+                            }],
+                            objects: vec![object],
+                            layout: mirabile_core::PageLayout {
+                                width: 800.0,
+                                height: 800.0,
+                            },
+                        },
+                    ),
+                });
+            model
+        }
+
+        let before = model_with_point_table(&["sun", "moon"]);
+        let crate::NestedResourceDraftReadModel::ViewDocument { objects, .. } =
+            &before.resource_editor.drafts[0].nested
+        else {
+            panic!("view topology")
+        };
+        let old_object = objects[0].item_id;
+        let old_point = objects[0].point_table_points[1].item_id;
+        let intent = AppIntent::ApplyResourceMutation(Box::new(
+            crate::ResourceMutation::ViewDocument(crate::ViewDocumentMutation::PointTablePoints {
+                object_id: old_object,
+                mutation: crate::DraftListMutation::Update {
+                    item_id: old_point,
+                    value: PointId::new("mars").expect("point ID"),
+                },
+            }),
+        ));
+        let action = SemanticActionV1::capture(&intent, &before, &MacroBindings::default())
+            .expect("capture nested points");
+        let json = serde_json::to_string(&action).expect("serialize action");
+        assert!(!json.contains(&old_object.to_string()));
+        assert!(!json.contains(&old_point.to_string()));
+
+        let replay = model_with_point_table(&["sun", "moon"]);
+        let crate::NestedResourceDraftReadModel::ViewDocument { objects, .. } =
+            &replay.resource_editor.drafts[0].nested
+        else {
+            panic!("view topology")
+        };
+        let expected_object = objects[0].item_id;
+        let expected_point = objects[0].point_table_points[1].item_id;
+        assert!(matches!(
+            action.resolve(&replay, &MacroBindings::default()),
+            Ok(AppIntent::ApplyResourceMutation(mutation))
+                if matches!(
+                    mutation.as_ref(),
+                    crate::ResourceMutation::ViewDocument(
+                        crate::ViewDocumentMutation::PointTablePoints {
+                            object_id,
+                            mutation: crate::DraftListMutation::Update { item_id, .. }
+                        }
+                    ) if *object_id == expected_object && *item_id == expected_point
+                )
         ));
     }
 }

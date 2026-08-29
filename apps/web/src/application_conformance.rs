@@ -318,7 +318,10 @@ async fn real_authoring_scenario(application: Rc<dyn Application>) {
 
     model = dispatch_settled(application.as_ref(), &model, AppIntent::BeginNewChart).await;
     let first_draft = model.chart_editor.as_ref().expect("new editor");
-    assert_eq!(first_draft.fields.title, "Untitled Chart");
+    assert_eq!(
+        first_draft.fields.definition_metadata.title,
+        "Untitled Chart"
+    );
     assert!(first_draft.validation.is_empty());
     model = dispatch_settled(
         application.as_ref(),
