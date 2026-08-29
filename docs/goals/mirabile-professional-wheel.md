@@ -78,8 +78,12 @@
   Example Event to assert a real retrograde Jupiter and two retained conjunction entries without
   chords.
 - Focused native evidence: 19 engine architecture/geometry tests and three automation manifest
-  tests pass; strict Clippy passes. The fast gate passes with 189 workspace tests, six CDP-client
+  tests pass; strict Clippy passes. The fast gate passes with 189 workspace tests, seven CDP-client
   tests, formatting, strict Clippy, and clean diffs.
+- The first full-gate run exposed that CDP keyboard focus could not reach a buffered control inside
+  a closed native disclosure. The constrained driver now reveals enclosing disclosures before
+  keyboard focus (without toggling a summary's own disclosure); its regression test, the complete
+  92-step new-chart control journey, and the professional-wheel journey all pass.
 - Responsive browser evidence: the professional journey passes at 1366x768, 1600x1000, the T14's
   current 1920x1080 display mode, and 800x900. Each run reports twelve zodiac signs, twelve real
   houses for the final Equal chart, four angles, six true anchors and labels, one actual retrograde

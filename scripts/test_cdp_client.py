@@ -48,6 +48,12 @@ class CDPClientTests(unittest.TestCase):
         help_text = module.parser().format_help()
         self.assertNotIn("evaluate", help_text)
 
+    def test_keyboard_focus_reveals_controls_inside_disclosures(self) -> None:
+        module = load_workbench_control()
+        expression = module.native_expression("chart.title", "focus")
+        self.assertIn("disclosure.open=true", expression)
+        self.assertIn("disclosure !== ownDisclosure", expression)
+
     def test_failure_artifact_names_are_complete(self) -> None:
         module = load_workbench_control()
         source = Path(module.__file__).read_text(encoding="utf-8")

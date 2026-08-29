@@ -113,7 +113,13 @@ def native_expression(address: str, operation: str, value: Any = None) -> str:
     value_json = json.dumps(value)
     operations = {
         "click": "native.click(); return true;",
-        "focus": "native.focus(); return true;",
+        "focus": (
+            "const ownDisclosure=native.matches('summary') ? native.parentElement : null;"
+            "for (let disclosure=native.closest('details'); disclosure; "
+            "disclosure=disclosure.parentElement?.closest('details')) {"
+            "if (disclosure !== ownDisclosure) disclosure.open=true;"
+            "} native.focus(); return true;"
+        ),
         "set": (
             "if (!('value' in native)) throw new Error('control has no value');"
             f"native.value = {value_json};"
