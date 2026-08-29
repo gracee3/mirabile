@@ -6,7 +6,7 @@
   2026-08-28 after squash-merging PR #1)
 - Branch: `goal/mirabile-control-cockpit`
 - Worktree: `/home/emmy/mirabile` (the existing checkout; no additional worktree or Cargo target)
-- Current phase: final field-ledger verification and authorized feature-PR merge
+- Current phase: verified and awaiting authorized feature-PR merge
 - Delivery: focused commits pushed regularly; mark PR #2 ready and squash-merge it only after the
   exact pushed head passes every completion gate
 - Current fast gate: `scripts/check.sh` passes 182 Rust tests and 6 Python tests, strict Clippy,
@@ -37,11 +37,11 @@
 | 1. Baseline and goal | Complete | Correct and merge PR #1; capture disk, normal application, console, display, and screenshot baseline | `./scripts/check.sh`; clean fast-forwarded `main`; normal non-automation XALEN initialization | `774d54c` |
 | 2. Repository and inventory | Complete | Present/deleted heads; selected-resource revisions; inventories for all ten canonical resource types | 157 Rust tests; WASM check; IndexedDB browser contract; `./scripts/check.sh` | `85bfead` |
 | 3. General typed drafts | Complete | Typed mutations, lifecycle/conflict projections, one draft per type, stable nested item IDs | 161 Rust tests; 5 Python tests; strict Clippy; `./scripts/check.sh` | `4aae865` |
-| 4. Complete editors | Complete pending final commit | Every modeled field is accounted for in the field ledger; typed nested projections, mutations, validation, macro actions, persistence, and visible journeys are implemented | Native and browser authoring coverage; `mirabile-control-cockpit-fields.md` | `8b746bb` through working tree after `e6b8182` |
+| 4. Complete editors | Complete | Every modeled field is accounted for in the field ledger; typed nested projections, mutations, validation, macro actions, persistence, and visible journeys are implemented | Native and browser authoring coverage; `mirabile-control-cockpit-fields.md` | `8b746bb` through `6ceacf2` |
 | 5. Bindings and outputs | Complete | Writable Follow/Pinned/Inline bindings, provider-neutral tables, provenance, parameter status, and last-good retention | Focused binding and last-good regressions | `8b2b44e` |
 | 6. Cockpit composition | Complete | Document-height eight-section cockpit, sticky navigation/search/fold controls, and semantic addresses | Cockpit manifest plus four responsive captures | `534a277`, `057c5e3` |
 | 7. History and deletion | Complete | Revision inspection, reference-aware two-step deletion, tombstones, stale-delete conflicts, and reload | Store/application tests plus browser reload journey | `8b2b44e`, `057c5e3` |
-| 8. Handoff | In progress | Exact-head full gate, normal browser acceptance, evidence update, and authorized squash merge | T14 acceptance matrix and remote verification | PR #2 |
+| 8. Handoff | Complete pending merge | Exact-head full gate, normal browser acceptance, evidence update, and authorized squash merge | T14 acceptance matrix and remote verification | `aaeeb6b`, PR #2 |
 
 ## Phase records
 
@@ -249,21 +249,35 @@ Reconciliation snapshot on 2026-08-28:
   correct final-gate record above: `scripts/verify.sh` was skipped when only 11,262,078,976 bytes
   were free.
 
-## Blockers
+## Final verification and merge state
 
-- No implementation or external blocker is currently known. The field-level completion contract is
-  recorded in `mirabile-control-cockpit-fields.md` with projection, semantic address, typed
-  mutation, macro selector, persistence, deletion, and browser evidence for every modeled field.
-- Current focused evidence on the uncommitted completion slice: 94 `mirabile-app` tests and 22
-  `mirabile-web` tests pass; `scripts/check.sh` passes 182 Rust tests and 6 Python tests with strict
-  Clippy and formatting in 9.5 seconds on the warm target. The expanded
-  `workspace-lifecycle-control`, `aspect-set-control`, `new-chart-control`, and
-  `nested-builder-control` journeys pass through real controls and IndexedDB reload; the expanded
-  `history-delete-control` journey proves blocked-then-valid deletion after a durable rebind.
-- Current disk checkpoint is 18,954,059,776 available bytes and 17,455,870,533 bytes in `target/`.
-  The final disk threshold and exact pushed-head full gates still need to be recorded before PR #2
-  can be marked ready.
-- Next action: commit and push this completion slice, run `scripts/check.sh`, calculate the final
-  disk gate, run `scripts/verify.sh`, perform normal non-automation viewport acceptance, update the
-  PR with exact evidence, and execute the authorized squash merge only if remote state remains
-  clean.
+- No implementation blocker or field-ledger gap is known. The completion contract is recorded in
+  `mirabile-control-cockpit-fields.md` with projection, semantic address, typed mutation, macro
+  selector, persistence, deletion, and browser evidence for every modeled field.
+- The final code and browser-contract head before this evidence-only documentation update is
+  `aaeeb6b6ed01e1eee0478371659efd37930b26a4`. Focused gates pass 94 `mirabile-app` tests and 22
+  `mirabile-web` tests. The exact-head `scripts/check.sh` passes 182 Rust tests and 6 Python tests
+  with formatting, strict Clippy, and both diff checks in 18.95 seconds after the narrow disk-gate
+  rebuild.
+- The successful full-gate preflight measured 18,588,459,008 available bytes and
+  16,613,352,636 bytes in `target/`. The threshold was 18,253,611,008 bytes: 15 GiB plus the 2 GiB
+  minimum focused-build allowance. The 334,848,000-byte margin passed. Only reproducible
+  `mirabile-web` Cargo outputs were cleaned after process/path checks; user browser state and an
+  unrelated active checkout were not touched.
+- `scripts/verify.sh` passes in 290.06 seconds. It includes native, XALEN known-answer, WASM,
+  IndexedDB/Worker, diagnostics, workspace, all completed builder, macro replay/topology failure,
+  history/deletion, both CAS-conflict, and intentional expected-failure artifact coverage. The
+  post-gate checkpoint was 17,547,632,640 available bytes with 16,898,185,358 bytes in `target/`.
+- Normal non-automation acceptance exposed no automation bridge, initialized through Worker/XALEN,
+  loaded the demo, opened the ChartRecord/radix, derived ChartDefinition, PointSet, AspectSet,
+  AnalysisProfile, WheelTemplate, ViewDocument, Theme, QueryDefinition, and WorkspaceDocument
+  builders, and recovered the demo catalog after a page reload. It recorded zero console errors or
+  uncaught exceptions.
+- DOM measurements report no horizontal viewport overflow at 1600x1000, 1366x768, the T14
+  1920x1080 viewport, or 800x700. The intentionally untracked captures and their bounded DOM/log
+  evidence are in `target/control-cockpit-final/`: `cockpit-1600x1000.png`,
+  `cockpit-1366x768.png`, `cockpit-t14-1920x1080.png`, `cockpit-800x700.png`, and
+  `normal-demo-t14-1920x1080.png`.
+- Next action: push this evidence-only commit, repeat the exact-head fast and full gates if the disk
+  preflight passes, update PR #2, and perform the authorized squash merge only if remote state is
+  still clean.
