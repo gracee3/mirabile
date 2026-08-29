@@ -1,23 +1,105 @@
 use super::{
     AnalysisProfile, AppResult, AspectSet, AspectSetSummary, BTreeMap, CanonicalResource,
     ChartDefinition, ChartPersistence, ChartRecord, ChartSource, ConfigurationLayer,
-    LibraryChartSummary, OpenChartSummary, PointSet, Resolved, ResourceBinding, ResourceEnvelope,
-    ResourceId, Revision, Theme, ViewDocument, WheelTemplate, WorkspaceDocument,
-    WorkspaceDocumentChart, chart_record_subtitle, conjunction, not_found, push_pin,
-    resolve_binding,
+    LibraryChartSummary, OpenChartSummary, PointSet, RepositoryHeadReadModel, RepositoryHeadState,
+    RepositoryReadModel, RepositoryRevisionReadModel, RepositoryRevisionState, RepositorySelection,
+    Resolved, ResourceBinding, ResourceCatalogReadModel, ResourceEnvelope, ResourceId,
+    ResourceInventoryReadModel, ResourceKind, ResourceState, ResourceSummaryReadModel, Revision,
+    Theme, ViewDocument, WheelTemplate, WorkspaceDocument, WorkspaceDocumentChart,
+    chart_record_subtitle, conjunction, not_found, push_pin, resolve_binding,
 };
 
 #[derive(Clone, Default)]
 pub(super) struct Catalog {
     pub(super) current: BTreeMap<ResourceId, CanonicalResource>,
     pub(super) history: BTreeMap<(ResourceId, Revision), CanonicalResource>,
+    pub(super) heads: BTreeMap<ResourceId, ResourceState>,
 }
 
 impl Catalog {
     pub(super) fn insert_current(&mut self, resource: CanonicalResource) {
         self.history
             .insert((resource.id(), resource.revision()), resource.clone());
-        self.current.insert(resource.id(), resource);
+        self.current.insert(resource.id(), resource.clone());
+        self.heads
+            .insert(resource.id(), ResourceState::Present(resource));
+    }
+
+    pub(super) fn insert_head(&mut self, head: ResourceState) {
+        match &head {
+            ResourceState::Present(resource) => {
+                self.history
+                    .insert((resource.id(), resource.revision()), resource.clone());
+                self.current.insert(resource.id(), resource.clone());
+            }
+            ResourceState::Deleted(tombstone) => {
+                self.current.remove(&tombstone.id);
+            }
+        }
+        self.heads.insert(head.id(), head);
+    }
+
+    pub(super) fn resource_catalog_read_model(&self) -> ResourceCatalogReadModel {
+        ResourceCatalogReadModel {
+            inventories: CanonicalResource::KINDS
+                .into_iter()
+                .map(|kind| ResourceInventoryReadModel {
+                    kind,
+                    label: resource_kind_label(kind).into(),
+                    resources: self
+                        .current
+                        .values()
+                        .filter(|resource| resource.kind() == kind)
+                        .map(resource_summary)
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    pub(super) fn repository_read_model(
+        &self,
+        selection: Option<&RepositorySelection>,
+    ) -> RepositoryReadModel {
+        RepositoryReadModel {
+            heads: self
+                .heads
+                .values()
+                .map(|head| RepositoryHeadReadModel {
+                    resource_id: head.id(),
+                    kind: head.kind(),
+                    revision: head.revision(),
+                    state: match head {
+                        ResourceState::Present(resource) => RepositoryHeadState::Present {
+                            title: resource.title().into(),
+                        },
+                        ResourceState::Deleted(tombstone) => RepositoryHeadState::Deleted {
+                            deleted_at: tombstone.deleted_at,
+                        },
+                    },
+                })
+                .collect(),
+            selected_resource: selection.map(|selection| selection.resource_id),
+            selected_history: selection
+                .into_iter()
+                .flat_map(|selection| &selection.history)
+                .map(|state| RepositoryRevisionReadModel {
+                    resource_id: state.id(),
+                    kind: state.kind(),
+                    revision: state.revision(),
+                    state: match state {
+                        ResourceState::Present(resource) => RepositoryRevisionState::Present {
+                            title: resource.title().into(),
+                            modified_at: resource.modified_at(),
+                        },
+                        ResourceState::Deleted(tombstone) => RepositoryRevisionState::Deleted {
+                            deleted_at: tombstone.deleted_at,
+                        },
+                    },
+                })
+                .collect(),
+            deletion: None,
+        }
     }
 
     pub(super) fn chart_record(&self, id: ResourceId) -> Option<&ResourceEnvelope<ChartRecord>> {
@@ -164,6 +246,39 @@ impl Catalog {
                 _ => None,
             })
             .collect()
+    }
+}
+
+fn resource_summary(resource: &CanonicalResource) -> ResourceSummaryReadModel {
+    ResourceSummaryReadModel {
+        resource_id: resource.id(),
+        kind: resource.kind(),
+        title: resource.title().into(),
+        description: resource.description().map(str::to_owned),
+        tags: resource.tags().to_vec(),
+        revision: resource.revision(),
+        created_at: resource.created_at(),
+        modified_at: resource.modified_at(),
+    }
+}
+
+const fn resource_kind_label(kind: ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::ChartRecord => "Chart records",
+        ResourceKind::ChartDefinition => "Chart definitions",
+        ResourceKind::PointSet => "Point sets",
+        ResourceKind::AspectSet => "Aspect sets",
+        ResourceKind::AnalysisProfile => "Analysis profiles",
+        ResourceKind::WheelTemplate => "Wheel templates",
+        ResourceKind::ViewDocument => "View documents",
+        ResourceKind::Theme => "Themes",
+        ResourceKind::QueryDefinition => "Query definitions",
+        ResourceKind::WorkspaceDocument => "Workspaces",
+        ResourceKind::CalculationProfile
+        | ResourceKind::RulershipScheme
+        | ResourceKind::DignityScheme
+        | ResourceKind::ArabicPartsSet
+        | ResourceKind::FixedStarSet => "Reserved resource kind",
     }
 }
 pub(super) trait BoundPayload: Clone + Sized {

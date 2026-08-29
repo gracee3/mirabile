@@ -11,12 +11,13 @@ use mirabile_app::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::mock_application::MockApplication;
 use crate::{
+    cockpit::Cockpit,
     commands::{CommandId, command_for_key, metadata},
     diagnostics::Diagnostics,
     dispatcher::{WorkbenchCoordinator, event_target_is_text_entry, execute_command},
     inspector::Inspector,
     view_host::ViewHost,
-    workbench_controls::resource_save_pending,
+    workbench_controls::{InvalidBufferRegistry, invalid_buffer_registry, resource_save_pending},
     workspace_rail::WorkspaceRail,
 };
 
@@ -40,6 +41,8 @@ pub fn App() -> impl IntoView {
         crate::automation_bridge::install(model, dispatcher, &configuration.database_name);
     }
     let invalid_aspect_buffers = RwSignal::new(BTreeSet::<String>::new());
+    let invalid_buffers = RwSignal::new(BTreeSet::<String>::new());
+    provide_context(InvalidBufferRegistry::new(invalid_buffers));
 
     dispatcher.initialize();
 
@@ -170,7 +173,9 @@ fn ReadyShell(
             )}
         </div>
 
-        <div class="workstation">
+        <Cockpit model dispatcher />
+
+        <div class="workstation" aria-label="Live workspace, preview, and diagnostics controls">
             <WorkspaceRail model dispatcher />
             <div class="center-workbench">
                 <ViewHost model />
@@ -187,6 +192,7 @@ fn CommandActions(
     dispatcher: WorkbenchCoordinator,
     invalid_aspect_buffers: RwSignal<BTreeSet<String>>,
 ) -> impl IntoView {
+    let invalid_buffers = invalid_buffer_registry();
     let refresh = dispatcher;
     let save = dispatcher;
     let cancel = dispatcher;
@@ -221,9 +227,10 @@ fn CommandActions(
                 ).expect("toolbar save address").to_string()
                 data-mirabile-kind=ControlKind::Action.as_str()
                 data-mirabile-enabled=move || (model.get().availability(AppAction::SaveDraft).is_enabled()
-                    && invalid_aspect_buffers.get().is_empty()).to_string()
+                    && invalid_aspect_buffers.get().is_empty()
+                    && !invalid_buffers.has_prefix("aspect.")).to_string()
                 data-mirabile-disabled-reason=move || {
-                    if invalid_aspect_buffers.get().is_empty() {
+                    if invalid_aspect_buffers.get().is_empty() && !invalid_buffers.has_prefix("aspect.") {
                         model.get().availability(AppAction::SaveDraft).disabled_reason().map(str::to_owned)
                     } else {
                         Some("Correct invalid local values before saving".to_owned())
@@ -232,6 +239,7 @@ fn CommandActions(
                 data-mirabile-pending=move || resource_save_pending(&model.get()).to_string()
                 disabled=move || !model.get().availability(AppAction::SaveDraft).is_enabled()
                     || !invalid_aspect_buffers.get().is_empty()
+                    || invalid_buffers.has_prefix("aspect.")
                 title=move || command_title(save_meta, &model.get().availability(AppAction::SaveDraft))
                 on:click=move |_| execute_command(CommandId::SaveDraft, save, model, invalid_aspect_buffers)
             >

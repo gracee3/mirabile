@@ -12,7 +12,7 @@ use mirabile_core::{
     AnalysisProfile, AspectSet, CalculationSpec, CanonicalResource, ChartDefinition, ChartRecord,
     ChartSource, Command, ConfigurationLayer, ConfigurationStack, DerivationSpec, DomainValidate,
     EffectiveConfiguration, InstanceId, PointSet, Resolved, ResourceBinding, ResourceEnvelope,
-    ResourceId, Revision, Theme, Timestamp, ValueSource, ViewDocument, ViewInstance,
+    ResourceId, ResourceKind, Revision, Theme, Timestamp, ValueSource, ViewDocument, ViewInstance,
     ViewInstanceId, WheelTemplate, WorkspaceDocument, WorkspaceDocumentChart, resolve_binding,
 };
 use mirabile_engine::{
@@ -38,22 +38,28 @@ use crate::{
     ChartMutation, ChartPersistence, ChartSlotAssignment, ChartSlotOption, CommandCapability,
     DisplayValueSource, DraftState, ImplementationIdentityReadModel, InlineCalculationRuntime,
     InspectorReadModel, LibraryChartSummary, LibraryReadModel, OpenChartSummary,
-    PendingOperationReadModel, PointVisibilityReadModel, ProjectionVersion, ResourceBindingSummary,
-    ResourceEditorReadModel, SlotAssignmentSource, StartupCalculationProfile, StartupPolicy,
-    ViewComputationState, ViewDisplayReadModel, ViewReadModel, ViewSummary,
-    WorkspaceDocumentBacking, WorkspaceReadModel, WorkspaceSession,
-    WorkspaceSwitchDecisionReadModel, WorkspaceSwitchTarget, blank_workspace_session,
-    current_transits_session, current_unix_millis, workspace_commands::apply_workspace_command,
+    PendingOperationReadModel, PointVisibilityReadModel, ProjectionVersion,
+    RepositoryHeadReadModel, RepositoryHeadState, RepositoryReadModel, RepositoryRevisionReadModel,
+    RepositoryRevisionState, ResourceBindingSummary, ResourceCatalogReadModel,
+    ResourceEditorReadModel, ResourceInventoryReadModel, ResourceSummaryReadModel,
+    SlotAssignmentSource, StartupCalculationProfile, StartupPolicy, ViewComputationState,
+    ViewDisplayReadModel, ViewReadModel, ViewSummary, WorkspaceDocumentBacking, WorkspaceReadModel,
+    WorkspaceSession, WorkspaceSwitchDecisionReadModel, WorkspaceSwitchTarget,
+    blank_workspace_session, current_transits_session, current_unix_millis,
+    workspace_commands::apply_workspace_command,
 };
 #[cfg(feature = "xalen-backend")]
 use mirabile_engine::XalenBackend;
 
+mod binding_editing;
 mod calculation;
 mod catalog;
 mod configuration;
+mod deletion;
 mod editing;
 mod hydration;
 mod projection;
+mod resource_editing;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -257,6 +263,17 @@ impl ResourceRepository for IndexedDbRepositorySource {
         self.acquire().await?.get_revision(id, revision).await
     }
 
+    async fn list_heads(
+        &self,
+        kind: Option<mirabile_core::ResourceKind>,
+    ) -> Result<Vec<ResourceState>, RepositoryError> {
+        self.acquire().await?.list_heads(kind).await
+    }
+
+    async fn list_revisions(&self, id: ResourceId) -> Result<Vec<ResourceState>, RepositoryError> {
+        self.acquire().await?.list_revisions(id).await
+    }
+
     async fn list(
         &self,
         kind: Option<mirabile_core::ResourceKind>,
@@ -366,6 +383,7 @@ where
         self.read_model()
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn dispatch(&self, intent: AppIntent) -> AppResult<AppReadModel> {
         if !matches!(self.state.borrow().status, ApplicationStatus::Ready) {
             return Err(AppError::new(
@@ -407,6 +425,12 @@ where
             | AppIntent::SetWorkspaceAspectSet { .. } => {
                 self.dispatch_workspace_intent(&intent)?;
             }
+            AppIntent::SetWorkspaceBinding { slot, selection } => {
+                self.set_workspace_binding(slot, selection)?;
+            }
+            AppIntent::ApplyWorkspaceComposition(mutation) => {
+                self.apply_workspace_composition(mutation)?;
+            }
             AppIntent::ActivateChart { instance_id } => {
                 self.activate_session_chart(instance_id)?;
             }
@@ -422,6 +446,10 @@ where
                 self.request_workspace_switch(WorkspaceSwitchTarget::Saved { resource_id })?;
             }
             AppIntent::RenameWorkspace { title } => self.rename_workspace(&title)?,
+            AppIntent::SetWorkspaceDescription { description } => {
+                self.set_workspace_description(description)?;
+            }
+            AppIntent::SetWorkspaceTags { tags } => self.set_workspace_tags(tags)?,
             AppIntent::DiscardWorkspaceChanges => self.discard_workspace_changes()?,
             AppIntent::ResolveWorkspaceSwitch { action } => {
                 self.resolve_workspace_switch(action)?;
@@ -439,6 +467,29 @@ where
             AppIntent::DuplicateAspectSet { resource_id } => {
                 self.duplicate_aspect_set(resource_id)?;
             }
+            AppIntent::SelectRepositoryResource { resource_id } => {
+                self.select_repository_resource(resource_id).await?;
+            }
+            AppIntent::BeginDeleteResource {
+                resource_id,
+                expected_revision,
+            } => self.begin_delete_resource(resource_id, expected_revision)?,
+            AppIntent::ConfirmDeleteResource {
+                resource_id,
+                expected_revision,
+            } => {
+                self.confirm_delete_resource(resource_id, expected_revision)
+                    .await?;
+            }
+            AppIntent::BeginResourceEdit { resource_id } => {
+                self.begin_resource_edit(resource_id)?;
+            }
+            AppIntent::BeginResourceCreate { kind } => self.begin_resource_create(kind)?,
+            AppIntent::ApplyResourceMutation(mutation) => {
+                self.apply_resource_mutation(*mutation)?;
+            }
+            AppIntent::SaveResourceDraft { kind } => self.begin_save_resource_draft(kind)?,
+            AppIntent::CancelResourceDraft { kind } => self.cancel_resource_draft(kind)?,
             AppIntent::UpdateAspectSetDraft(mutation) => {
                 self.update_aspect_set_draft(mutation)?;
             }
@@ -502,6 +553,9 @@ struct RealState {
     views: BTreeMap<ViewInstanceId, ViewRuntime>,
     editor: Option<AspectSetEditor>,
     chart_editor: Option<crate::ChartAuthoringEditor>,
+    repository_selection: Option<RepositorySelection>,
+    delete_confirmation: Option<(ResourceId, Revision)>,
+    resource_drafts: BTreeMap<crate::ResourceDraftKind, resource_editing::GenericResourceDraft>,
     workspace_switch: Option<WorkspaceSwitchDecisionReadModel>,
     pending_workspace_switch: Option<WorkspaceSwitchTarget>,
     cache: ComputationCache,
@@ -521,9 +575,16 @@ struct HydratedState {
     next_timestamp: i64,
 }
 
+struct RepositorySelection {
+    resource_id: ResourceId,
+    history: Vec<ResourceState>,
+}
+
 #[derive(Clone)]
 struct ViewRuntime {
     scene: Option<Scene>,
+    semantic_calculation: Option<mirabile_engine::CalculationValue>,
+    semantic_analysis: Option<mirabile_engine::ChartAnalysis>,
     computation: ViewComputationState,
     expected: Option<ExpectedCalculation>,
     last_expected: Option<ExpectedCalculation>,
@@ -533,6 +594,8 @@ impl Default for ViewRuntime {
     fn default() -> Self {
         Self {
             scene: None,
+            semantic_calculation: None,
+            semantic_analysis: None,
             computation: ViewComputationState::Loading,
             expected: None,
             last_expected: None,
@@ -565,8 +628,41 @@ struct ViewCalculationPlan {
 struct AspectSetEditor {
     base: Option<ResourceEnvelope<AspectSet>>,
     title: String,
+    description: Option<String>,
+    tags: Vec<String>,
     draft: AspectSet,
     state: DraftState,
+}
+
+impl AspectSetEditor {
+    fn metadata_validation(&self) -> Vec<crate::ResourceDraftValidationIssue> {
+        let mut issues = Vec::new();
+        if self.title.trim().is_empty() {
+            issues.push(crate::ResourceDraftValidationIssue {
+                field: "aspect_set.title".into(),
+                message: "Aspect Set title is required".into(),
+            });
+        }
+        let mut tags = self
+            .tags
+            .iter()
+            .map(|tag| tag.trim().to_owned())
+            .collect::<Vec<_>>();
+        if tags.iter().any(String::is_empty) {
+            issues.push(crate::ResourceDraftValidationIssue {
+                field: "aspect_set.tags".into(),
+                message: "Tags must not be empty".into(),
+            });
+        }
+        tags.sort();
+        if tags.windows(2).any(|pair| pair[0] == pair[1]) {
+            issues.push(crate::ResourceDraftValidationIssue {
+                field: "aspect_set.tags".into(),
+                message: "Tags must be unique".into(),
+            });
+        }
+        issues
+    }
 }
 
 enum PendingWork {
@@ -574,6 +670,11 @@ enum PendingWork {
     SaveAspectSet {
         expected_revision: Option<Revision>,
         next: ResourceEnvelope<AspectSet>,
+    },
+    SaveTypedResource {
+        kind: crate::ResourceDraftKind,
+        expected_revision: Option<Revision>,
+        next: Box<CanonicalResource>,
     },
     CreateChart {
         instance_id: InstanceId,
@@ -603,6 +704,7 @@ struct PendingCachedView {
 }
 
 fn binding_summary<T: BoundPayload>(
+    slot: crate::WorkspaceBindingSlot,
     label: &str,
     binding: &ResourceBinding<T>,
     catalog: &Catalog,
@@ -629,6 +731,7 @@ fn binding_summary<T: BoundPayload>(
         },
     };
     Ok(ResourceBindingSummary {
+        slot,
         label: label.into(),
         source,
     })
@@ -666,6 +769,12 @@ fn aspect_editor_read_model(editor: &AspectSetEditor) -> AppResult<AspectSetDraf
     Ok(AspectSetDraftReadModel {
         resource_id: editor.base.as_ref().map(|base| base.id),
         title: editor.title.clone(),
+        description: editor.description.clone(),
+        tags: editor.tags.clone(),
+        schema_version: editor.base.as_ref().map(|base| base.schema_version),
+        created_at: editor.base.as_ref().map(|base| base.created_at),
+        modified_at: editor.base.as_ref().map(|base| base.modified_at),
+        validation: editor.metadata_validation(),
         state: editor.state.clone(),
         aspects: editor
             .draft
@@ -674,8 +783,11 @@ fn aspect_editor_read_model(editor: &AspectSetEditor) -> AppResult<AspectSetDraf
             .map(|aspect| AspectDraftValue {
                 aspect_id: aspect.id.clone(),
                 label: aspect.name.clone(),
+                angle: aspect.angle,
                 enabled: aspect.enabled,
                 maximum_orb: aspect.orbs.maximum,
+                applying_multiplier: aspect.orbs.applying_multiplier,
+                classification: aspect.classification,
             })
             .collect(),
     })

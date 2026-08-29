@@ -9,10 +9,10 @@ use mirabile_app::{
     ChartPersistence, ChartSlotAssignment, ChartSlotId, Circle, CommandCapability,
     DisplayValueSource, DraftAssignmentPromotion, DraftState, FillRole, InspectorReadModel,
     InstanceId, Label, LibraryChartSummary, LibraryReadModel, Line, OpenChartSummary,
-    PendingOperationReadModel, PointVisibilityReadModel, ProjectionVersion, ResourceBindingSummary,
-    ResourceEditorReadModel, ResourceId, Revision, Scene, SlotAssignmentSource, StrokeRole,
-    ViewComputationState, ViewDisplayReadModel, ViewInstanceId, ViewReadModel, ViewSummary,
-    WorkspaceReadModel, WorkspaceSummary,
+    PendingOperationReadModel, PointVisibilityReadModel, ProjectionVersion, RepositoryReadModel,
+    ResourceBindingSummary, ResourceCatalogReadModel, ResourceEditorReadModel, ResourceId,
+    Revision, Scene, SlotAssignmentSource, StrokeRole, ViewComputationState, ViewDisplayReadModel,
+    ViewInstanceId, ViewReadModel, ViewSummary, WorkspaceReadModel, WorkspaceSummary,
 };
 
 const CHART_DEFINITION_IDS: [&str; 5] = [
@@ -176,6 +176,8 @@ struct AspectSetFixture {
 struct EditorFixture {
     resource_id: ResourceId,
     title: String,
+    description: Option<String>,
+    tags: Vec<String>,
     state: DraftState,
     conjunction_enabled: bool,
     conjunction_orb: Angle,
@@ -398,8 +400,12 @@ impl MockState {
                     revision: self.workspace.revision,
                 }],
             },
+            resources: ResourceCatalogReadModel::default(),
+            repository: RepositoryReadModel::default(),
             workspace: WorkspaceReadModel {
                 title: "Research comparison".into(),
+                description: None,
+                tags: Vec::new(),
                 charts: self.charts.clone(),
                 active_chart: self.active_chart,
                 selected_charts: self.selected_charts.clone(),
@@ -409,11 +415,17 @@ impl MockState {
                     .map(|view| ViewSummary {
                         view_id: view.view_id,
                         title: view.title.clone(),
+                        rotation: None,
+                        hidden_points: Vec::new(),
                     })
                     .collect(),
                 active_view: Some(self.active_view),
                 document_id: Some(parse_resource(WORKSPACE_ID)),
                 document_revision: Some(self.workspace.revision),
+                document_schema_version: Some(mirabile_app::SchemaVersion::V1),
+                document_created_at: Some(mirabile_app::Timestamp::from_unix_millis(1)),
+                document_modified_at: Some(mirabile_app::Timestamp::from_unix_millis(1)),
+                validation: Vec::new(),
                 document_dirty: self.workspace.dirty,
                 has_temporary_display_override: self.workspace.temporary_display_override,
                 switch_decision: None,
@@ -451,6 +463,7 @@ impl MockState {
             inspector: InspectorReadModel {
                 active_chart,
                 bindings: vec![ResourceBindingSummary {
+                    slot: mirabile_app::WorkspaceBindingSlot::Aspects,
                     label: "Aspect set".into(),
                     source: BindingSourceSummary::Follow {
                         resource_id: aspect_set.summary.resource_id,
@@ -464,15 +477,27 @@ impl MockState {
                 aspect_set: self.editor.as_ref().map(|editor| AspectSetDraftReadModel {
                     resource_id: Some(editor.resource_id),
                     title: editor.title.clone(),
+                    description: editor.description.clone(),
+                    tags: editor.tags.clone(),
+                    schema_version: Some(mirabile_app::SchemaVersion::V1),
+                    created_at: Some(mirabile_app::Timestamp::from_unix_millis(1)),
+                    modified_at: Some(mirabile_app::Timestamp::from_unix_millis(1)),
+                    validation: Vec::new(),
                     state: editor.state.clone(),
                     aspects: vec![AspectDraftValue {
                         aspect_id: conjunction_id(),
                         label: "Conjunction".into(),
+                        angle: Angle::from_degrees(0.0).expect("angle"),
                         enabled: editor.conjunction_enabled,
                         maximum_orb: editor.conjunction_orb,
+                        applying_multiplier: 1.0,
+                        classification: mirabile_app::AspectClass::Major,
                     }],
                 }),
+                drafts: Vec::new(),
             },
+            parameters: Vec::new(),
+            semantic_output: mirabile_app::SemanticOutputReadModel::default(),
             capabilities: self.capabilities(),
             notice: self.notice.clone(),
         }
@@ -644,11 +669,35 @@ impl MockState {
             AppIntent::NewWorkspace
             | AppIntent::OpenWorkspace { .. }
             | AppIntent::RenameWorkspace { .. }
+            | AppIntent::SetWorkspaceDescription { .. }
+            | AppIntent::SetWorkspaceTags { .. }
             | AppIntent::DiscardWorkspaceChanges
             | AppIntent::ResolveWorkspaceSwitch { .. }
             | AppIntent::LoadDemoBundle => Err(AppError::new(
                 AppErrorKind::Unavailable,
                 "Workspace library management is provided by the real application adapter",
+            )),
+            AppIntent::SelectRepositoryResource { .. }
+            | AppIntent::BeginDeleteResource { .. }
+            | AppIntent::ConfirmDeleteResource { .. } => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Repository inspection is provided by the real application adapter",
+            )),
+            AppIntent::SetWorkspaceBinding { .. } => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Generalized binding editing is provided by the real application adapter",
+            )),
+            AppIntent::ApplyWorkspaceComposition(_) => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Workspace composition editing is provided by the real application adapter",
+            )),
+            AppIntent::BeginResourceEdit { .. }
+            | AppIntent::BeginResourceCreate { .. }
+            | AppIntent::ApplyResourceMutation(_)
+            | AppIntent::SaveResourceDraft { .. }
+            | AppIntent::CancelResourceDraft { .. } => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Typed resource editing is provided by the real application adapter",
             )),
             AppIntent::StartChartDraft { draft } => {
                 if draft.title.trim().is_empty() {
@@ -864,6 +913,8 @@ impl MockState {
                 self.editor = Some(EditorFixture {
                     resource_id,
                     title: aspect_set.summary.title.clone(),
+                    description: None,
+                    tags: Vec::new(),
                     state: DraftState::Clean {
                         revision: aspect_set.summary.revision,
                     },
@@ -1031,6 +1082,10 @@ impl MockState {
         let base_revision = editor.state.base_revision();
         match mutation {
             AspectSetDraftMutation::SetTitle(title) => editor.title = title,
+            AspectSetDraftMutation::SetDescription(description) => {
+                editor.description = description;
+            }
+            AspectSetDraftMutation::SetTags(tags) => editor.tags = tags,
             AspectSetDraftMutation::SetOrb { aspect_id, maximum } => {
                 if aspect_id != conjunction_id() {
                     return Err(not_found("draft aspect"));
@@ -1042,6 +1097,15 @@ impl MockState {
                     return Err(not_found("draft aspect"));
                 }
                 editor.conjunction_enabled = enabled;
+            }
+            AspectSetDraftMutation::Insert { .. }
+            | AspectSetDraftMutation::Update { .. }
+            | AspectSetDraftMutation::Remove { .. }
+            | AspectSetDraftMutation::Move { .. } => {
+                return Err(AppError::new(
+                    AppErrorKind::Unavailable,
+                    "The deterministic mock supports scalar Aspect Set edits only",
+                ));
             }
         }
         if !matches!(editor.state, DraftState::Conflict { .. }) {

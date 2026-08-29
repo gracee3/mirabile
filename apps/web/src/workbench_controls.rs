@@ -1,7 +1,42 @@
-use std::fmt::Display;
+use std::{collections::BTreeSet, fmt::Display};
 
 use leptos::{ev, html, prelude::*};
 use mirabile_app::{AppReadModel, ControlKind, ControlOptionDescriptor, PendingOperationReadModel};
+
+#[derive(Clone, Copy)]
+pub(super) struct InvalidBufferRegistry(RwSignal<BTreeSet<String>>);
+
+impl InvalidBufferRegistry {
+    pub(super) const fn new(keys: RwSignal<BTreeSet<String>>) -> Self {
+        Self(keys)
+    }
+
+    pub(super) fn has_prefix(self, prefix: &str) -> bool {
+        self.0.get().iter().any(|key| key.starts_with(prefix))
+    }
+
+    pub(super) fn has_kind(self, kind: &str) -> bool {
+        let qualifier = format!("kind={kind}");
+        self.0.get().iter().any(|key| key.contains(&qualifier))
+    }
+
+    fn set_invalid(self, key: &str, invalid: bool) {
+        if self.0.get_untracked().contains(key) == invalid {
+            return;
+        }
+        self.0.update(|keys| {
+            if invalid {
+                keys.insert(key.to_owned());
+            } else {
+                keys.remove(key);
+            }
+        });
+    }
+}
+
+pub(super) fn invalid_buffer_registry() -> InvalidBufferRegistry {
+    use_context::<InvalidBufferRegistry>().expect("App provides the invalid-buffer registry")
+}
 
 pub(super) fn chart_save_pending(model: &AppReadModel) -> bool {
     model.activity.pending_operations.iter().any(|operation| {
@@ -214,6 +249,9 @@ pub(super) fn BufferedField(
     #[prop(optional)] qualifier_name: Option<String>,
     #[prop(optional)] qualifier_value: Option<String>,
 ) -> impl IntoView {
+    let invalid_registry = invalid_buffer_registry();
+    let invalid_key = address.clone();
+    let cleanup_key = invalid_key.clone();
     let control = address
         .split_once('[')
         .map_or_else(|| address.clone(), |(control, _)| control.to_owned());
@@ -240,6 +278,8 @@ pub(super) fn BufferedField(
             input.select();
         }
     });
+    Effect::new(move || invalid_registry.set_invalid(&invalid_key, error.get().is_some()));
+    on_cleanup(move || invalid_registry.set_invalid(&cleanup_key, false));
 
     let commit = move || match parser.run(buffer.get_untracked()) {
         Ok(value) => {
@@ -446,6 +486,40 @@ pub(super) fn BufferedTimeField(
             address
             label
             kind=BufferedInputKind::Time
+            authoritative
+            disabled
+            buffer
+            error
+            parser
+            on_commit
+            disabled_reason=disabled_reason.unwrap_or_else(|| Signal::derive(|| None))
+        />
+    }
+}
+
+/// A semantic-address keyed buffer for dynamically-created builder fields.
+///
+/// The authoritative string is always supplied by `AppReadModel`; only this reusable component
+/// retains temporarily invalid text. `BufferedField` registers the address while invalid so the
+/// owning save control can remain disabled.
+#[component]
+pub(super) fn ValidatedField(
+    address: String,
+    label: String,
+    kind: BufferedInputKind,
+    authoritative: Signal<String>,
+    disabled: Signal<bool>,
+    parser: Callback<String, Result<String, String>>,
+    on_commit: Callback<String>,
+    #[prop(optional)] disabled_reason: Option<Signal<Option<String>>>,
+) -> impl IntoView {
+    let buffer = RwSignal::new(String::new());
+    let error = RwSignal::new(None::<String>);
+    view! {
+        <BufferedField
+            address
+            label
+            kind
             authoritative
             disabled
             buffer
@@ -680,5 +754,25 @@ mod tests {
         );
         assert_eq!(BufferedInputKind::Date.control_kind(), ControlKind::Date);
         assert_eq!(BufferedInputKind::Time.control_kind(), ControlKind::Time);
+    }
+
+    #[test]
+    fn invalid_buffer_registry_scopes_save_guards_by_prefix_and_kind() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let registry = InvalidBufferRegistry::new(RwSignal::new(BTreeSet::new()));
+
+            registry.set_invalid("chart.location.latitude", true);
+            registry.set_invalid("resource.radius[kind=wheel-template]", true);
+
+            assert!(registry.has_prefix("chart."));
+            assert!(!registry.has_prefix("workspace."));
+            assert!(registry.has_kind("wheel-template"));
+            assert!(!registry.has_kind("analysis-profile"));
+
+            registry.set_invalid("chart.location.latitude", false);
+            assert!(!registry.has_prefix("chart."));
+            assert!(registry.has_kind("wheel-template"));
+        });
     }
 }

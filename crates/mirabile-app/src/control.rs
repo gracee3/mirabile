@@ -4,6 +4,85 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{InstanceId, ResourceId, ViewInstanceId};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CockpitCoverageEntry {
+    pub modeled_family: &'static str,
+    pub control_family: &'static str,
+    pub unavailable_reason: Option<&'static str>,
+}
+
+/// Exhaustive application-owned registry used by native acceptance tests and the cockpit manifest.
+/// A missing control must be represented here with an explicit reason instead of disappearing.
+pub const COCKPIT_COVERAGE: &[CockpitCoverageEntry] = &[
+    CockpitCoverageEntry {
+        modeled_family: "metadata",
+        control_family: "resource.title,resource.description,resource.tags",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "chart_record",
+        control_family: "chart.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "calculation_spec",
+        control_family: "chart.zodiac,chart.houses,chart.coordinates",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "derived_recipe",
+        control_family: "resource.recipe.field,resource.list.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "point_selectors",
+        control_family: "resource.point,resource.list.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "aspect_rows",
+        control_family: "aspect.*,resource.list.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "wheel_rings_and_flags",
+        control_family: "resource.wheel.field,resource.list.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "view_slots_and_objects",
+        control_family: "resource.view.*,resource.list.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "query_tree",
+        control_family: "resource.query.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "workspace_composition",
+        control_family: "workspace.*,binding.*,view.*",
+        unavailable_reason: None,
+    },
+    CockpitCoverageEntry {
+        modeled_family: "query_execution",
+        control_family: "none",
+        unavailable_reason: Some("Query execution is deferred; definitions are persisted only"),
+    },
+    CockpitCoverageEntry {
+        modeled_family: "derived_calculation",
+        control_family: "none",
+        unavailable_reason: Some("Derived calculation is deferred; recipes are persisted only"),
+    },
+    CockpitCoverageEntry {
+        modeled_family: "non_wheel_view_rendering",
+        control_family: "none",
+        unavailable_reason: Some(
+            "Non-wheel View Objects are persisted but runtime rendering is deferred",
+        ),
+    },
+];
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct ControlId(Cow<'static, str>);
@@ -18,6 +97,15 @@ impl ControlId {
     pub const ASPECT_NEW: Self = Self(Cow::Borrowed("aspect.new"));
     pub const ASPECT_RESOURCE: Self = Self(Cow::Borrowed("aspect.resource"));
     pub const ASPECT_TITLE: Self = Self(Cow::Borrowed("aspect.title"));
+    pub const ASPECT_DESCRIPTION: Self = Self(Cow::Borrowed("aspect.description"));
+    pub const ASPECT_TAGS: Self = Self(Cow::Borrowed("aspect.tags"));
+    pub const ASPECT_NAME: Self = Self(Cow::Borrowed("aspect.name"));
+    pub const ASPECT_ANGLE: Self = Self(Cow::Borrowed("aspect.angle"));
+    pub const ASPECT_APPLYING_MULTIPLIER: Self = Self(Cow::Borrowed("aspect.applying-multiplier"));
+    pub const ASPECT_CLASSIFICATION: Self = Self(Cow::Borrowed("aspect.classification"));
+    pub const ASPECT_REMOVE: Self = Self(Cow::Borrowed("aspect.remove"));
+    pub const ASPECT_MOVE: Self = Self(Cow::Borrowed("aspect.move"));
+    pub const ASPECT_INSERT: Self = Self(Cow::Borrowed("aspect.insert"));
     pub const CHART_ACTIVATE: Self = Self(Cow::Borrowed("chart.activate"));
     pub const CHART_CLOSE: Self = Self(Cow::Borrowed("chart.close"));
     pub const CHART_COORDINATES: Self = Self(Cow::Borrowed("chart.coordinates"));
@@ -28,6 +116,7 @@ impl ControlId {
     pub const CHART_EDITOR_SAVE: Self = Self(Cow::Borrowed("chart.editor-save"));
     pub const CHART_EVENT_KIND: Self = Self(Cow::Borrowed("chart.event-kind"));
     pub const CHART_FIXED_OFFSET: Self = Self(Cow::Borrowed("chart.fixed-offset"));
+    pub const CHART_NAMED_ZONE: Self = Self(Cow::Borrowed("chart.named-zone"));
     pub const CHART_HOUSES: Self = Self(Cow::Borrowed("chart.houses"));
     pub const CHART_LATITUDE: Self = Self(Cow::Borrowed("chart.latitude"));
     pub const CHART_LOCATION_ENABLED: Self = Self(Cow::Borrowed("chart.location-enabled"));
@@ -37,9 +126,44 @@ impl ControlId {
     pub const CHART_OPEN: Self = Self(Cow::Borrowed("chart.open"));
     pub const CHART_SELECT: Self = Self(Cow::Borrowed("chart.select"));
     pub const CHART_SUBJECT_NAME: Self = Self(Cow::Borrowed("chart.subject-name"));
+    pub const CHART_SUBJECT_PRONOUNS: Self = Self(Cow::Borrowed("chart.subject-pronouns"));
+    pub const CHART_CUSTOM_EVENT_KIND: Self = Self(Cow::Borrowed("chart.custom-event-kind"));
+    pub const CHART_CALENDAR: Self = Self(Cow::Borrowed("chart.calendar"));
+    pub const CHART_DISAMBIGUATION: Self = Self(Cow::Borrowed("chart.disambiguation"));
+    pub const CHART_COUNTRY_REGION: Self = Self(Cow::Borrowed("chart.country-region"));
+    pub const CHART_ATLAS_PROVIDER: Self = Self(Cow::Borrowed("chart.atlas-provider"));
+    pub const CHART_ATLAS_RECORD: Self = Self(Cow::Borrowed("chart.atlas-record"));
+    pub const CHART_ATLAS_VERSION: Self = Self(Cow::Borrowed("chart.atlas-version"));
+    pub const CHART_SOURCE_DESCRIPTION: Self = Self(Cow::Borrowed("chart.source-description"));
+    pub const CHART_SOURCE_TYPE: Self = Self(Cow::Borrowed("chart.source-type"));
+    pub const CHART_SOURCE_RECORDED_BY: Self = Self(Cow::Borrowed("chart.source-recorded-by"));
+    pub const CHART_NOTE_INSERT: Self = Self(Cow::Borrowed("chart.note.insert"));
+    pub const CHART_NOTE_FIELD: Self = Self(Cow::Borrowed("chart.note.field"));
+    pub const CHART_NOTE_MOVE: Self = Self(Cow::Borrowed("chart.note.move"));
+    pub const CHART_NOTE_REMOVE: Self = Self(Cow::Borrowed("chart.note.remove"));
+    pub const CHART_LIFE_EVENT_INSERT: Self = Self(Cow::Borrowed("chart.life-event.insert"));
+    pub const CHART_LIFE_EVENT_FIELD: Self = Self(Cow::Borrowed("chart.life-event.field"));
+    pub const CHART_LIFE_EVENT_MOVE: Self = Self(Cow::Borrowed("chart.life-event.move"));
+    pub const CHART_LIFE_EVENT_REMOVE: Self = Self(Cow::Borrowed("chart.life-event.remove"));
+    pub const CHART_LIFE_EVENT_NOTE_INSERT: Self =
+        Self(Cow::Borrowed("chart.life-event.note.insert"));
+    pub const CHART_LIFE_EVENT_NOTE_FIELD: Self =
+        Self(Cow::Borrowed("chart.life-event.note.field"));
+    pub const CHART_LIFE_EVENT_NOTE_REMOVE: Self =
+        Self(Cow::Borrowed("chart.life-event.note.remove"));
     pub const CHART_TIMEZONE: Self = Self(Cow::Borrowed("chart.timezone"));
     pub const CHART_TITLE: Self = Self(Cow::Borrowed("chart.title"));
+    pub const CHART_DEFINITION_DESCRIPTION: Self =
+        Self(Cow::Borrowed("chart.definition-description"));
+    pub const CHART_DEFINITION_TAGS: Self = Self(Cow::Borrowed("chart.definition-tags"));
+    pub const CHART_RECORD_TITLE: Self = Self(Cow::Borrowed("chart.record-title"));
+    pub const CHART_RECORD_DESCRIPTION: Self = Self(Cow::Borrowed("chart.record-description"));
+    pub const CHART_RECORD_TAGS: Self = Self(Cow::Borrowed("chart.record-tags"));
     pub const CHART_ZODIAC: Self = Self(Cow::Borrowed("chart.zodiac"));
+    pub const CHART_LUNAR_NODE: Self = Self(Cow::Borrowed("chart.lunar-node"));
+    pub const CHART_BLACK_MOON: Self = Self(Cow::Borrowed("chart.black-moon"));
+    pub const CHART_FORTUNE_FORMULA: Self = Self(Cow::Borrowed("chart.fortune-formula"));
+    pub const CHART_CORRECTION: Self = Self(Cow::Borrowed("chart.correction"));
     pub const DISPLAY_POINT: Self = Self(Cow::Borrowed("display.point"));
     pub const DISPLAY_PROMOTE: Self = Self(Cow::Borrowed("display.promote"));
     pub const DIAGNOSTICS_EXPORT_SNAPSHOT: Self =
@@ -55,6 +179,43 @@ impl ControlId {
     pub const MACRO_REPLAY: Self = Self(Cow::Borrowed("macro.replay"));
     pub const MACRO_START: Self = Self(Cow::Borrowed("macro.start"));
     pub const MACRO_STOP: Self = Self(Cow::Borrowed("macro.stop"));
+    pub const COCKPIT_SEARCH: Self = Self(Cow::Borrowed("cockpit.search"));
+    pub const COCKPIT_EXPAND_ALL: Self = Self(Cow::Borrowed("cockpit.expand-all"));
+    pub const COCKPIT_COLLAPSE_ALL: Self = Self(Cow::Borrowed("cockpit.collapse-all"));
+    pub const RESOURCE_NEW: Self = Self(Cow::Borrowed("resource.new"));
+    pub const RESOURCE_EDIT: Self = Self(Cow::Borrowed("resource.edit"));
+    pub const RESOURCE_TITLE: Self = Self(Cow::Borrowed("resource.title"));
+    pub const RESOURCE_DESCRIPTION: Self = Self(Cow::Borrowed("resource.description"));
+    pub const RESOURCE_TAGS: Self = Self(Cow::Borrowed("resource.tags"));
+    pub const RESOURCE_SAVE: Self = Self(Cow::Borrowed("resource.save"));
+    pub const RESOURCE_CANCEL: Self = Self(Cow::Borrowed("resource.cancel"));
+    pub const RESOURCE_ANALYSIS_APPLYING: Self =
+        Self(Cow::Borrowed("resource.analysis.applying-state"));
+    pub const RESOURCE_ANALYSIS_PATTERNS: Self = Self(Cow::Borrowed("resource.analysis.patterns"));
+    pub const RESOURCE_ANALYSIS_MAXIMUM_HITS: Self =
+        Self(Cow::Borrowed("resource.analysis.maximum-hits"));
+    pub const RESOURCE_THEME_COLOR: Self = Self(Cow::Borrowed("resource.theme.color"));
+    pub const RESOURCE_VIEW_WIDTH: Self = Self(Cow::Borrowed("resource.view.width"));
+    pub const RESOURCE_VIEW_HEIGHT: Self = Self(Cow::Borrowed("resource.view.height"));
+    pub const RESOURCE_QUERY_DESCRIPTION: Self = Self(Cow::Borrowed("resource.query.description"));
+    pub const RESOURCE_POINT: Self = Self(Cow::Borrowed("resource.point"));
+    pub const RESOURCE_WHEEL_FIELD: Self = Self(Cow::Borrowed("resource.wheel.field"));
+    pub const RESOURCE_LIST_INSERT: Self = Self(Cow::Borrowed("resource.list.insert"));
+    pub const RESOURCE_LIST_FIELD: Self = Self(Cow::Borrowed("resource.list.field"));
+    pub const RESOURCE_LIST_REMOVE: Self = Self(Cow::Borrowed("resource.list.remove"));
+    pub const RESOURCE_LIST_MOVE: Self = Self(Cow::Borrowed("resource.list.move"));
+    pub const RESOURCE_QUERY_NODE: Self = Self(Cow::Borrowed("resource.query.node"));
+    pub const RESOURCE_QUERY_INSERT: Self = Self(Cow::Borrowed("resource.query.insert"));
+    pub const RESOURCE_QUERY_REMOVE: Self = Self(Cow::Borrowed("resource.query.remove"));
+    pub const RESOURCE_QUERY_MOVE: Self = Self(Cow::Borrowed("resource.query.move"));
+    pub const RESOURCE_RECIPE_FIELD: Self = Self(Cow::Borrowed("resource.recipe.field"));
+    pub const RESOURCE_WORKSPACE_FIELD: Self = Self(Cow::Borrowed("resource.workspace.field"));
+    pub const BINDING_MODE: Self = Self(Cow::Borrowed("binding.mode"));
+    pub const BINDING_RESOURCE: Self = Self(Cow::Borrowed("binding.resource"));
+    pub const BINDING_REVISION: Self = Self(Cow::Borrowed("binding.revision"));
+    pub const REPOSITORY_SELECT: Self = Self(Cow::Borrowed("repository.select"));
+    pub const REPOSITORY_DELETE: Self = Self(Cow::Borrowed("repository.delete"));
+    pub const REPOSITORY_CONFIRM_DELETE: Self = Self(Cow::Borrowed("repository.confirm-delete"));
     pub const VIEW_ACTIVATE: Self = Self(Cow::Borrowed("view.activate"));
     pub const VIEW_SLOT: Self = Self(Cow::Borrowed("view.slot"));
     pub const WORKSPACE_SAVE: Self = Self(Cow::Borrowed("workspace.save"));
@@ -66,6 +227,16 @@ impl ControlId {
     pub const WORKSPACE_SWITCH_SAVE: Self = Self(Cow::Borrowed("workspace.switch-save"));
     pub const WORKSPACE_SWITCH_STAY: Self = Self(Cow::Borrowed("workspace.switch-stay"));
     pub const WORKSPACE_TITLE: Self = Self(Cow::Borrowed("workspace.title"));
+    pub const WORKSPACE_DESCRIPTION: Self = Self(Cow::Borrowed("workspace.description"));
+    pub const WORKSPACE_TAGS: Self = Self(Cow::Borrowed("workspace.tags"));
+    pub const WORKSPACE_CHART_MOVE: Self = Self(Cow::Borrowed("workspace.chart.move"));
+    pub const WORKSPACE_CHART_ADD: Self = Self(Cow::Borrowed("workspace.chart.add"));
+    pub const WORKSPACE_CHART_REMOVE: Self = Self(Cow::Borrowed("workspace.chart.remove"));
+    pub const WORKSPACE_VIEW_ADD: Self = Self(Cow::Borrowed("workspace.view.add"));
+    pub const WORKSPACE_VIEW_MOVE: Self = Self(Cow::Borrowed("workspace.view.move"));
+    pub const WORKSPACE_VIEW_REMOVE: Self = Self(Cow::Borrowed("workspace.view.remove"));
+    pub const WORKSPACE_VIEW_ROTATION: Self = Self(Cow::Borrowed("workspace.view.rotation"));
+    pub const WORKSPACE_VIEW_POINT: Self = Self(Cow::Borrowed("workspace.view.point"));
 
     pub fn new(value: impl Into<String>) -> Result<Self, ControlAddressError> {
         let value = value.into();
@@ -448,5 +619,28 @@ mod tests {
         }
         assert!(ControlKind::from_str("radio").is_err());
         assert!(ControlKind::from_str("Text").is_err());
+    }
+
+    #[test]
+    fn cockpit_coverage_has_exact_families_and_reasons_for_every_unavailable_entry() {
+        let families = COCKPIT_COVERAGE
+            .iter()
+            .map(|entry| entry.modeled_family)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            families.len(),
+            COCKPIT_COVERAGE.len(),
+            "modeled families must be unique"
+        );
+        assert!(
+            COCKPIT_COVERAGE
+                .iter()
+                .all(|entry| !entry.control_family.trim().is_empty())
+        );
+        assert!(COCKPIT_COVERAGE.iter().all(|entry| {
+            entry
+                .unavailable_reason
+                .is_none_or(|reason| !reason.trim().is_empty())
+        }));
     }
 }

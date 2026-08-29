@@ -1,7 +1,61 @@
 use crate::{
-    Angle, AspectId, ChartDraft, ChartMutation, ChartSlotId, InstanceId, PointId, ResourceId,
-    ViewInstanceId, WorkspaceSwitchAction,
+    Angle, AspectId, ChartDraft, ChartMutation, ChartSlotId, InstanceId, PointId,
+    ResourceDraftKind, ResourceId, ResourceMutation, Revision, ViewInstanceId,
+    WorkspaceSwitchAction,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceBindingSlot {
+    DisplayedPoints,
+    AspectedPoints,
+    TransitPoints,
+    Aspects,
+    Analysis,
+    Theme,
+    Wheel,
+    ViewDocument { view_id: ViewInstanceId },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceBindingSelection {
+    Follow {
+        resource_id: ResourceId,
+    },
+    Pinned {
+        resource_id: ResourceId,
+        revision: Revision,
+    },
+    Inline {
+        resource_id: ResourceId,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkspaceCompositionMutation {
+    MoveChart {
+        instance_id: InstanceId,
+        before: Option<InstanceId>,
+    },
+    AddView {
+        document: WorkspaceBindingSelection,
+    },
+    RemoveView {
+        view_id: ViewInstanceId,
+    },
+    MoveView {
+        view_id: ViewInstanceId,
+        before: Option<ViewInstanceId>,
+    },
+    SetRotation {
+        view_id: ViewInstanceId,
+        rotation: Option<Angle>,
+    },
+    SetPointHidden {
+        view_id: ViewInstanceId,
+        point_id: PointId,
+        hidden: bool,
+    },
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppIntent {
@@ -48,12 +102,23 @@ pub enum AppIntent {
     SetWorkspaceAspectSet {
         resource_id: ResourceId,
     },
+    SetWorkspaceBinding {
+        slot: WorkspaceBindingSlot,
+        selection: WorkspaceBindingSelection,
+    },
+    ApplyWorkspaceComposition(WorkspaceCompositionMutation),
     NewWorkspace,
     OpenWorkspace {
         resource_id: ResourceId,
     },
     RenameWorkspace {
         title: String,
+    },
+    SetWorkspaceDescription {
+        description: Option<String>,
+    },
+    SetWorkspaceTags {
+        tags: Vec<String>,
     },
     DiscardWorkspaceChanges,
     ResolveWorkspaceSwitch {
@@ -76,6 +141,31 @@ pub enum AppIntent {
     DuplicateAspectSet {
         resource_id: ResourceId,
     },
+    /// Selects one canonical identity for repository revision inspection.
+    SelectRepositoryResource {
+        resource_id: ResourceId,
+    },
+    BeginDeleteResource {
+        resource_id: ResourceId,
+        expected_revision: crate::Revision,
+    },
+    ConfirmDeleteResource {
+        resource_id: ResourceId,
+        expected_revision: crate::Revision,
+    },
+    BeginResourceEdit {
+        resource_id: ResourceId,
+    },
+    BeginResourceCreate {
+        kind: ResourceDraftKind,
+    },
+    ApplyResourceMutation(Box<ResourceMutation>),
+    SaveResourceDraft {
+        kind: ResourceDraftKind,
+    },
+    CancelResourceDraft {
+        kind: ResourceDraftKind,
+    },
     UpdateAspectSetDraft(AspectSetDraftMutation),
     SaveDraft,
     CancelDraft,
@@ -85,11 +175,35 @@ pub enum AppIntent {
 #[derive(Clone, Debug, PartialEq)]
 pub enum AspectSetDraftMutation {
     SetTitle(String),
-    SetOrb { aspect_id: AspectId, maximum: Angle },
-    SetEnabled { aspect_id: AspectId, enabled: bool },
+    SetDescription(Option<String>),
+    SetTags(Vec<String>),
+    SetOrb {
+        aspect_id: AspectId,
+        maximum: Angle,
+    },
+    SetEnabled {
+        aspect_id: AspectId,
+        enabled: bool,
+    },
+    Insert {
+        after: Option<AspectId>,
+        aspect: mirabile_core::AspectDefinition,
+    },
+    Update {
+        aspect_id: AspectId,
+        aspect: mirabile_core::AspectDefinition,
+    },
+    Remove {
+        aspect_id: AspectId,
+    },
+    Move {
+        aspect_id: AspectId,
+        before: Option<AspectId>,
+    },
 }
 
 impl AppIntent {
+    #[allow(clippy::too_many_lines)]
     pub fn semantic_summary(&self) -> String {
         match self {
             Self::BeginNewChart | Self::StartChartDraft { .. } => "chart.begin-new".into(),
@@ -121,9 +235,22 @@ impl AppIntent {
             Self::SetWorkspaceAspectSet { resource_id } => {
                 format!("workspace.aspect-set[{resource_id}]")
             }
+            Self::SetWorkspaceBinding { slot, selection } => {
+                format!("workspace.binding[{slot:?}]={selection:?}")
+            }
+            Self::ApplyWorkspaceComposition(mutation) => {
+                format!("workspace.composition={mutation:?}")
+            }
             Self::NewWorkspace => "workspace.new".into(),
             Self::OpenWorkspace { resource_id } => format!("workspace.open[{resource_id}]"),
             Self::RenameWorkspace { .. } => "workspace.rename".into(),
+            Self::SetWorkspaceDescription {
+                description: Some(_),
+            } => "workspace.description.set".into(),
+            Self::SetWorkspaceDescription { description: None } => {
+                "workspace.description.clear".into()
+            }
+            Self::SetWorkspaceTags { .. } => "workspace.tags.set".into(),
             Self::DiscardWorkspaceChanges => "workspace.discard".into(),
             Self::ResolveWorkspaceSwitch { action } => match action {
                 WorkspaceSwitchAction::SaveAndSwitch => "workspace.switch.save".into(),
@@ -143,8 +270,35 @@ impl AppIntent {
             Self::DuplicateAspectSet { resource_id } => {
                 format!("aspect.duplicate[{resource_id}]")
             }
+            Self::SelectRepositoryResource { resource_id } => {
+                format!("repository.select[{resource_id}]")
+            }
+            Self::BeginDeleteResource { resource_id, .. } => {
+                format!("repository.begin-delete[{resource_id}]")
+            }
+            Self::ConfirmDeleteResource { resource_id, .. } => {
+                format!("repository.confirm-delete[{resource_id}]")
+            }
+            Self::BeginResourceEdit { resource_id } => {
+                format!("resource.begin-edit[{resource_id}]")
+            }
+            Self::BeginResourceCreate { kind } => format!("resource.begin-new[{kind:?}]"),
+            Self::ApplyResourceMutation(mutation) => {
+                format!("resource.mutate[{:?}]", mutation.kind())
+            }
+            Self::SaveResourceDraft { kind } => format!("resource.save[{kind:?}]"),
+            Self::CancelResourceDraft { kind } => format!("resource.cancel[{kind:?}]"),
             Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetTitle(_)) => {
                 "aspect.title.set".into()
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetDescription(Some(_))) => {
+                "aspect.description.set".into()
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetDescription(None)) => {
+                "aspect.description.clear".into()
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetTags(_)) => {
+                "aspect.tags.set".into()
             }
             Self::UpdateAspectSetDraft(AspectSetDraftMutation::SetOrb { aspect_id, maximum }) => {
                 format!(
@@ -157,6 +311,18 @@ impl AppIntent {
                 aspect_id,
                 enabled,
             }) => format!("aspect.enabled[{}]={enabled}", aspect_id.as_str()),
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::Insert { .. }) => {
+                "aspect.row.insert".into()
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::Update { aspect_id, .. }) => {
+                format!("aspect.row.update[{}]", aspect_id.as_str())
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::Remove { aspect_id }) => {
+                format!("aspect.row.remove[{}]", aspect_id.as_str())
+            }
+            Self::UpdateAspectSetDraft(AspectSetDraftMutation::Move { aspect_id, .. }) => {
+                format!("aspect.row.move[{}]", aspect_id.as_str())
+            }
             Self::SaveDraft => "draft.save".into(),
             Self::CancelDraft => "draft.cancel".into(),
             Self::RefreshActiveView => "application.refresh".into(),
@@ -168,6 +334,13 @@ impl ChartMutation {
     fn semantic_summary(&self) -> String {
         match self {
             Self::SetTitle(_) => "chart.title.set".into(),
+            Self::SetDefinitionDescription(Some(_)) => "chart.definition.description.set".into(),
+            Self::SetDefinitionDescription(None) => "chart.definition.description.clear".into(),
+            Self::SetDefinitionTags(_) => "chart.definition.tags.set".into(),
+            Self::SetRecordTitle(_) => "chart.record.title.set".into(),
+            Self::SetRecordDescription(Some(_)) => "chart.record.description.set".into(),
+            Self::SetRecordDescription(None) => "chart.record.description.clear".into(),
+            Self::SetRecordTags(_) => "chart.record.tags.set".into(),
             Self::SetEventKind(_) => "chart.event-kind.set".into(),
             Self::SetSubjectName(Some(_)) => "chart.subject-name.set".into(),
             Self::SetSubjectName(None) => "chart.subject-name.clear".into(),
@@ -187,6 +360,11 @@ impl ChartMutation {
             Self::SetZodiac(_) => "chart.zodiac.set".into(),
             Self::SetHouseSystem(_) => "chart.houses.set".into(),
             Self::SetCoordinateSystem(_) => "chart.coordinates.set".into(),
+            Self::SetRecordDetails(_) => "chart.record-details.set".into(),
+            Self::Notes(_) => "chart.notes.mutate".into(),
+            Self::LifeEvents(_) => "chart.life-events.mutate".into(),
+            Self::LifeEventNotes { .. } => "chart.life-event.notes.mutate".into(),
+            Self::SetCalculation(_) => "chart.calculation.set".into(),
         }
     }
 }

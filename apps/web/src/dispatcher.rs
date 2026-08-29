@@ -129,6 +129,7 @@ impl CoordinatorState {
         let recorded_intent = action.intent.clone();
         let recorded_origin = action.origin_control.clone();
         let source = action.source;
+        let before_model = self.model.get_untracked();
         let before = self.model.get_untracked().version;
         let (accepted_projection, settled_projection, pending_transitions, outcome) =
             match self.application.dispatch(action.intent).await {
@@ -166,17 +167,22 @@ impl CoordinatorState {
         if accepted_projection.is_some()
             && !matches!(source, ActionSource::Macro | ActionSource::System)
         {
-            self.capture_recorded_action(&recorded_intent, recorded_origin);
+            self.capture_recorded_action(&recorded_intent, recorded_origin, &before_model);
         }
         returned_outcome
     }
 
-    fn capture_recorded_action(&self, intent: &AppIntent, origin: Option<ControlAddress>) {
+    fn capture_recorded_action(
+        &self,
+        intent: &AppIntent,
+        origin: Option<ControlAddress>,
+        before_model: &AppReadModel,
+    ) {
         let mut failure = None;
         let model = self.model.get_untracked();
         self.recorder.update(|recorder| {
             if let Some(recorder) = recorder
-                && let Err(error) = recorder.capture(intent, origin, &model)
+                && let Err(error) = recorder.capture(intent, origin, before_model, &model)
             {
                 failure = Some(error.to_string());
             }

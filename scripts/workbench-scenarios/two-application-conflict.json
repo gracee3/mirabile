@@ -29,7 +29,7 @@
       {"action": {"action": "save_chart_editor"}}
     ]}},
     {"command": "wait", "timeout": 20},
-    {"command": "snapshot", "expect": {"value.application.status": "ready", "value.application.settled": true, "value.chart_editor.state": "conflict", "value.chart_editor.fields.title": "Local Conflict Title", "value.chart_editor.conflicts.0.component": "record", "value.chart_editor.conflicts.1.component": "definition", "value.coordinator.macro_state.state": "idle"}},
+    {"command": "snapshot", "expect": {"value.application.status": "ready", "value.application.settled": true, "value.chart_editor.state": "conflict", "value.chart_editor.fields.definition_metadata.title": "Local Conflict Title", "value.chart_editor.conflicts.0.component": "record", "value.chart_editor.conflicts.1.component": "definition", "value.coordinator.macro_state.state": "idle"}},
     {"command": "trace"}
   ]
 }

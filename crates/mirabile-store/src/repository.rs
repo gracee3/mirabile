@@ -95,6 +95,21 @@ pub trait ResourceRepository {
         revision: Revision,
     ) -> Result<Option<ResourceState>, RepositoryError>;
 
+    /// Lists every current repository head, including tombstones.
+    ///
+    /// Results are ordered by stable resource identity. A kind filter applies equally to present
+    /// resources and deleted heads.
+    async fn list_heads(
+        &self,
+        kind: Option<ResourceKind>,
+    ) -> Result<Vec<ResourceState>, RepositoryError>;
+
+    /// Lists the complete immutable history for one stable resource identity.
+    ///
+    /// Results are ordered by revision and include a terminal tombstone when the resource was
+    /// deleted.
+    async fn list_revisions(&self, id: ResourceId) -> Result<Vec<ResourceState>, RepositoryError>;
+
     async fn list(
         &self,
         kind: Option<ResourceKind>,

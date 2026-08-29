@@ -77,6 +77,11 @@ pub(crate) fn current_transits_session(
     let slot = ChartSlotId::new("primary").expect("built-in slot ID is valid");
     let draft = ChartDraft {
         title: "Current Transits".into(),
+        definition_description: None,
+        definition_tags: Vec::new(),
+        record_title: "Current Transits source".into(),
+        record_description: None,
+        record_tags: Vec::new(),
         record: ChartRecord {
             event_kind: EventKind::Event,
             subject: None,

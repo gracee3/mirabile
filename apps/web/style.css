@@ -38,7 +38,8 @@ body {
 body {
   margin: 0;
   min-height: 100vh;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background:
     radial-gradient(circle at 50% -20%, rgb(41 113 143 / 20%), transparent 34rem),
     var(--surface-0);
@@ -122,6 +123,9 @@ h3 {
 }
 
 .command-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: grid;
   grid-template-columns: minmax(12rem, 0.8fr) minmax(20rem, 1.5fr) auto;
   min-height: 4.5rem;
@@ -252,8 +256,181 @@ kbd {
 .workstation {
   display: grid;
   grid-template-columns: minmax(15rem, 19rem) minmax(28rem, 1fr) minmax(18rem, 22rem);
-  height: calc(100vh - 6.3rem);
-  min-height: 34rem;
+  min-height: max(34rem, calc(100vh - 6.3rem));
+  height: auto;
+}
+
+.cockpit-nav {
+  position: sticky;
+  top: 4.5rem;
+  z-index: 19;
+  display: grid;
+  grid-template-columns: minmax(16rem, 1fr) auto auto;
+  gap: 0.65rem;
+  align-items: end;
+  padding: 0.75rem 1rem;
+  border-block: 1px solid var(--border);
+  background: rgb(8 18 29 / 96%);
+}
+
+.cockpit-nav label,
+.typed-resource-editor label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.payload-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  border: 1px solid var(--border);
+}
+
+.payload-fields legend {
+  color: var(--accent);
+}
+
+.payload-fields .checkbox-field {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.color-fields input[type="color"] {
+  min-height: 2.25rem;
+  width: 100%;
+}
+
+.semantic-tables {
+  display: grid;
+  gap: 0.65rem;
+  overflow-x: auto;
+}
+
+.semantic-tables h3 {
+  margin: 0.6rem 0 0;
+}
+
+.semantic-tables table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.semantic-tables th,
+.semantic-tables td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.unavailable-reason {
+  color: var(--muted);
+}
+
+.cockpit-sections {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1rem;
+}
+
+.cockpit-section {
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: var(--surface-1);
+}
+
+.cockpit-section > summary {
+  padding: 0.85rem 1rem;
+  color: var(--cyan);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cockpit-section-body {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0 1rem 1rem;
+}
+
+.cockpit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.65rem;
+}
+
+.cockpit-card,
+.resource-laboratory,
+.typed-resource-editor {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  background: #091521;
+}
+
+.cockpit-card,
+.cockpit-row,
+.resource-laboratory > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.cockpit-card span,
+.cockpit-row small,
+.cockpit-note,
+.persisted-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.resource-laboratory {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.resource-laboratory h3 {
+  margin-bottom: 0.15rem;
+}
+
+.resource-inventory,
+.typed-resource-editor {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.cockpit-row {
+  border-top: 1px solid var(--border);
+  padding-top: 0.55rem;
+}
+
+.cockpit-row span {
+  display: grid;
+}
+
+.typed-resource-editor textarea {
+  min-height: 5rem;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.4rem;
+  padding: 0.5rem;
+  background: #07131f;
+}
+
+@media (max-width: 850px) {
+  .cockpit-nav {
+    position: static;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .cockpit-nav label {
+    grid-column: 1 / -1;
+  }
 }
 
 .chart-rail,
@@ -1040,6 +1217,33 @@ input[type="text"] {
   margin-top: 0.9rem;
 }
 
+.delete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 0.8rem;
+}
+
+.binding-row {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1.25fr) repeat(3, minmax(10rem, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+  padding: 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.binding-row header,
+.binding-row label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.button.danger:not(:disabled) {
+  border-color: #ff6b78;
+  color: #ffb3ba;
+}
+
 .muted {
   color: var(--muted);
 }
@@ -1129,5 +1333,13 @@ input[type="text"] {
 
   .wheel-scene {
     max-height: none;
+  }
+
+  .binding-row {
+    grid-template-columns: 1fr;
+  }
+
+  .delete-actions .button {
+    width: 100%;
   }
 }

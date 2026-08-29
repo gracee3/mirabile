@@ -176,6 +176,19 @@ def perform(client: CDPClient, command: str, options: dict[str, Any]) -> Any:
         return bridge_call(client, command)
     if command == "get":
         return get_control(client, str(options["address"]))
+    if command == "discover":
+        manifest_controls = controls(client)
+        control_id = str(options["control"])
+        qualifiers = options.get("qualifiers", {})
+        matches = [control for control in manifest_controls if control.get("address", {}).get("control") == control_id and all(control.get("address", {}).get("qualifiers", {}).get(key) == value for key, value in qualifiers.items())]
+        index = options.get("index")
+        if index is None and len(matches) != 1:
+            raise CDPError(f"semantic discovery expected one {control_id!r} control, found {len(matches)}")
+        if index is not None and (not isinstance(index, int) or index < 0 or index >= len(matches)):
+            raise CDPError(f"semantic discovery index {index!r} is outside {len(matches)} {control_id!r} matches")
+        result = dict(matches[0 if index is None else index])
+        result["address"] = canonical_address(result["address"])
+        return result
     if command in {"click", "set", "select", "check"}:
         address = str(options["address"])
         address = canonical_address(get_control(client, address).get("address"))
@@ -214,6 +227,9 @@ def perform(client: CDPClient, command: str, options: dict[str, Any]) -> Any:
         path = Path(str(options["path"]))
         client.screenshot(path)
         return {"path": str(path)}
+    if command == "reload":
+        client.evaluate("location.reload()")
+        return {"reloaded": True}
     raise CDPError(f"unknown command {command!r}")
 
 
@@ -224,19 +240,44 @@ def run_scenario(
     if not isinstance(steps, list):
         raise CDPError("scenario requires a steps array")
     results = []
+    bindings: dict[str, Any] = {}
     try:
         for index, step in enumerate(steps):
             if not isinstance(step, dict) or not isinstance(step.get("command"), str):
                 raise CDPError(f"scenario step {index + 1} is malformed")
-            command = step["command"]
-            result = perform(client, command, step)
-            assert_expectations(result, step.get("expect"), index + 1)
+            resolved = substitute_bindings(step, bindings)
+            command = resolved["command"]
+            result = perform(client, command, resolved)
+            assert_expectations(result, resolved.get("expect"), index + 1)
+            if isinstance(resolved.get("bind"), str):
+                bindings[resolved["bind"]] = result_path(result, str(resolved.get("bind_path", "address")))
             results.append({"step": index + 1, "command": command, "value": result})
         return {"scenario": scenario.get("name", "unnamed"), "steps": results}
     except Exception as error:
         if artifacts is not None:
             collect_failure_artifacts(client, artifacts, scenario, str(error))
         raise
+
+
+def result_path(value: Any, path: str) -> Any:
+    current = value
+    for segment in path.split(".") if path else []:
+        if isinstance(current, dict) and segment in current:
+            current = current[segment]
+        else:
+            raise CDPError(f"binding result path {path!r} was not found")
+    return current
+
+
+def substitute_bindings(value: Any, bindings: dict[str, Any]) -> Any:
+    if isinstance(value, dict):
+        return {key: substitute_bindings(item, bindings) for key, item in value.items()}
+    if isinstance(value, list):
+        return [substitute_bindings(item, bindings) for item in value]
+    if isinstance(value, str):
+        for name, bound in bindings.items():
+            value = value.replace("${" + name + "}", str(bound))
+    return value
 
 
 def assert_expectations(result: Any, expectations: Any, step: int) -> None:
@@ -315,6 +356,7 @@ def parser() -> argparse.ArgumentParser:
     wait.add_argument("--timeout", type=float, default=10.0)
     screenshot = subcommands.add_parser("screenshot")
     screenshot.add_argument("path")
+    subcommands.add_parser("reload")
     run = subcommands.add_parser("run")
     run.add_argument("scenario")
     run.add_argument("--artifacts")

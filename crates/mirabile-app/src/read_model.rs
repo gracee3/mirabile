@@ -1,6 +1,8 @@
 use std::fmt;
 
-use mirabile_core::{CoordinateSystem, CorrectionSpec, HouseSystem};
+use mirabile_core::{
+    CoordinateSystem, CorrectionSpec, HouseSystem, ResourceKind, SchemaVersion, Timestamp,
+};
 use mirabile_engine::{BackendDescriptor, ZodiacMode};
 use serde::{Deserialize, Serialize};
 
@@ -18,10 +20,14 @@ pub struct AppReadModel {
     pub authoring: AuthoringCapabilitiesReadModel,
     pub chart_editor: Option<ChartEditorReadModel>,
     pub library: LibraryReadModel,
+    pub resources: ResourceCatalogReadModel,
+    pub repository: RepositoryReadModel,
     pub workspace: WorkspaceReadModel,
     pub active_view: Option<ViewReadModel>,
     pub inspector: InspectorReadModel,
     pub resource_editor: ResourceEditorReadModel,
+    pub parameters: Vec<ParameterCoverageReadModel>,
+    pub semantic_output: SemanticOutputReadModel,
     pub capabilities: Vec<CommandCapability>,
     pub notice: Option<AppNotice>,
 }
@@ -36,10 +42,14 @@ impl AppReadModel {
             authoring: AuthoringCapabilitiesReadModel::default(),
             chart_editor: None,
             library: LibraryReadModel::default(),
+            resources: ResourceCatalogReadModel::default(),
+            repository: RepositoryReadModel::default(),
             workspace: WorkspaceReadModel::default(),
             active_view: None,
             inspector: InspectorReadModel::default(),
             resource_editor: ResourceEditorReadModel::default(),
+            parameters: Vec::new(),
+            semantic_output: SemanticOutputReadModel::default(),
             capabilities: Vec::new(),
             notice: None,
         }
@@ -58,6 +68,69 @@ impl AppReadModel {
     pub const fn is_settled(&self) -> bool {
         self.activity.settled
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ParameterStatus {
+    Live,
+    Persisted,
+    ReadOnly,
+    Unavailable { reason: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParameterCoverageReadModel {
+    pub parameter: String,
+    pub status: ParameterStatus,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SemanticOutputReadModel {
+    pub points: Vec<SemanticPointReadModel>,
+    pub houses: Vec<SemanticHouseReadModel>,
+    pub angles: Vec<SemanticAngleReadModel>,
+    pub aspects: Vec<SemanticAspectReadModel>,
+    pub provenance: Vec<ProvenanceEntryReadModel>,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticPointReadModel {
+    pub point_id: PointId,
+    pub longitude_degrees: f64,
+    pub latitude_degrees: f64,
+    pub speed_degrees_per_day: f64,
+    pub retrograde: bool,
+    pub derived: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticHouseReadModel {
+    pub number: usize,
+    pub cusp_degrees: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticAngleReadModel {
+    pub name: String,
+    pub longitude_degrees: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticAspectReadModel {
+    pub lhs: PointId,
+    pub rhs: PointId,
+    pub aspect: AspectId,
+    pub separation_degrees: f64,
+    pub orb_degrees: f64,
+    pub applying: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProvenanceEntryReadModel {
+    pub responsibility: String,
+    pub implementation: String,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -96,6 +169,7 @@ pub enum TimezoneAuthoringMode {
     NamedZone,
     LocalMeanTime,
     LocalApparentTime,
+    Unknown,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -187,7 +261,7 @@ impl AuthoringCapabilitiesReadModel {
         })
         .collect();
         let deferred_timezone =
-            "This timezone mode is deferred until a provider-backed authoring workflow exists";
+            "This timezone mode is persisted but unavailable to the active calculation provider";
         let timezone_modes = vec![
             AuthoringOption::enabled(TimezoneAuthoringMode::UniversalTime, "Universal Time"),
             AuthoringOption::enabled(TimezoneAuthoringMode::FixedOffset, "Fixed offset"),
@@ -196,15 +270,24 @@ impl AuthoringCapabilitiesReadModel {
                 "Named zone",
                 deferred_timezone,
             ),
-            AuthoringOption::disabled(
-                TimezoneAuthoringMode::LocalMeanTime,
-                "Local Mean Time",
-                deferred_timezone,
-            ),
+            if complete_location {
+                AuthoringOption::enabled(TimezoneAuthoringMode::LocalMeanTime, "Local Mean Time")
+            } else {
+                AuthoringOption::disabled(
+                    TimezoneAuthoringMode::LocalMeanTime,
+                    "Local Mean Time",
+                    "A complete manual location is required for Local Mean Time",
+                )
+            },
             AuthoringOption::disabled(
                 TimezoneAuthoringMode::LocalApparentTime,
                 "Local Apparent Time",
                 deferred_timezone,
+            ),
+            AuthoringOption::disabled(
+                TimezoneAuthoringMode::Unknown,
+                "Unknown",
+                "An unknown timezone cannot produce an astronomical instant",
             ),
         ];
         let points = descriptor
@@ -333,6 +416,82 @@ pub struct LibraryReadModel {
     pub workspaces: Vec<WorkspaceSummary>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ResourceCatalogReadModel {
+    /// One group for each actual `CanonicalResource` variant, including empty groups.
+    pub inventories: Vec<ResourceInventoryReadModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceInventoryReadModel {
+    pub kind: ResourceKind,
+    pub label: String,
+    pub resources: Vec<ResourceSummaryReadModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceSummaryReadModel {
+    pub resource_id: ResourceId,
+    pub kind: ResourceKind,
+    pub title: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub revision: Revision,
+    pub created_at: Timestamp,
+    pub modified_at: Timestamp,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RepositoryReadModel {
+    pub heads: Vec<RepositoryHeadReadModel>,
+    pub selected_resource: Option<ResourceId>,
+    pub selected_history: Vec<RepositoryRevisionReadModel>,
+    pub deletion: Option<RepositoryDeletionReadModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepositoryDeletionReadModel {
+    pub resource_id: ResourceId,
+    pub expected_revision: Revision,
+    pub references: Vec<String>,
+    pub enabled: bool,
+    pub disabled_reason: Option<String>,
+    pub first_confirmation_complete: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepositoryHeadReadModel {
+    pub resource_id: ResourceId,
+    pub kind: ResourceKind,
+    pub revision: Revision,
+    pub state: RepositoryHeadState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RepositoryHeadState {
+    Present { title: String },
+    Deleted { deleted_at: Timestamp },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepositoryRevisionReadModel {
+    pub resource_id: ResourceId,
+    pub kind: ResourceKind,
+    pub revision: Revision,
+    pub state: RepositoryRevisionState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RepositoryRevisionState {
+    Present {
+        title: String,
+        modified_at: Timestamp,
+    },
+    Deleted {
+        deleted_at: Timestamp,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceSummary {
     pub resource_id: ResourceId,
@@ -359,6 +518,8 @@ pub struct AspectSetSummary {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorkspaceReadModel {
     pub title: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
     pub charts: Vec<OpenChartSummary>,
     pub active_chart: Option<InstanceId>,
     pub selected_charts: Vec<InstanceId>,
@@ -366,6 +527,10 @@ pub struct WorkspaceReadModel {
     pub active_view: Option<ViewInstanceId>,
     pub document_id: Option<ResourceId>,
     pub document_revision: Option<Revision>,
+    pub document_schema_version: Option<SchemaVersion>,
+    pub document_created_at: Option<Timestamp>,
+    pub document_modified_at: Option<Timestamp>,
+    pub validation: Vec<crate::ResourceDraftValidationIssue>,
     pub document_dirty: bool,
     pub has_temporary_display_override: bool,
     pub switch_decision: Option<WorkspaceSwitchDecisionReadModel>,
@@ -415,6 +580,8 @@ pub enum ChartPersistence {
 pub struct ViewSummary {
     pub view_id: ViewInstanceId,
     pub title: String,
+    pub rotation: Option<Angle>,
+    pub hidden_points: Vec<PointId>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -514,6 +681,7 @@ pub struct ActiveChartInspector {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceBindingSummary {
+    pub slot: crate::WorkspaceBindingSlot,
     pub label: String,
     pub source: BindingSourceSummary,
 }
@@ -538,12 +706,34 @@ pub enum BindingSourceSummary {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ResourceEditorReadModel {
     pub aspect_set: Option<AspectSetDraftReadModel>,
+    pub drafts: Vec<TypedResourceDraftReadModel>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TypedResourceDraftReadModel {
+    pub kind: crate::ResourceDraftKind,
+    pub resource_id: Option<ResourceId>,
+    pub title: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub state: DraftState,
+    pub conflicts: Vec<crate::ResourceDraftConflictReadModel>,
+    pub validation: Vec<crate::ResourceDraftValidationIssue>,
+    pub derived_recipe_options: Vec<crate::AuthoringOption<crate::DerivedRecipeKind>>,
+    pub nested: crate::NestedResourceDraftReadModel,
+    pub value: crate::ResourceDraftValueReadModel,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AspectSetDraftReadModel {
     pub resource_id: Option<ResourceId>,
     pub title: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub schema_version: Option<SchemaVersion>,
+    pub created_at: Option<Timestamp>,
+    pub modified_at: Option<Timestamp>,
+    pub validation: Vec<crate::ResourceDraftValidationIssue>,
     pub state: DraftState,
     pub aspects: Vec<AspectDraftValue>,
 }
@@ -552,8 +742,11 @@ pub struct AspectSetDraftReadModel {
 pub struct AspectDraftValue {
     pub aspect_id: AspectId,
     pub label: String,
+    pub angle: Angle,
     pub enabled: bool,
     pub maximum_orb: Angle,
+    pub applying_multiplier: f64,
+    pub classification: mirabile_core::AspectClass,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -680,6 +873,7 @@ mod tests {
     #[test]
     fn inline_binding_summary_requires_no_resource_identity() {
         let binding = ResourceBindingSummary {
+            slot: crate::WorkspaceBindingSlot::Theme,
             label: "Theme".into(),
             source: BindingSourceSummary::Inline,
         };

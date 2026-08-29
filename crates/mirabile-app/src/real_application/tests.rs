@@ -17,7 +17,10 @@ use mirabile_engine::{
 };
 use mirabile_store::ResourceTombstone;
 
-use crate::{demo_ids, demo_resources};
+use crate::{
+    PointSetMutation, ResourceDraftKind, ResourceMetadataMutation, ResourceMutation,
+    TypedResourceDraftReadModel, demo_ids, demo_resources,
+};
 
 use super::*;
 
@@ -239,6 +242,17 @@ impl ResourceRepository for SaveFailureRepository {
         self.inner.get_revision(id, revision).await
     }
 
+    async fn list_heads(
+        &self,
+        kind: Option<ResourceKind>,
+    ) -> Result<Vec<ResourceState>, RepositoryError> {
+        self.inner.list_heads(kind).await
+    }
+
+    async fn list_revisions(&self, id: ResourceId) -> Result<Vec<ResourceState>, RepositoryError> {
+        self.inner.list_revisions(id).await
+    }
+
     async fn list(
         &self,
         kind: Option<ResourceKind>,
@@ -268,6 +282,555 @@ where
         Some(ViewComputationState::Loading)
     ));
     settle(application, loading)
+}
+
+#[test]
+fn initialization_projects_all_canonical_inventories_and_repository_heads() {
+    let repository = MemoryRepository::default();
+    for resource in demo_resources() {
+        block_on(repository.create(resource)).expect("seed demo resource");
+    }
+    let deleted = CanonicalResource::PointSet(ResourceEnvelope::new(
+        "Deleted points",
+        PointSet { points: Vec::new() },
+        Timestamp::from_unix_millis(2),
+    ));
+    let deleted_id = deleted.id();
+    block_on(repository.create(deleted)).expect("seed deletable resource");
+    let tombstone = block_on(repository.delete(
+        deleted_id,
+        Revision::INITIAL,
+        Timestamp::from_unix_millis(3),
+    ))
+    .expect("delete resource");
+
+    let application = RealApplication::with_repository(repository);
+    let model = ready(&application);
+    assert_eq!(model.resources.inventories.len(), 10);
+    assert_eq!(
+        model
+            .resources
+            .inventories
+            .iter()
+            .map(|inventory| inventory.kind)
+            .collect::<Vec<_>>(),
+        CanonicalResource::KINDS
+    );
+    assert!(
+        model
+            .resources
+            .inventories
+            .iter()
+            .all(|inventory| !inventory.label.is_empty())
+    );
+    assert_eq!(
+        model
+            .resources
+            .inventories
+            .iter()
+            .map(|inventory| inventory.resources.len())
+            .sum::<usize>(),
+        demo_resources().len()
+    );
+    assert!(model.repository.heads.iter().any(|head| {
+        head.resource_id == deleted_id
+            && head.revision == tombstone.revision
+            && matches!(
+                &head.state,
+                RepositoryHeadState::Deleted { deleted_at }
+                    if *deleted_at == tombstone.deleted_at
+            )
+    }));
+    assert!(
+        model
+            .resources
+            .inventories
+            .iter()
+            .flat_map(|inventory| &inventory.resources)
+            .all(|resource| resource.resource_id != deleted_id)
+    );
+
+    let selected = block_on(application.dispatch(AppIntent::SelectRepositoryResource {
+        resource_id: deleted_id,
+    }))
+    .expect("select deleted resource history");
+    assert_eq!(selected.repository.selected_resource, Some(deleted_id));
+    assert_eq!(selected.repository.selected_history.len(), 2);
+    assert_eq!(
+        selected.repository.selected_history[0].revision,
+        Revision::INITIAL
+    );
+    assert!(matches!(
+        selected.repository.selected_history[1].state,
+        RepositoryRevisionState::Deleted { deleted_at }
+            if deleted_at == tombstone.deleted_at
+    ));
+}
+
+#[test]
+fn deletion_requires_two_confirmations_and_retains_tombstone_history() {
+    let repository = MemoryRepository::default();
+    let orphan = CanonicalResource::PointSet(ResourceEnvelope::new(
+        "Orphan points",
+        PointSet { points: Vec::new() },
+        Timestamp::from_unix_millis(1),
+    ));
+    let resource_id = orphan.id();
+    block_on(repository.create(orphan)).expect("seed orphan");
+    let application = RealApplication::with_repository(repository.clone());
+    ready(&application);
+    let selected =
+        block_on(application.dispatch(AppIntent::SelectRepositoryResource { resource_id }))
+            .expect("select orphan");
+    let deletion = selected.repository.deletion.expect("deletion projection");
+    assert!(deletion.enabled);
+    assert!(!deletion.first_confirmation_complete);
+
+    let first = block_on(application.dispatch(AppIntent::BeginDeleteResource {
+        resource_id,
+        expected_revision: deletion.expected_revision,
+    }))
+    .expect("first confirmation");
+    assert!(
+        first
+            .repository
+            .deletion
+            .expect("confirmed deletion projection")
+            .first_confirmation_complete
+    );
+    let deleted = block_on(application.dispatch(AppIntent::ConfirmDeleteResource {
+        resource_id,
+        expected_revision: deletion.expected_revision,
+    }))
+    .expect("second confirmation");
+    assert!(deleted.repository.deletion.is_none());
+    assert!(matches!(
+        deleted
+            .repository
+            .heads
+            .iter()
+            .find(|head| head.resource_id == resource_id)
+            .map(|head| &head.state),
+        Some(RepositoryHeadState::Deleted { .. })
+    ));
+    assert_eq!(deleted.repository.selected_history.len(), 2);
+    assert!(
+        block_on(repository.get(resource_id))
+            .expect("read deleted head")
+            .is_none()
+    );
+}
+
+#[test]
+fn referenced_and_stale_resources_are_rejected_before_tombstoning() {
+    let repository = MemoryRepository::default();
+    for resource in demo_resources() {
+        block_on(repository.create(resource)).expect("seed demo resource");
+    }
+    let application = RealApplication::with_repository(repository.clone());
+    ready(&application);
+    let referenced = block_on(application.dispatch(AppIntent::SelectRepositoryResource {
+        resource_id: demo_ids().chart_record_a,
+    }))
+    .expect("select referenced record");
+    let deletion = referenced.repository.deletion.expect("deletion projection");
+    assert!(!deletion.enabled);
+    assert!(!deletion.references.is_empty());
+    assert!(
+        block_on(application.dispatch(AppIntent::BeginDeleteResource {
+            resource_id: demo_ids().chart_record_a,
+            expected_revision: deletion.expected_revision,
+        }))
+        .is_err()
+    );
+
+    let orphan = CanonicalResource::PointSet(ResourceEnvelope::new(
+        "Stale orphan",
+        PointSet { points: Vec::new() },
+        Timestamp::from_unix_millis(10),
+    ));
+    let orphan_id = orphan.id();
+    block_on(repository.create(orphan.clone())).expect("seed stale orphan");
+    let reloaded = RealApplication::with_repository(repository.clone());
+    ready(&reloaded);
+    let selected = block_on(reloaded.dispatch(AppIntent::SelectRepositoryResource {
+        resource_id: orphan_id,
+    }))
+    .expect("select stale orphan");
+    let expected = selected
+        .repository
+        .deletion
+        .expect("deletion projection")
+        .expected_revision;
+    block_on(reloaded.dispatch(AppIntent::BeginDeleteResource {
+        resource_id: orphan_id,
+        expected_revision: expected,
+    }))
+    .expect("first confirmation");
+    let mut remote = orphan
+        .next_revision(Timestamp::from_unix_millis(11))
+        .expect("next remote revision");
+    remote.set_title("Remote update".into());
+    block_on(repository.save(expected, remote)).expect("remote save");
+    let error = block_on(reloaded.dispatch(AppIntent::ConfirmDeleteResource {
+        resource_id: orphan_id,
+        expected_revision: expected,
+    }))
+    .expect_err("stale delete must conflict");
+    assert_eq!(error.kind, AppErrorKind::Conflict);
+}
+
+#[test]
+fn typed_resource_draft_saves_conflicts_cancels_and_reloads() {
+    let repository = MemoryRepository::default();
+    let original = CanonicalResource::PointSet(ResourceEnvelope::new(
+        "Original points",
+        PointSet {
+            points: vec![PointSelector::Point(PointId::new("sun").expect("point"))],
+        },
+        Timestamp::from_unix_millis(1),
+    ));
+    let resource_id = original.id();
+    block_on(repository.create(original.clone())).expect("seed point set");
+    let application = RealApplication::with_repository(repository.clone());
+    let model = ready(&application);
+
+    let opened = block_on(application.dispatch(AppIntent::BeginResourceEdit { resource_id }))
+        .expect("open typed draft");
+    assert!(opened.version > model.version);
+    assert!(matches!(
+        opened.resource_editor.drafts.as_slice(),
+        [TypedResourceDraftReadModel {
+            kind: ResourceDraftKind::PointSet,
+            state: DraftState::Clean {
+                revision: Revision::INITIAL
+            },
+            ..
+        }]
+    ));
+    let dirty = block_on(
+        application.dispatch(AppIntent::ApplyResourceMutation(Box::new(
+            ResourceMutation::PointSet(PointSetMutation::Metadata(
+                ResourceMetadataMutation::SetTitle("Edited points".into()),
+            )),
+        ))),
+    )
+    .expect("mutate typed draft");
+    assert!(matches!(
+        dirty.resource_editor.drafts[0].state,
+        DraftState::Dirty {
+            base_revision: Revision::INITIAL
+        }
+    ));
+    assert_eq!(
+        block_on(repository.get(resource_id))
+            .expect("repository read")
+            .expect("resource")
+            .title(),
+        "Original points"
+    );
+
+    let saving = block_on(application.dispatch(AppIntent::SaveResourceDraft {
+        kind: ResourceDraftKind::PointSet,
+    }))
+    .expect("begin typed save");
+    assert!(!saving.is_settled());
+    let saved = settle(&application, saving);
+    assert_eq!(saved.resource_editor.drafts[0].title, "Edited points");
+    assert!(matches!(
+        saved.resource_editor.drafts[0].state,
+        DraftState::Clean { revision } if revision.get() == 2
+    ));
+
+    let reloaded = ready(&RealApplication::with_repository(repository.clone()));
+    let inventory = reloaded
+        .resources
+        .inventories
+        .iter()
+        .find(|inventory| inventory.kind == ResourceKind::PointSet)
+        .expect("point inventory");
+    assert_eq!(inventory.resources[0].title, "Edited points");
+    assert_eq!(inventory.resources[0].revision.get(), 2);
+
+    block_on(
+        application.dispatch(AppIntent::ApplyResourceMutation(Box::new(
+            ResourceMutation::PointSet(PointSetMutation::Metadata(
+                ResourceMetadataMutation::SetTitle("Local conflict".into()),
+            )),
+        ))),
+    )
+    .expect("local conflicting edit");
+    let remote_head = block_on(repository.get(resource_id))
+        .expect("remote read")
+        .expect("remote head");
+    let mut remote_next = remote_head
+        .next_revision(Timestamp::from_unix_millis(5))
+        .expect("remote revision");
+    remote_next.set_title("Remote conflict".into());
+    block_on(repository.save(remote_head.revision(), remote_next)).expect("remote save");
+    let saving = block_on(application.dispatch(AppIntent::SaveResourceDraft {
+        kind: ResourceDraftKind::PointSet,
+    }))
+    .expect("begin stale save");
+    let conflicted = settle(&application, saving);
+    assert!(matches!(
+        conflicted.resource_editor.drafts[0].state,
+        DraftState::Conflict {
+            base_revision,
+            remote_revision
+        } if base_revision.get() == 2 && remote_revision.get() == 3
+    ));
+    assert_eq!(conflicted.resource_editor.drafts[0].title, "Local conflict");
+
+    let canceled = block_on(application.dispatch(AppIntent::CancelResourceDraft {
+        kind: ResourceDraftKind::PointSet,
+    }))
+    .expect("cancel conflicted draft");
+    assert!(canceled.resource_editor.drafts.is_empty());
+}
+
+#[test]
+fn generalized_workspace_binding_preserves_follow_pinned_and_inline_modes() {
+    let repository = MemoryRepository::default();
+    let points = CanonicalResource::PointSet(ResourceEnvelope::new(
+        "Binding points",
+        PointSet {
+            points: vec![PointSelector::Point(PointId::new("sun").expect("point"))],
+        },
+        Timestamp::from_unix_millis(1),
+    ));
+    let resource_id = points.id();
+    block_on(repository.create(points)).expect("seed binding points");
+    let application = RealApplication::with_repository(repository);
+    ready(&application);
+
+    let followed = block_on(application.dispatch(AppIntent::SetWorkspaceBinding {
+        slot: crate::WorkspaceBindingSlot::DisplayedPoints,
+        selection: crate::WorkspaceBindingSelection::Follow { resource_id },
+    }))
+    .expect("follow binding");
+    assert!(matches!(
+        followed.inspector.bindings[0].source,
+        BindingSourceSummary::Follow { resource_id: id, revision: Revision::INITIAL, .. } if id == resource_id
+    ));
+
+    let pinned = block_on(application.dispatch(AppIntent::SetWorkspaceBinding {
+        slot: crate::WorkspaceBindingSlot::DisplayedPoints,
+        selection: crate::WorkspaceBindingSelection::Pinned {
+            resource_id,
+            revision: Revision::INITIAL,
+        },
+    }))
+    .expect("pinned binding");
+    assert!(matches!(
+        pinned.inspector.bindings[0].source,
+        BindingSourceSummary::Pinned { resource_id: id, revision: Revision::INITIAL, .. } if id == resource_id
+    ));
+
+    let inlined = block_on(application.dispatch(AppIntent::SetWorkspaceBinding {
+        slot: crate::WorkspaceBindingSlot::DisplayedPoints,
+        selection: crate::WorkspaceBindingSelection::Inline { resource_id },
+    }))
+    .expect("inline binding");
+    assert!(matches!(
+        inlined.inspector.bindings[0].source,
+        BindingSourceSummary::Inline
+    ));
+    assert!(inlined.workspace.document_dirty);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn workspace_composition_is_ordered_durable_and_application_validated() {
+    let repository = MemoryRepository::default();
+    ensure_demo(&repository);
+    let workspace = demo_resources()
+        .into_iter()
+        .find_map(|resource| match resource {
+            CanonicalResource::WorkspaceDocument(document) => Some(document.payload),
+            _ => None,
+        })
+        .expect("demo workspace");
+    let ResourceBinding::Inline {
+        value: view_document,
+    } = workspace.views[0].document.clone()
+    else {
+        panic!("demo view document is inline");
+    };
+    let view_resource = ResourceEnvelope::new(
+        "Reusable workspace view",
+        view_document,
+        Timestamp::from_unix_millis(2),
+    );
+    let view_resource_id = view_resource.id;
+    block_on(repository.create(CanonicalResource::ViewDocument(view_resource)))
+        .expect("seed canonical view document");
+
+    let application = RealApplication::with_repository_and_policy(
+        repository.clone(),
+        StartupPolicy::OpenWorkspace(demo_ids().workspace),
+    );
+    let initial = ready(&application);
+    let original_view = initial.workspace.active_view.expect("active view");
+    let original_chart = initial.workspace.active_chart.expect("active chart");
+
+    let opened = block_on(application.dispatch(AppIntent::OpenChart {
+        definition_id: demo_ids().chart_definition_b,
+    }))
+    .expect("open second chart");
+    let opened = settle(&application, opened);
+    let second_chart = opened
+        .workspace
+        .charts
+        .iter()
+        .find(|chart| chart.instance_id != original_chart)
+        .expect("second chart")
+        .instance_id;
+    let moved = block_on(application.dispatch(AppIntent::ApplyWorkspaceComposition(
+        crate::WorkspaceCompositionMutation::MoveChart {
+            instance_id: original_chart,
+            before: None,
+        },
+    )))
+    .expect("move chart");
+    assert_eq!(moved.workspace.charts[0].instance_id, second_chart);
+    assert_eq!(moved.workspace.charts[1].instance_id, original_chart);
+
+    let added = block_on(application.dispatch(AppIntent::ApplyWorkspaceComposition(
+        crate::WorkspaceCompositionMutation::AddView {
+            document: crate::WorkspaceBindingSelection::Follow {
+                resource_id: view_resource_id,
+            },
+        },
+    )))
+    .expect("add view");
+    let added = settle(&application, added);
+    let new_view = added.workspace.active_view.expect("new view is active");
+    assert_ne!(new_view, original_view);
+    assert_eq!(added.workspace.views.len(), 2);
+    assert!(
+        added
+            .active_view
+            .as_ref()
+            .expect("new active view")
+            .slots
+            .iter()
+            .any(|slot| slot.required && slot.chart == Some(second_chart))
+    );
+
+    let rotated = block_on(application.dispatch(AppIntent::ApplyWorkspaceComposition(
+        crate::WorkspaceCompositionMutation::SetRotation {
+            view_id: new_view,
+            rotation: Some(angle(42.5)),
+        },
+    )))
+    .expect("set durable rotation");
+    let rotated = settle(&application, rotated);
+    assert_eq!(
+        rotated.workspace.views[1]
+            .rotation
+            .expect("rotation")
+            .degrees(),
+        42.5
+    );
+    let sun = PointId::new("sun").expect("point");
+    let hidden = block_on(application.dispatch(AppIntent::ApplyWorkspaceComposition(
+        crate::WorkspaceCompositionMutation::SetPointHidden {
+            view_id: new_view,
+            point_id: sun.clone(),
+            hidden: true,
+        },
+    )))
+    .expect("hide point durably");
+    let hidden = settle(&application, hidden);
+    assert!(hidden.workspace.views[1].hidden_points.contains(&sun));
+
+    let moved_view = block_on(application.dispatch(AppIntent::ApplyWorkspaceComposition(
+        crate::WorkspaceCompositionMutation::MoveView {
+            view_id: original_view,
+            before: None,
+        },
+    )))
+    .expect("move view");
+    assert_eq!(moved_view.workspace.views[0].view_id, new_view);
+    let saved = block_on(application.dispatch(AppIntent::SaveWorkspace)).expect("begin save");
+    let saved = settle(&application, saved);
+    assert!(!saved.workspace.document_dirty);
+
+    let reopened_application = RealApplication::with_repository_and_policy(
+        repository,
+        StartupPolicy::OpenWorkspace(demo_ids().workspace),
+    );
+    let reopened = ready(&reopened_application);
+    assert_eq!(reopened.workspace.charts[0].instance_id, second_chart);
+    assert_eq!(reopened.workspace.views[0].view_id, new_view);
+    assert_eq!(
+        reopened.workspace.views[0]
+            .rotation
+            .expect("persisted rotation")
+            .degrees(),
+        42.5
+    );
+    assert!(reopened.workspace.views[0].hidden_points.contains(&sun));
+
+    let removed = block_on(
+        reopened_application.dispatch(AppIntent::ApplyWorkspaceComposition(
+            crate::WorkspaceCompositionMutation::RemoveView { view_id: new_view },
+        )),
+    )
+    .expect("remove view");
+    assert_eq!(removed.workspace.views.len(), 1);
+    assert_eq!(removed.workspace.active_view, Some(original_view));
+}
+
+#[test]
+fn typed_resource_creation_publishes_each_independent_canonical_payload() {
+    let repository = MemoryRepository::default();
+    let application = RealApplication::with_repository(repository.clone());
+    let mut model = ready(&application);
+    let independent = [
+        ResourceDraftKind::PointSet,
+        ResourceDraftKind::AnalysisProfile,
+        ResourceDraftKind::WheelTemplate,
+        ResourceDraftKind::ViewDocument,
+        ResourceDraftKind::Theme,
+        ResourceDraftKind::QueryDefinition,
+    ];
+    for kind in independent {
+        model = block_on(application.dispatch(AppIntent::BeginResourceCreate { kind }))
+            .expect("begin typed create");
+        let draft = model
+            .resource_editor
+            .drafts
+            .iter()
+            .find(|draft| draft.kind == kind)
+            .expect("created draft projection");
+        assert_eq!(draft.state, DraftState::New);
+        let creating = block_on(application.dispatch(AppIntent::SaveResourceDraft { kind }))
+            .expect("begin create save");
+        assert!(matches!(
+            creating
+                .resource_editor
+                .drafts
+                .iter()
+                .find(|draft| draft.kind == kind)
+                .expect("creating draft")
+                .state,
+            DraftState::Creating
+        ));
+        model = settle(&application, creating);
+    }
+    assert_eq!(repository.current_count(), independent.len());
+    for kind in independent {
+        let inventory = model
+            .resources
+            .inventories
+            .iter()
+            .find(|inventory| inventory.kind == kind.resource_kind())
+            .expect("inventory group");
+        assert_eq!(inventory.resources.len(), 1);
+        assert_eq!(inventory.resources[0].revision, Revision::INITIAL);
+    }
 }
 
 fn settle<R, C>(application: &RealApplication<R, C>, mut model: AppReadModel) -> AppReadModel
@@ -835,6 +1398,14 @@ fn save_and_switch_publishes_working_title_before_opening_target() {
     }))
     .expect("working title changes");
     assert!(renamed.workspace.document_dirty);
+    block_on(application.dispatch(AppIntent::SetWorkspaceDescription {
+        description: Some("Independent workspace metadata".into()),
+    }))
+    .expect("description changes");
+    block_on(application.dispatch(AppIntent::SetWorkspaceTags {
+        tags: vec!["workspace".into(), "saved".into()],
+    }))
+    .expect("tags change");
     let requested = block_on(application.dispatch(AppIntent::OpenWorkspace {
         resource_id: second_id,
     }))
@@ -859,7 +1430,43 @@ fn save_and_switch_publishes_working_title_before_opening_target() {
         .expect("first read")
         .expect("first exists");
     assert_eq!(first_saved.title(), "Renamed First Workspace");
+    assert_eq!(
+        first_saved.description(),
+        Some("Independent workspace metadata")
+    );
+    assert_eq!(first_saved.tags(), &["workspace", "saved"]);
     assert_eq!(first_saved.revision().get(), 2);
+}
+
+#[test]
+fn invalid_workspace_metadata_is_retained_and_blocks_save_until_corrected() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository);
+    ready(&application);
+    let invalid = block_on(application.dispatch(AppIntent::SetWorkspaceTags {
+        tags: vec!["duplicate".into(), "duplicate".into()],
+    }))
+    .expect("temporarily invalid tags are retained");
+    assert_eq!(invalid.workspace.tags, ["duplicate", "duplicate"]);
+    assert_eq!(invalid.workspace.validation[0].field, "workspace.tags");
+    assert_eq!(
+        invalid
+            .availability(crate::AppAction::SaveWorkspace)
+            .disabled_reason(),
+        Some("Complete every invalid workspace field before saving")
+    );
+    assert!(matches!(
+        block_on(application.dispatch(AppIntent::SaveWorkspace)),
+        Err(AppError {
+            kind: AppErrorKind::InvalidIntent,
+            ..
+        })
+    ));
+    let corrected = block_on(application.dispatch(AppIntent::SetWorkspaceTags {
+        tags: vec!["workspace".into()],
+    }))
+    .expect("tags corrected");
+    assert!(corrected.workspace.validation.is_empty());
 }
 
 #[test]
@@ -1379,7 +1986,7 @@ fn typed_new_chart_authoring_retains_last_valid_preview_and_saves_atomically() {
         .expect("typed chart editor begins");
     let instance_id = started.workspace.active_chart.expect("new chart is active");
     let editor = started.chart_editor.as_ref().expect("editor projection");
-    assert_eq!(editor.fields.title, "Untitled Chart");
+    assert_eq!(editor.fields.definition_metadata.title, "Untitled Chart");
     assert_eq!(editor.fields.event_kind, EventKind::Birth);
     assert_eq!(editor.fields.houses, HouseSystem::NoHouses);
     assert_eq!(editor.fields.coordinates, CoordinateSystem::Geocentric);
@@ -1535,6 +2142,16 @@ fn saved_chart_definition_only_edit_checks_record_without_revising_it() {
     )))
     .expect("title mutation");
     settle(&application, changed);
+    let changed = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetDefinitionDescription(Some("Definition metadata".into())),
+    )))
+    .expect("description mutation");
+    settle(&application, changed);
+    let changed = block_on(application.dispatch(AppIntent::ApplyChartMutation(
+        ChartMutation::SetDefinitionTags(vec!["definition".into(), "atomic".into()]),
+    )))
+    .expect("tags mutation");
+    settle(&application, changed);
     let saving = block_on(application.dispatch(AppIntent::SaveChartEditor))
         .expect("saved edit begins observable save");
     assert!(matches!(
@@ -1561,10 +2178,78 @@ fn saved_chart_definition_only_edit_checks_record_without_revising_it() {
         .expect("definition exists");
     assert_eq!(definition.revision().get(), 2);
     assert_eq!(definition.title(), "Definition-only title");
+    assert_eq!(definition.description(), Some("Definition metadata"));
+    assert_eq!(definition.tags(), &["definition", "atomic"]);
     assert_eq!(
         initial.workspace.document_revision, saved.workspace.document_revision,
         "editing chart resources does not invent a workspace revision"
     );
+}
+
+#[test]
+fn saved_chart_persists_record_and_definition_metadata_atomically() {
+    let repository = MemoryRepository::default();
+    let application = demo_application(repository.clone());
+    ready(&application);
+    let ids = demo_ids();
+
+    let opened = block_on(application.dispatch(AppIntent::BeginSavedChartEdit {
+        instance_id: ids.chart_instance_a,
+    }))
+    .expect("saved editor opens");
+    let editor = opened.chart_editor.as_ref().expect("editor projection");
+    assert_eq!(
+        editor.fields.record_metadata.resource_id,
+        Some(ids.chart_record_a)
+    );
+    assert_eq!(
+        editor.fields.definition_metadata.resource_id,
+        Some(ids.chart_definition_a)
+    );
+    assert_eq!(
+        editor.fields.record_metadata.revision,
+        Some(Revision::INITIAL)
+    );
+    settle(&application, opened);
+
+    for mutation in [
+        ChartMutation::SetRecordTitle("Independent record title".into()),
+        ChartMutation::SetRecordDescription(Some("Record metadata".into())),
+        ChartMutation::SetRecordTags(vec!["facts".into(), "source".into()]),
+        ChartMutation::SetDefinitionDescription(Some("Definition metadata".into())),
+        ChartMutation::SetDefinitionTags(vec!["calculation".into()]),
+    ] {
+        let changed = block_on(application.dispatch(AppIntent::ApplyChartMutation(mutation)))
+            .expect("metadata mutation");
+        settle(&application, changed);
+    }
+    let saving = block_on(application.dispatch(AppIntent::SaveChartEditor)).expect("save begins");
+    settle(&application, saving);
+
+    let CanonicalResource::ChartRecord(record) = block_on(repository.get(ids.chart_record_a))
+        .expect("record read")
+        .expect("record exists")
+    else {
+        panic!("record kind");
+    };
+    assert_eq!(record.revision.get(), 2);
+    assert_eq!(record.title, "Independent record title");
+    assert_eq!(record.description.as_deref(), Some("Record metadata"));
+    assert_eq!(record.tags, ["facts", "source"]);
+
+    let CanonicalResource::ChartDefinition(definition) =
+        block_on(repository.get(ids.chart_definition_a))
+            .expect("definition read")
+            .expect("definition exists")
+    else {
+        panic!("definition kind");
+    };
+    assert_eq!(definition.revision.get(), 2);
+    assert_eq!(
+        definition.description.as_deref(),
+        Some("Definition metadata")
+    );
+    assert_eq!(definition.tags, ["calculation"]);
 }
 
 #[test]
@@ -1648,7 +2333,7 @@ fn saved_chart_batch_reports_both_component_conflicts_and_retains_local_editor()
         .as_ref()
         .expect("local editor retained");
     assert_eq!(editor.state, ChartEditorState::Conflict);
-    assert_eq!(editor.fields.title, "First local title");
+    assert_eq!(editor.fields.definition_metadata.title, "First local title");
     assert_eq!(editor.conflicts.len(), 2);
     assert!(
         !conflicted
@@ -1740,6 +2425,7 @@ fn shared_chart_record_blocks_factual_edits_but_allows_definition_edits() {
             .as_ref()
             .expect("editor")
             .fields
+            .definition_metadata
             .title,
         "Allowed definition title"
     );
@@ -2144,6 +2830,7 @@ fn aspect_preview_cancel_and_save_reuse_calculation_value() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
     let repository = MemoryRepository::default();
     let application = demo_application(repository.clone());
@@ -2171,6 +2858,35 @@ fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
         AspectSetDraftMutation::SetTitle("Research Orbs".into()),
     )))
     .expect("title changes");
+    block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        AspectSetDraftMutation::SetDescription(Some("Research metadata".into())),
+    )))
+    .expect("description changes");
+    let invalid = block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        AspectSetDraftMutation::SetTags(vec!["duplicate".into(), "duplicate".into()]),
+    )))
+    .expect("invalid tags retained");
+    assert_eq!(
+        invalid
+            .resource_editor
+            .aspect_set
+            .as_ref()
+            .expect("editor")
+            .validation[0]
+            .field,
+        "aspect_set.tags"
+    );
+    assert!(matches!(
+        block_on(application.dispatch(AppIntent::SaveDraft)),
+        Err(AppError {
+            kind: AppErrorKind::InvalidIntent,
+            ..
+        })
+    ));
+    block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
+        AspectSetDraftMutation::SetTags(vec!["research".into(), "orbs".into()]),
+    )))
+    .expect("tags corrected");
     block_on(application.dispatch(AppIntent::UpdateAspectSetDraft(
         AspectSetDraftMutation::SetEnabled {
             aspect_id: mirabile_core::AspectId::new("conjunction").expect("aspect ID"),
@@ -2210,17 +2926,22 @@ fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
         panic!("created resource is an Aspect Set")
     };
     assert_eq!(created_resource.title, "Research Orbs");
+    assert_eq!(
+        created_resource.description.as_deref(),
+        Some("Research metadata")
+    );
+    assert_eq!(created_resource.tags, ["research", "orbs"]);
     assert_eq!(created_resource.payload.aspects.len(), 2);
 
-    let standard_id = demo_ids().aspect_set_standard;
-    let CanonicalResource::AspectSet(standard) = block_on(repository.get(standard_id))
+    let source_id = created_id;
+    let CanonicalResource::AspectSet(source) = block_on(repository.get(source_id))
         .expect("source reads")
         .expect("source exists")
     else {
         panic!("source is an Aspect Set")
     };
     let duplicated = block_on(application.dispatch(AppIntent::DuplicateAspectSet {
-        resource_id: standard_id,
+        resource_id: source_id,
     }))
     .expect("duplicate opens");
     let duplicate = duplicated
@@ -2229,8 +2950,10 @@ fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
         .as_ref()
         .expect("duplicate editor");
     assert!(matches!(duplicate.state, DraftState::New));
-    assert_eq!(duplicate.title, format!("{} Copy", standard.title));
-    assert_eq!(duplicate.aspects.len(), standard.payload.aspects.len());
+    assert_eq!(duplicate.title, format!("{} Copy", source.title));
+    assert_eq!(duplicate.description, source.description);
+    assert_eq!(duplicate.tags, source.tags);
+    assert_eq!(duplicate.aspects.len(), source.payload.aspects.len());
     let creating = block_on(application.dispatch(AppIntent::SaveDraft)).expect("duplicate creates");
     let duplicated = settle(&application, creating);
     let duplicate_id = duplicated
@@ -2239,14 +2962,16 @@ fn new_and_duplicate_aspect_sets_preserve_full_rows_and_bind_the_workspace() {
         .as_ref()
         .and_then(|editor| editor.resource_id)
         .expect("duplicate canonical identity");
-    assert_ne!(duplicate_id, standard_id);
+    assert_ne!(duplicate_id, source_id);
     let CanonicalResource::AspectSet(duplicate) = block_on(repository.get(duplicate_id))
         .expect("duplicate reads")
         .expect("duplicate exists")
     else {
         panic!("duplicate is an Aspect Set")
     };
-    assert_eq!(duplicate.payload, standard.payload);
+    assert_eq!(duplicate.description, source.description);
+    assert_eq!(duplicate.tags, source.tags);
+    assert_eq!(duplicate.payload, source.payload);
 }
 
 #[test]
@@ -2602,6 +3327,8 @@ fn failed_real_refresh_keeps_last_good_scene() {
     let fail_next = Rc::clone(&backend.fail_next);
     let application = demo_backend_application(repository, backend);
     let initial = ready(&application);
+    let original_semantic = initial.semantic_output.clone();
+    assert!(!original_semantic.points.is_empty());
     let original = initial.active_view.unwrap().scene.expect("initial Scene");
     let opened = block_on(application.dispatch(AppIntent::OpenChart {
         definition_id: demo_ids().chart_definition_b,
@@ -2634,6 +3361,7 @@ fn failed_real_refresh_keeps_last_good_scene() {
         block_on(application.wait_for_update(refreshing.version)).expect("failure is projected");
     let failed_view = failed.active_view.expect("active view");
     assert_eq!(failed_view.scene, Some(original));
+    assert_eq!(failed.semantic_output, original_semantic);
     assert!(matches!(
         failed_view.computation,
         ViewComputationState::Failed(AppError {

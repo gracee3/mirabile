@@ -46,6 +46,14 @@ where
                 expected_revision,
                 next,
             }) => self.complete_aspect_set_save(expected_revision, next).await,
+            Some(PendingWork::SaveTypedResource {
+                kind,
+                expected_revision,
+                next,
+            }) => {
+                self.complete_typed_resource_save(kind, expected_revision, *next)
+                    .await
+            }
             Some(PendingWork::CreateChart {
                 instance_id,
                 record,
@@ -111,7 +119,13 @@ where
         {
             return Ok(());
         }
-        let result = Self::finish_scene(&mut state, &prepared, &plan, calculation);
+        let result = Self::finish_scene(&mut state, &prepared, &plan, calculation.clone());
+        if result.is_ok() {
+            let analysis = state.cache.analysis(&expected.analysis_key).cloned();
+            let runtime = state.views.entry(view_id).or_default();
+            runtime.semantic_calculation = Some(calculation);
+            runtime.semantic_analysis = analysis;
+        }
         Self::publish_view_result(&mut state, view_id, result)
     }
 
@@ -170,8 +184,18 @@ where
                 state
                     .cache
                     .insert_calculation(expected.calc_key.clone(), calculation.clone());
-                let scene =
-                    Self::finish_scene(&mut state, &pending.prepared, &pending.plan, calculation);
+                let scene = Self::finish_scene(
+                    &mut state,
+                    &pending.prepared,
+                    &pending.plan,
+                    calculation.clone(),
+                );
+                if scene.is_ok() {
+                    let analysis = state.cache.analysis(&expected.analysis_key).cloned();
+                    let runtime = state.views.entry(pending.view_id).or_default();
+                    runtime.semantic_calculation = Some(calculation);
+                    runtime.semantic_analysis = analysis;
+                }
                 Self::publish_view_result(&mut state, pending.view_id, scene)
             }
             CalculationOutcome::Failure(failure) => Self::publish_view_result(

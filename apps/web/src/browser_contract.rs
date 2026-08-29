@@ -139,6 +139,22 @@ async fn run_contract() -> Result<(), String> {
     )?;
     ensure(
         matches!(
+            first.list_heads(None).await.map_err(message)?.as_slice(),
+            [ResourceState::Deleted(value)] if value == &tombstone
+        ),
+        "head listing did not include the tombstone",
+    )?;
+    let history = first.list_revisions(id).await.map_err(message)?;
+    ensure(
+        history.len() == 4
+            && history
+                .iter()
+                .map(ResourceState::revision)
+                .eq((1..=4).map(|revision| Revision::new(revision).expect("valid revision"))),
+        "revision listing was incomplete or out of order",
+    )?;
+    ensure(
+        matches!(
             first.create(initial).await,
             Err(RepositoryError::AlreadyExists(value)) if value == id
         ),

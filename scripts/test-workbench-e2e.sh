@@ -4,6 +4,8 @@ set -euo pipefail
 workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scenario="smoke"
 mode="semantic"
+viewport_width=1600
+viewport_height=1000
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -15,6 +17,16 @@ while [[ $# -gt 0 ]]; do
       mode="$2"
       shift 2
       ;;
+    --viewport)
+      if [[ "$2" =~ ^([0-9]+)x([0-9]+)$ ]]; then
+        viewport_width="${BASH_REMATCH[1]}"
+        viewport_height="${BASH_REMATCH[2]}"
+      else
+        echo "Workbench viewport must use WIDTHxHEIGHT" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
     *)
       echo "Unknown workbench E2E argument: $1" >&2
       exit 2
@@ -24,6 +36,11 @@ done
 
 if [[ "${mode}" != "semantic" && "${mode}" != "control" && "${mode}" != "all" ]]; then
   echo "Workbench E2E mode must be semantic, control, or all" >&2
+  exit 2
+fi
+
+if (( viewport_width < 320 || viewport_width > 7680 || viewport_height < 320 || viewport_height > 4320 )); then
+  echo "Workbench viewport must be between 320x320 and 7680x4320" >&2
   exit 2
 fi
 
@@ -100,7 +117,7 @@ url="http://127.0.0.1:${server_port}/?mirabileAutomation=1&database=${database_n
   --no-sandbox \
   --disable-gpu \
   --disable-dev-shm-usage \
-  --window-size=1600,1000 \
+  --window-size="${viewport_width},${viewport_height}" \
   --user-data-dir="${profile_dir}" \
   --remote-debugging-address=127.0.0.1 \
   --remote-debugging-port="${debug_port}" \

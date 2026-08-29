@@ -32,6 +32,8 @@ where
         }
         model.authoring = authoring;
         model.calculation = Some(self.calculation_diagnostics(&state));
+        model.parameters = parameter_coverage(&model);
+        model.semantic_output = semantic_output(&state);
         Ok(model)
     }
 
@@ -123,6 +125,8 @@ impl RealState {
                 Ok(ViewSummary {
                     view_id: view.id,
                     title: view_title(view, &self.catalog)?,
+                    rotation: view.overrides.rotation,
+                    hidden_points: view.overrides.hidden_points.clone(),
                 })
             })
             .collect::<AppResult<Vec<_>>>()?;
@@ -133,40 +137,64 @@ impl RealState {
         let active_aspect_set = workspace.profile.aspects.id();
         let mut bindings = vec![
             binding_summary(
+                crate::WorkspaceBindingSlot::DisplayedPoints,
                 "Displayed points",
                 &workspace.profile.displayed_points,
                 &self.catalog,
             )?,
             binding_summary(
+                crate::WorkspaceBindingSlot::AspectedPoints,
                 "Aspected points",
                 &workspace.profile.aspected_points,
                 &self.catalog,
             )?,
             binding_summary(
+                crate::WorkspaceBindingSlot::TransitPoints,
                 "Transit points",
                 &workspace.profile.transit_points,
                 &self.catalog,
             )?,
-            binding_summary("Aspect set", &workspace.profile.aspects, &self.catalog)?,
             binding_summary(
+                crate::WorkspaceBindingSlot::Aspects,
+                "Aspect set",
+                &workspace.profile.aspects,
+                &self.catalog,
+            )?,
+            binding_summary(
+                crate::WorkspaceBindingSlot::Analysis,
                 "Analysis profile",
                 &workspace.profile.analysis,
                 &self.catalog,
             )?,
-            binding_summary("Theme", &workspace.profile.theme, &self.catalog)?,
-            binding_summary("Wheel template", &workspace.profile.wheel, &self.catalog)?,
+            binding_summary(
+                crate::WorkspaceBindingSlot::Theme,
+                "Theme",
+                &workspace.profile.theme,
+                &self.catalog,
+            )?,
+            binding_summary(
+                crate::WorkspaceBindingSlot::Wheel,
+                "Wheel template",
+                &workspace.profile.wheel,
+                &self.catalog,
+            )?,
         ];
         if let Some(view) = session
             .active_view
             .and_then(|id| workspace.views.iter().find(|view| view.id == id))
         {
             bindings.push(binding_summary(
+                crate::WorkspaceBindingSlot::ViewDocument { view_id: view.id },
                 "View document",
                 &view.document,
                 &self.catalog,
             )?);
         }
 
+        let mut repository = self
+            .catalog
+            .repository_read_model(self.repository_selection.as_ref());
+        repository.deletion = self.repository_deletion_read_model();
         Ok(AppReadModel {
             version: self.version,
             status: self.status.clone(),
@@ -182,8 +210,12 @@ impl RealState {
                 aspect_sets: self.catalog.aspect_set_summaries()?,
                 workspaces: self.catalog.workspace_summaries(),
             },
+            resources: self.catalog.resource_catalog_read_model(),
+            repository,
             workspace: WorkspaceReadModel {
                 title: session.working_title.clone(),
+                description: session.working_description.clone(),
+                tags: session.working_tags.clone(),
                 charts: open_charts,
                 active_chart: session.active_chart,
                 selected_charts: session.selected_charts.clone(),
@@ -191,6 +223,13 @@ impl RealState {
                 active_view: session.active_view,
                 document_id: self.workspace.as_ref().map(|document| document.id),
                 document_revision: self.workspace.as_ref().map(|document| document.revision),
+                document_schema_version: self
+                    .workspace
+                    .as_ref()
+                    .map(|document| document.schema_version),
+                document_created_at: self.workspace.as_ref().map(|document| document.created_at),
+                document_modified_at: self.workspace.as_ref().map(|document| document.modified_at),
+                validation: session.metadata_validation(),
                 document_dirty: session.document_dirty,
                 has_temporary_display_override: session
                     .active_view
@@ -213,7 +252,14 @@ impl RealState {
                     .as_ref()
                     .map(aspect_editor_read_model)
                     .transpose()?,
+                drafts: self
+                    .resource_drafts
+                    .values()
+                    .map(|draft| draft.read_model_with_catalog(&self.catalog.current))
+                    .collect(),
             },
+            parameters: Vec::new(),
+            semantic_output: crate::SemanticOutputReadModel::default(),
             capabilities: self.capabilities(),
             notice: self.notice.clone(),
         })
@@ -414,7 +460,18 @@ impl RealState {
                 disabled("The draft has no changes"),
             ),
             Some(DraftState::New | DraftState::Dirty { .. }) => {
-                (Availability::Enabled, Availability::Enabled)
+                if self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| !editor.metadata_validation().is_empty())
+                {
+                    (
+                        disabled("Complete every invalid Aspect Set field before saving"),
+                        Availability::Enabled,
+                    )
+                } else {
+                    (Availability::Enabled, Availability::Enabled)
+                }
             }
             Some(DraftState::Creating) => (
                 disabled("The new Aspect Set is currently being created"),
@@ -471,13 +528,19 @@ impl RealState {
         let cancel_chart_draft = save_chart_draft.clone();
         let save_workspace = self.session.as_ref().map_or_else(
             || disabled("No workspace session"),
-            |session| match session.backing {
-                super::WorkspaceDocumentBacking::Unsaved => Availability::Enabled,
-                super::WorkspaceDocumentBacking::Saved { .. } if session.document_dirty => {
-                    Availability::Enabled
-                }
-                super::WorkspaceDocumentBacking::Saved { .. } => {
-                    disabled("The workspace has no durable changes")
+            |session| {
+                if session.metadata_validation().is_empty() {
+                    match session.backing {
+                        super::WorkspaceDocumentBacking::Unsaved => Availability::Enabled,
+                        super::WorkspaceDocumentBacking::Saved { .. } if session.document_dirty => {
+                            Availability::Enabled
+                        }
+                        super::WorkspaceDocumentBacking::Saved { .. } => {
+                            disabled("The workspace has no durable changes")
+                        }
+                    }
+                } else {
+                    disabled("Complete every invalid workspace field before saving")
                 }
             },
         );
@@ -527,5 +590,166 @@ impl RealState {
             capability(AppAction::PromoteWorkspaceDisplay, promote_display),
             capability(AppAction::RefreshView, refresh),
         ]
+    }
+}
+
+fn parameter_coverage(model: &AppReadModel) -> Vec<crate::ParameterCoverageReadModel> {
+    use crate::{ParameterCoverageReadModel as Entry, ParameterStatus as Status};
+    let chart_status = if model.chart_editor.is_some() {
+        Status::Live
+    } else {
+        Status::Unavailable {
+            reason: "Open or create a chart to edit factual and calculation parameters".into(),
+        }
+    };
+    [
+        ("chart facts", chart_status.clone()),
+        ("calculation parameters", chart_status),
+        ("workspace composition", Status::Live),
+        ("point sets", Status::Persisted),
+        ("aspect sets", Status::Live),
+        ("analysis profiles", Status::Persisted),
+        ("wheel templates", Status::Persisted),
+        ("view documents", Status::Persisted),
+        ("themes", Status::Persisted),
+        ("query definitions", Status::Persisted),
+        (
+            "query execution",
+            Status::Unavailable {
+                reason: "Query execution is deferred; typed definitions remain persistable".into(),
+            },
+        ),
+        ("calculation provenance", Status::ReadOnly),
+    ]
+    .into_iter()
+    .map(|(parameter, status)| Entry {
+        parameter: parameter.into(),
+        status,
+    })
+    .collect()
+}
+
+#[allow(clippy::too_many_lines)]
+fn semantic_output(state: &RealState) -> crate::SemanticOutputReadModel {
+    use crate::{
+        ProvenanceEntryReadModel, SemanticAngleReadModel, SemanticAspectReadModel,
+        SemanticHouseReadModel, SemanticOutputReadModel, SemanticPointReadModel,
+    };
+    let Some(runtime) = state
+        .session
+        .as_ref()
+        .and_then(|session| session.active_view)
+        .and_then(|view_id| state.views.get(&view_id))
+    else {
+        return SemanticOutputReadModel {
+            unavailable_reason: Some("No active view has calculated output".into()),
+            ..Default::default()
+        };
+    };
+    if runtime.last_expected.is_none() {
+        return SemanticOutputReadModel {
+            unavailable_reason: Some("The active view has not completed a calculation".into()),
+            ..Default::default()
+        };
+    }
+    let Some(calculation) = runtime.semantic_calculation.as_ref() else {
+        return SemanticOutputReadModel {
+            unavailable_reason: Some("No last-good semantic calculation is available".into()),
+            ..Default::default()
+        };
+    };
+    let mut points =
+        calculation
+            .celestial_positions
+            .iter()
+            .map(|(point_id, point)| SemanticPointReadModel {
+                point_id: point_id.clone(),
+                longitude_degrees: point.longitude.degrees(),
+                latitude_degrees: point.latitude.degrees(),
+                speed_degrees_per_day: point.speed_longitude.as_degrees_per_day(),
+                retrograde: point.retrograde,
+                derived: false,
+            })
+            .chain(calculation.derived_points.iter().map(|(point_id, point)| {
+                SemanticPointReadModel {
+                    point_id: point_id.clone(),
+                    longitude_degrees: point.longitude.degrees(),
+                    latitude_degrees: point.latitude.degrees(),
+                    speed_degrees_per_day: point.speed_longitude.as_degrees_per_day(),
+                    retrograde: point.retrograde,
+                    derived: true,
+                }
+            }))
+            .collect::<Vec<_>>();
+    points.sort_by(|lhs, rhs| lhs.point_id.cmp(&rhs.point_id));
+    let houses = calculation
+        .houses
+        .as_ref()
+        .map(|houses| {
+            houses
+                .cusps
+                .iter()
+                .enumerate()
+                .map(|(index, cusp)| SemanticHouseReadModel {
+                    number: index + 1,
+                    cusp_degrees: cusp.degrees(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let angles = [
+        ("Ascendant", calculation.angles.ascendant),
+        ("Midheaven", calculation.angles.midheaven),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| {
+        value.map(|value| SemanticAngleReadModel {
+            name: name.into(),
+            longitude_degrees: value.degrees(),
+        })
+    })
+    .collect();
+    let aspects = runtime
+        .semantic_analysis
+        .as_ref()
+        .map(|analysis| {
+            analysis
+                .aspects
+                .iter()
+                .map(|aspect| SemanticAspectReadModel {
+                    lhs: aspect.lhs.clone(),
+                    rhs: aspect.rhs.clone(),
+                    aspect: aspect.aspect.clone(),
+                    separation_degrees: aspect.separation.degrees(),
+                    orb_degrees: aspect.orb.degrees(),
+                    applying: aspect.applying,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let provenance = &calculation.provenance;
+    SemanticOutputReadModel {
+        points,
+        houses,
+        angles,
+        aspects,
+        provenance: vec![
+            ProvenanceEntryReadModel {
+                responsibility: "Mirabile calculation engine".into(),
+                implementation: provenance.mirabile.calculation_engine.id.clone(),
+                detail: provenance.mirabile.timezone_data_version.clone(),
+            },
+            ProvenanceEntryReadModel {
+                responsibility: "Backend".into(),
+                implementation: provenance.backend.id.clone(),
+                detail: provenance.backend.version.clone(),
+            },
+            ProvenanceEntryReadModel {
+                responsibility: "Celestial positions".into(),
+                implementation: provenance.celestial.implementation.id.clone(),
+                detail: format!("{:?}", provenance.celestial.coordinates),
+            },
+        ],
+        unavailable_reason: None,
     }
 }
