@@ -200,7 +200,7 @@ struct MockWorkspaceState {
 enum PendingWork {
     InitialView,
     Refresh {
-        outcome: AppResult<Scene>,
+        outcome: Box<AppResult<Scene>>,
     },
     Save {
         resource_id: ResourceId,
@@ -965,7 +965,7 @@ impl MockState {
             }
             PendingWork::Refresh { outcome } => {
                 let view = self.active_view_mut()?;
-                match outcome {
+                match *outcome {
                     Ok(scene) => {
                         view.scene = Some(scene);
                         view.computation = ViewComputationState::Fresh;
@@ -1233,7 +1233,7 @@ impl MockState {
             view.computation = ViewComputationState::Refreshing;
         }
         self.pending = Some(PendingWork::Refresh {
-            outcome: outcome.map(|()| scene),
+            outcome: Box::new(outcome.map(|()| scene)),
         });
     }
 

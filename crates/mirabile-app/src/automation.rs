@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AppReadModel, ApplicationStatus, ControlAddress, ControlDescriptor, InstanceId,
-    PendingOperationReadModel, ProjectionVersion, ResourceId, ViewComputationState, ViewInstanceId,
+    PendingOperationReadModel, ProjectionVersion, ResourceId, Scene, ViewComputationState,
+    ViewInstanceId,
 };
 
 pub const AUTOMATION_SNAPSHOT_VERSION: u32 = 1;
@@ -165,6 +166,7 @@ impl AutomationSnapshotV1 {
                 title: view.title.clone(),
                 computation: computation_label(&view.computation).into(),
                 last_good_scene_present: view.scene.is_some(),
+                scene_manifest: view.scene.as_ref().map(AutomationSceneManifest::capture),
                 points: view
                     .display
                     .points
@@ -360,8 +362,123 @@ pub struct AutomationViewSnapshot {
     pub title: String,
     pub computation: String,
     pub last_good_scene_present: bool,
+    #[serde(default)]
+    pub scene_manifest: Option<AutomationSceneManifest>,
     pub points: Vec<AutomationPointVisibility>,
     pub slots: Vec<AutomationSlotAssignment>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AutomationSceneManifest {
+    pub zodiac_count: usize,
+    pub house_count: usize,
+    pub angle_count: usize,
+    pub point_count: usize,
+    pub aspect_count: usize,
+    pub zodiac_ids: Vec<String>,
+    pub houses: Vec<AutomationSceneHouse>,
+    pub angles: Vec<AutomationSceneAngle>,
+    pub points: Vec<AutomationScenePoint>,
+    pub aspects: Vec<AutomationSceneAspect>,
+}
+
+impl AutomationSceneManifest {
+    fn capture(scene: &Scene) -> Self {
+        Self {
+            zodiac_count: scene.zodiac.len(),
+            house_count: scene.houses.len(),
+            angle_count: scene.angles.len(),
+            point_count: scene.points.len(),
+            aspect_count: scene.aspects.len(),
+            zodiac_ids: scene
+                .zodiac
+                .iter()
+                .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
+                .map(|sign| sign.id.clone())
+                .collect(),
+            houses: scene
+                .houses
+                .iter()
+                .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
+                .map(|house| AutomationSceneHouse {
+                    number: house.number,
+                    cusp_visible: house.show_cusp,
+                    number_visible: house.show_number,
+                })
+                .collect(),
+            angles: scene
+                .angles
+                .iter()
+                .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
+                .map(|angle| AutomationSceneAngle {
+                    id: angle.id.clone(),
+                    derived_opposite: angle.derived_opposite,
+                })
+                .collect(),
+            points: scene
+                .points
+                .iter()
+                .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
+                .map(|point| AutomationScenePoint {
+                    point_id: point.point.to_string(),
+                    label: point.display_label.clone(),
+                    formatted_position: point.formatted_position.clone(),
+                    retrograde: point.retrograde,
+                    retrograde_marker: point.retrograde && point.show_retrograde,
+                    displaced: point.leader.is_some(),
+                    glyph_fallback: point.glyph_fallback,
+                })
+                .collect(),
+            aspects: scene
+                .aspects
+                .iter()
+                .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
+                .map(|aspect| AutomationSceneAspect {
+                    aspect_id: aspect.aspect_id.clone(),
+                    lhs: aspect.lhs.to_string(),
+                    rhs: aspect.rhs.to_string(),
+                    classification: format!("{:?}", aspect.classification).to_lowercase(),
+                    chord: aspect.draw_chord,
+                    applying: aspect.applying,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AutomationSceneHouse {
+    pub number: usize,
+    pub cusp_visible: bool,
+    pub number_visible: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AutomationSceneAngle {
+    pub id: String,
+    pub derived_opposite: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct AutomationScenePoint {
+    pub point_id: String,
+    pub label: String,
+    pub formatted_position: String,
+    pub retrograde: bool,
+    pub retrograde_marker: bool,
+    pub displaced: bool,
+    pub glyph_fallback: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AutomationSceneAspect {
+    pub aspect_id: String,
+    pub lhs: String,
+    pub rhs: String,
+    pub classification: String,
+    pub chord: bool,
+    pub applying: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -447,5 +564,53 @@ mod tests {
         let json = serde_json::to_value(snapshot).expect("snapshot serializes");
         assert_eq!(json["schema_version"], AUTOMATION_SNAPSHOT_VERSION);
         assert!(json.get("scene").is_none());
+    }
+
+    #[test]
+    fn scene_manifest_is_bounded_semantic_and_excludes_geometry() {
+        let scene = Scene {
+            width: 520.0,
+            height: 520.0,
+            lines: vec![crate::Line {
+                x1: 1.0,
+                y1: 2.0,
+                x2: 3.0,
+                y2: 4.0,
+                stroke: crate::StrokeRole::Accent,
+                width: 1.0,
+            }],
+            zodiac: vec![crate::ZodiacDivision {
+                index: 0,
+                id: "aries".into(),
+                name: "Aries".into(),
+                glyph: "♈".into(),
+                longitude_degrees: 0.0,
+                screen_angle_degrees: 270.0,
+                line: crate::LineGeometry {
+                    x1: 10.0,
+                    y1: 11.0,
+                    x2: 12.0,
+                    y2: 13.0,
+                },
+                label_x: 14.0,
+                label_y: 15.0,
+                show_boundary: true,
+                show_label: true,
+            }],
+            ..Scene::default()
+        };
+        let manifest = AutomationSceneManifest::capture(&scene);
+        assert_eq!(manifest.zodiac_count, 1);
+        assert_eq!(manifest.zodiac_ids, ["aries"]);
+        let json = serde_json::to_value(manifest).expect("manifest serializes");
+        let object = json.as_object().expect("manifest object");
+        for forbidden in ["width", "height", "lines", "line", "x", "y", "x1", "y1"] {
+            assert!(
+                !object.contains_key(forbidden),
+                "geometry field {forbidden}"
+            );
+        }
+        assert!(!json.to_string().contains("520.0"));
+        assert!(!json.to_string().contains("\"x1\""));
     }
 }

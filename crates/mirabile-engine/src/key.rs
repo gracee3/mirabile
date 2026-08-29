@@ -1,8 +1,8 @@
 use std::fmt;
 
 use mirabile_core::{
-    AnalysisProfile, Angle, AspectId, AspectSet, DomainValidate, DomainValidationError, PointId,
-    PointSelector, PointSet, ResourceError, Theme,
+    AnalysisProfile, Angle, AspectClass, AspectId, AspectSet, DomainValidate,
+    DomainValidationError, PointId, PointSelector, PointSet, ResourceError, Theme,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -71,6 +71,8 @@ struct AnalysisKeyInput {
 #[derive(Serialize)]
 struct AspectRuleMaterial {
     id: AspectId,
+    name: String,
+    classification: AspectClass,
     angle: Angle,
     maximum_orb: Angle,
     applying_multiplier: f64,
@@ -108,6 +110,8 @@ impl AnalysisKey {
             .filter(|aspect| aspect.enabled)
             .map(|aspect| AspectRuleMaterial {
                 id: aspect.id.clone(),
+                name: aspect.name.clone(),
+                classification: aspect.classification,
                 angle: aspect.angle,
                 maximum_orb: aspect.orbs.maximum,
                 applying_multiplier: aspect.orbs.applying_multiplier,
@@ -144,29 +148,17 @@ impl AnalysisKey {
 }
 
 #[derive(Serialize)]
-struct LayoutKeyInput<'a> {
-    points: &'a [(PointId, Angle)],
-    aspect_pairs: &'a [(PointId, PointId)],
-    zodiac_radius: f64,
-    aspect_radius: f64,
+struct LayoutKeyInput<'a, T> {
+    material: &'a T,
     layout_version: &'a str,
 }
 
 impl LayoutKey {
-    pub fn derive(
-        points: &[(PointId, Angle)],
-        aspect_pairs: &[(PointId, PointId)],
-        zodiac_radius: f64,
-        aspect_radius: f64,
-        layout_version: &str,
-    ) -> Result<Self, KeyError> {
+    pub fn derive<T: Serialize>(material: &T, layout_version: &str) -> Result<Self, KeyError> {
         hash(
             "layout",
             &LayoutKeyInput {
-                points,
-                aspect_pairs,
-                zodiac_radius,
-                aspect_radius,
+                material,
                 layout_version,
             },
         )

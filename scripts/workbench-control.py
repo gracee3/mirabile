@@ -113,7 +113,13 @@ def native_expression(address: str, operation: str, value: Any = None) -> str:
     value_json = json.dumps(value)
     operations = {
         "click": "native.click(); return true;",
-        "focus": "native.focus(); return true;",
+        "focus": (
+            "const ownDisclosure=native.matches('summary') ? native.parentElement : null;"
+            "for (let disclosure=native.closest('details'); disclosure; "
+            "disclosure=disclosure.parentElement?.closest('details')) {"
+            "if (disclosure !== ownDisclosure) disclosure.open=true;"
+            "} native.focus(); return true;"
+        ),
         "set": (
             "if (!('value' in native)) throw new Error('control has no value');"
             f"native.value = {value_json};"
@@ -139,7 +145,7 @@ def native_expression(address: str, operation: str, value: Any = None) -> str:
         "const control=[...document.querySelectorAll('[data-mirabile-address]')]"
         ".find(candidate => candidate.dataset.mirabileAddress === address);"
         "if (!control) throw new Error(`control not found: ${address}`);"
-        "const native=control.matches('button,input,select,textarea') ? control : "
+        "const native=control.matches('button,input,select,textarea,summary') ? control : "
         "control.querySelector('[data-mirabile-native=\"value\"]');"
         "if (!native) throw new Error(`native control target missing: ${address}`);"
         f"{operations[operation]}"
@@ -169,6 +175,84 @@ def load_json(value: str) -> Any:
     path = Path(value)
     text = path.read_text(encoding="utf-8") if path.is_file() else value
     return json.loads(text)
+
+
+def layout_snapshot(client: CDPClient) -> dict[str, Any]:
+    """Return a fixed, read-only wheel and viewport manifest."""
+    expression = """(() => {
+      const frame = document.querySelector('.scene-frame');
+      const wheel = document.querySelector('svg.wheel-scene');
+      const host = document.querySelector('.view-host');
+      const workstation = document.querySelector('.professional-workstation');
+      const disclosures = [...document.querySelectorAll('details.surface-drawer, details.support-surface')];
+      const rect = element => element ? element.getBoundingClientRect() : null;
+      const frameRect = rect(frame);
+      const wheelRect = rect(wheel);
+      const hostRect = rect(host);
+      const labelBoxes = [...document.querySelectorAll('[data-point-label="true"]')]
+        .map(element => ({id: element.closest('[data-point-id]')?.dataset.pointId ?? '', rect: rect(element)}));
+      let overlapCount = 0;
+      const overlaps = [];
+      for (let left = 0; left < labelBoxes.length; left += 1) {
+        for (let right = left + 1; right < labelBoxes.length; right += 1) {
+          const a = labelBoxes[left].rect;
+          const b = labelBoxes[right].rect;
+          if (a && b && a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1) {
+            overlapCount += 1;
+            overlaps.push(`${labelBoxes[left].id}:${labelBoxes[right].id}`);
+          }
+        }
+      }
+      const inside = (inner, outer) => Boolean(inner && outer &&
+        inner.left >= outer.left - 1 && inner.right <= outer.right + 1 &&
+        inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1);
+      return {
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        documentScrollWidth: document.documentElement.scrollWidth,
+        horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+        wheelPresent: Boolean(wheel),
+        wheelVisible: Boolean(wheelRect && wheelRect.width > 0 && wheelRect.height > 0),
+        wheelWithinFrame: inside(wheelRect, frameRect),
+        pointLabelsInsideFrame: labelBoxes.every(item => inside(item.rect, frameRect)),
+        pointLabelOverlapCount: overlapCount,
+        pointLabelOverlaps: overlaps.slice(0, 16),
+        wheelCentered: Boolean(wheelRect && frameRect &&
+          Math.abs((wheelRect.left + wheelRect.right) / 2 - (frameRect.left + frameRect.right) / 2) <= 2),
+        wheelDominant: Boolean(hostRect && wheelRect && hostRect.width >= window.innerWidth * 0.5 && wheelRect.height >= window.innerHeight * 0.55),
+        firstSurfaceIsWheel: Boolean(workstation?.firstElementChild?.classList.contains('view-host')),
+        titlePresent: Boolean(wheel?.querySelector('title')?.textContent?.trim()),
+        descriptionPresent: Boolean(wheel?.querySelector('desc')?.textContent?.trim()),
+        zodiacCount: wheel?.querySelectorAll('[data-zodiac-sign]').length ?? 0,
+        houseCount: wheel?.querySelectorAll('[data-house]').length ?? 0,
+        angleCount: wheel?.querySelectorAll('[data-angle]').length ?? 0,
+        pointAnchorCount: wheel?.querySelectorAll('[data-point-anchor="true"]').length ?? 0,
+        pointLabelCount: labelBoxes.length,
+        retrogradeMarkerCount: wheel?.querySelectorAll('[data-retrograde-marker="true"]').length ?? 0,
+        aspectCount: wheel?.querySelectorAll('[data-aspect-id]').length ?? 0,
+        semanticGroupCount: wheel?.querySelectorAll('[data-wheel-group]').length ?? 0,
+        disclosureCount: disclosures.length,
+        closedDisclosureCount: disclosures.filter(item => !item.open).length
+      };
+    })()"""
+    value = client.evaluate(expression)
+    if not isinstance(value, dict):
+        raise CDPError("layout manifest did not return an object")
+    return value
+
+
+def browser_errors(client: CDPClient) -> dict[str, Any]:
+    errors = []
+    for event in client.browser_log():
+        method = event.get("method")
+        params = event.get("params", {})
+        if method == "Runtime.exceptionThrown":
+            errors.append(event)
+        elif method == "Runtime.consoleAPICalled" and params.get("type") in {"error", "assert"}:
+            errors.append(event)
+        elif method == "Log.entryAdded" and params.get("entry", {}).get("level") == "error":
+            errors.append(event)
+    return {"count": len(errors), "entries": errors}
 
 
 def perform(client: CDPClient, command: str, options: dict[str, Any]) -> Any:
@@ -223,6 +307,10 @@ def perform(client: CDPClient, command: str, options: dict[str, Any]) -> Any:
         return wait_settled(client, float(options.get("timeout", 10.0)))
     if command == "dom":
         return client.dom()
+    if command == "layout":
+        return layout_snapshot(client)
+    if command == "browser_errors":
+        return browser_errors(client)
     if command == "screenshot":
         path = Path(str(options["path"]))
         client.screenshot(path)
@@ -332,7 +420,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser()
     root.add_argument("--port", type=int, required=True)
     subcommands = root.add_subparsers(dest="command", required=True)
-    for command in ("snapshot", "controls", "trace", "dom"):
+    for command in ("snapshot", "controls", "trace", "dom", "layout", "browser_errors"):
         subcommands.add_parser(command)
     get = subcommands.add_parser("get")
     get.add_argument("address")
@@ -367,6 +455,8 @@ def main() -> int:
     arguments = parser().parse_args()
     client = CDPClient.attach(arguments.port)
     try:
+        client.call("Runtime.enable")
+        client.call("Log.enable")
         command = arguments.command
         options = vars(arguments).copy()
         if command == "execute":

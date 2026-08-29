@@ -53,5 +53,9 @@ pub use mirabile_core::{
 };
 pub use mirabile_engine::ZodiacMode;
 
-// Scene is the current stable, astrology-free presentation boundary.
-pub use mirabile_engine::{Circle, FillRole, Glyph, Label, Line, Path, Scene, StrokeRole};
+// Scene is the stable provider-neutral semantic presentation boundary.
+pub use mirabile_engine::{
+    AspectSegment, AspectVisualStyle, ChartAngleMarker, Circle, FillRole, Glyph, HouseMarker,
+    Label, Line, LineGeometry, Path, PointMarker, Scene, StrokeRole, WheelLayoutBounds,
+    ZodiacDivision,
+};

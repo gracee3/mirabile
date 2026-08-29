@@ -5,9 +5,8 @@ use super::{
     ExpectedCalculation, PendingCachedView, PendingViewCalculation, PendingWork,
     PreparedCalculation, ProjectionVersion, RealApplication, RealState, ResourceRepository, Scene,
     SnapshotContext, ViewCalculationPlan, ViewComputationState, ViewInstanceId,
-    WorkerProtocolVersion, info, layout_wheel, not_found_for_view, render_key,
-    resolve_typed_binding, success, view_computation_error, view_resolution_error,
-    worker_failure_error,
+    WorkerProtocolVersion, info, not_found_for_view, render_key, resolve_typed_binding, success,
+    view_computation_error, view_resolution_error, worker_failure_error,
 };
 
 impl<R, C> RealApplication<R, C>
@@ -396,6 +395,7 @@ where
                     format!("View {view_id} was not found in the workspace"),
                 )
             })?;
+        let rotation = view.overrides.rotation;
         let document =
             resolve_typed_binding(&view.document, &state.catalog, ConfigurationLayer::View)
                 .map_err(view_resolution_error)?;
@@ -451,6 +451,7 @@ where
                         analysis: effective.analysis.value,
                         wheel: effective.wheel.value,
                         theme: effective.theme.value,
+                        rotation,
                     },
                 ));
             }
@@ -531,6 +532,7 @@ where
                 analysis: effective.analysis.value,
                 wheel: effective.wheel.value,
                 theme: effective.theme.value,
+                rotation,
             },
         ))
     }
@@ -550,8 +552,14 @@ where
         )
         .map_err(view_computation_error)?;
         state.cache.insert_analysis(analysis.clone());
-        let layout = layout_wheel(&snapshot, &analysis, &plan.displayed_points, &plan.wheel)
-            .map_err(view_computation_error)?;
+        let layout = mirabile_engine::layout_wheel_with_rotation(
+            &snapshot,
+            &analysis,
+            &plan.displayed_points,
+            &plan.wheel,
+            plan.rotation,
+        )
+        .map_err(view_computation_error)?;
         render_key(&layout, &plan.theme).map_err(view_computation_error)?;
         Ok(Scene::from_wheel(&layout))
     }

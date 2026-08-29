@@ -50,7 +50,7 @@ pub(super) fn ViewHost(model: RwSignal<AppReadModel>) -> impl IntoView {
                                         <WheelScene
                                             scene
                                             title=format!("{} chart scene", active_view.title)
-                                            description="An application Scene of chart rings, point labels, and aspect lines."
+                                            description="A semantic astrology wheel showing zodiac signs, calculated houses and angles, true point anchors with formatted labels, and calculated aspects."
                                         />
                                     }.into_any(),
                                 )}

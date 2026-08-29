@@ -173,16 +173,63 @@ fn ReadyShell(
             )}
         </div>
 
-        <Cockpit model dispatcher />
-
-        <div class="workstation" aria-label="Live workspace, preview, and diagnostics controls">
-            <WorkspaceRail model dispatcher />
-            <div class="center-workbench">
-                <ViewHost model />
-                <Diagnostics model dispatcher />
-            </div>
-            <Inspector model dispatcher invalid_aspect_buffers />
+        <div class="workstation professional-workstation" aria-label="Live chart wheel and supporting controls">
+            <ViewHost model />
+            <details class="surface-drawer workspace-surface">
+                <summary
+                    class="surface-summary"
+                    data-mirabile-control=ControlId::SURFACE_WORKSPACE.to_string()
+                    data-mirabile-address=ControlAddress::new(ControlId::SURFACE_WORKSPACE).to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled="true"
+                >
+                    <span>"Workspace & charts"</span>
+                    <small>"Library, membership, saved charts"</small>
+                </summary>
+                <WorkspaceRail model dispatcher />
+            </details>
+            <details class="surface-drawer inspector-surface">
+                <summary
+                    class="surface-summary"
+                    data-mirabile-control=ControlId::SURFACE_INSPECTOR.to_string()
+                    data-mirabile-address=ControlAddress::new(ControlId::SURFACE_INSPECTOR).to_string()
+                    data-mirabile-kind=ControlKind::Action.as_str()
+                    data-mirabile-enabled="true"
+                >
+                    <span>"Inspector"</span>
+                    <small>"Chart, view, display, resources"</small>
+                </summary>
+                <Inspector model dispatcher invalid_aspect_buffers />
+            </details>
         </div>
+
+        <details class="support-surface cockpit-surface">
+            <summary
+                class="surface-summary"
+                data-mirabile-control=ControlId::SURFACE_COCKPIT.to_string()
+                data-mirabile-address=ControlAddress::new(ControlId::SURFACE_COCKPIT).to_string()
+                data-mirabile-kind=ControlKind::Action.as_str()
+                data-mirabile-enabled="true"
+            >
+                <span>"Control cockpit & builders"</span>
+                <small>"All typed authoring surfaces remain mounted"</small>
+            </summary>
+            <Cockpit model dispatcher />
+        </details>
+
+        <details class="support-surface diagnostics-surface">
+            <summary
+                class="surface-summary"
+                data-mirabile-control=ControlId::SURFACE_DIAGNOSTICS.to_string()
+                data-mirabile-address=ControlAddress::new(ControlId::SURFACE_DIAGNOSTICS).to_string()
+                data-mirabile-kind=ControlKind::Action.as_str()
+                data-mirabile-enabled="true"
+            >
+                <span>"Diagnostics & macros"</span>
+                <small>"Semantic output, trace, snapshots, replay"</small>
+            </summary>
+            <Diagnostics model dispatcher />
+        </details>
     }
 }
 
