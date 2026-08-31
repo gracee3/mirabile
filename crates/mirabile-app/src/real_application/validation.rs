@@ -235,6 +235,21 @@ fn validate_document_references(
     }
 
     for (view_index, view) in document.views.iter().enumerate() {
+        if let Some(binding) = &view.points {
+            require_binding(binding, catalog, &format!("views[{view_index}].points"))?;
+        }
+        if let Some(binding) = &view.aspects {
+            require_binding(binding, catalog, &format!("views[{view_index}].aspects"))?;
+        }
+        if let Some(binding) = &view.analysis {
+            require_binding(binding, catalog, &format!("views[{view_index}].analysis"))?;
+        }
+        if let Some(binding) = &view.wheel {
+            require_binding(binding, catalog, &format!("views[{view_index}].wheel"))?;
+        }
+        if let Some(binding) = &view.theme {
+            require_binding(binding, catalog, &format!("views[{view_index}].theme"))?;
+        }
         let resolved_view =
             resolve_typed_binding(&view.document, catalog, ConfigurationLayer::View).map_err(
                 |error| {

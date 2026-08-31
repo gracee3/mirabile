@@ -19,6 +19,7 @@ mod runtime;
 mod startup;
 #[cfg(target_arch = "wasm32")]
 mod web_worker_runtime;
+mod workflow;
 mod workspace_commands;
 mod workspace_session;
 
@@ -37,25 +38,27 @@ pub use runtime::*;
 pub use startup::*;
 #[cfg(target_arch = "wasm32")]
 pub use web_worker_runtime::*;
+pub use workflow::*;
 pub use workspace_session::*;
 
 // Stable identity/value types cross the application boundary without frontend-specific aliases.
 pub use mirabile_core::{
-    Angle, AspectClass, AspectDefinition, AspectId, AspectTableObject, AtlasRef, BlackMoonType,
-    CalculationSpec, CalendarSpec, ChartDefinition, ChartDetailsObject, ChartRecord, ChartSlot,
-    ChartSlotId, ChartSource, CivilDate, CivilDateTime, CivilTime, CompositeMethod,
-    CoordinateSystem, CorrectionSpec, DerivationSpec, EventKind, FortuneFormula, GridObject,
-    HouseSystem, InstanceId, Latitude, LifeEvent, LocationAssertion, Longitude, LunarNodeType,
-    Note, NumericComparison, ObjectFrame, Offset, OrbPolicy, PointId, PointRole, PointSelector,
-    PointTableObject, Predicate, QueryExpr, ResourceId, ResourceKind, Revision, RingGeometry,
-    RingSpec, SchemaVersion, SourceType, TemporalAssertion, TextComparison, TextObject, TimeChoice,
-    TimeZoneAssertion, Timestamp, ViewInstanceId, ViewObject, WheelObject, ZodiacSpec,
+    Angle, AspectClass, AspectDefinition, AspectId, AspectLayerKind, AspectLayerVisibility,
+    AspectTableObject, AtlasRef, BlackMoonType, CalculationSpec, CalendarSpec, ChartDefinition,
+    ChartDetailsObject, ChartRecord, ChartSlot, ChartSlotId, ChartSource, CivilDate, CivilDateTime,
+    CivilTime, CompositeMethod, CoordinateSystem, CorrectionSpec, DerivationSpec, EventKind,
+    FortuneFormula, GridObject, HouseSystem, InstanceId, Latitude, LifeEvent, LocationAssertion,
+    Longitude, LunarNodeType, Note, NumericComparison, ObjectFrame, Offset, OrbPolicy, PointId,
+    PointRole, PointSelector, PointTableObject, Predicate, QueryExpr, ResourceId, ResourceKind,
+    Revision, RingGeometry, RingSpec, SchemaVersion, SourceType, TemporalAssertion, TextComparison,
+    TextObject, Theme, TimeChoice, TimeZoneAssertion, Timestamp, ViewInstanceId, ViewObject,
+    ViewOverrides, WheelObject, WheelTemplate, ZodiacSpec,
 };
 pub use mirabile_engine::ZodiacMode;
 
 // Scene is the stable provider-neutral semantic presentation boundary.
 pub use mirabile_engine::{
-    AspectSegment, AspectVisualStyle, ChartAngleMarker, Circle, FillRole, Glyph, HouseMarker,
-    Label, Line, LineGeometry, Path, PointMarker, Scene, StrokeRole, WheelLayoutBounds,
-    ZodiacDivision,
+    AspectLayer, AspectSegment, AspectVisualStyle, ChartAngleMarker, Circle, FillRole, Glyph,
+    HouseMarker, Label, Line, LineGeometry, Path, PointMarker, Scene, StrokeRole,
+    WheelLayoutBounds, ZodiacDivision,
 };

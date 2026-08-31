@@ -5,7 +5,7 @@ use mirabile_app::{
     ActionSource, Angle, AppAction, AppIntent, AppReadModel, AspectDraftValue,
     AspectSetDraftMutation, Availability, BindingSourceSummary, ChartPersistence, ControlAddress,
     ControlId, ControlKind, DisplayValueSource, DraftState, InstanceId, ResourceId,
-    SlotAssignmentSource,
+    SlotAssignmentSource, ThemeSelectionV1, ViewDisplayPatchV1,
 };
 
 use crate::chart_editor::ChartAuthoring;
@@ -24,6 +24,12 @@ pub(super) fn Inspector(
 ) -> impl IntoView {
     let aspect_dispatcher = dispatcher;
     let edit_dispatcher = dispatcher;
+    let active_tab = RwSignal::new("chart");
+    Effect::new(move || {
+        if model.get().chart_editor.is_some() {
+            active_tab.set("chart");
+        }
+    });
 
     view! {
         <aside class="inspector" aria-labelledby="inspector-title">
@@ -32,6 +38,14 @@ pub(super) fn Inspector(
                     <p class="section-kicker">"CONTEXT"</p>
                     <h2 id="inspector-title">"Inspector"</h2>
                 </div>
+            </div>
+            <div class="inspector-tabs" role="tablist" aria-label="Inspector mode">
+                <button type="button" role="tab" aria-controls="chart-tab-panel"
+                    aria-selected=move || (active_tab.get() == "chart").to_string()
+                    on:click=move |_| active_tab.set("chart")>"Chart"</button>
+                <button type="button" role="tab" aria-controls="display-tab-panel"
+                    aria-selected=move || (active_tab.get() == "display").to_string()
+                    on:click=move |_| active_tab.set("display")>"Display"</button>
             </div>
 
             <section class="inspector-section" aria-labelledby="active-chart-inspector-title">
@@ -54,9 +68,12 @@ pub(super) fn Inspector(
                 )}
             </section>
 
-            <ChartAuthoring model dispatcher />
+            <div id="chart-tab-panel" role="tabpanel" hidden=move || active_tab.get() != "chart">
+                <ChartAuthoring model dispatcher />
+            </div>
 
-            <section class="inspector-section" aria-labelledby="display-title">
+            <section id="display-tab-panel" role="tabpanel" class="inspector-section" aria-labelledby="display-title"
+                hidden=move || active_tab.get() != "display">
                 <h3 id="display-title">"Point visibility"</h3>
                 {move || model.get().active_view.map(|view| view.display).map(|display| view! {
                     <div class="display-point-list">
@@ -115,6 +132,84 @@ pub(super) fn Inspector(
                             Some(ControlAddress::new(ControlId::DISPLAY_PROMOTE)),
                         )
                     >"Promote display state to workspace"</button>
+                })}
+                {move || model.get().active_view.map(|active| {
+                    let view_id = active.view_id;
+                    let display = active.display;
+                    let layers = display.aspect_layers.clone();
+                    let wheel = display.wheel.clone();
+                    let slot_views = display.slots.into_iter().map(|slot_display| {
+                        let slot = slot_display.slot.clone();
+                        let slot_name = slot.as_str().to_owned();
+                        let point_views = slot_display.points.into_iter().map(|point| {
+                            let slot=slot.clone(); let point_id=point.point_id.clone();
+                            let on_point_change = move |event| {
+                                let mut patch=ViewDisplayPatchV1::default();
+                                patch.point_visibility.entry(slot.as_str().into()).or_default().hidden.insert(point_id.clone(), !event_target_checked(&event));
+                                dispatcher.dispatch(AppIntent::ApplyViewDisplayPatch { view_id, patch });
+                            };
+                            view! { <label class="check-field"><input type="checkbox" prop:checked=point.visible
+                                on:change=on_point_change/><span>{point.label}</span></label> }
+                        }).collect_view();
+                        let on_ring_change = move |event| {
+                            let mut patch=ViewDisplayPatchV1::default();
+                            patch.ring_visibility.insert(slot_name.clone(), event_target_checked(&event));
+                            dispatcher.dispatch(AppIntent::ApplyViewDisplayPatch { view_id, patch });
+                        };
+                        view! { <details class="display-ring" open>
+                            <summary>{slot_display.label}</summary>
+                            <label class="check-field"><input type="checkbox" prop:checked=slot_display.visible
+                                on:change=on_ring_change/><span>"Show ring"</span></label>
+                            {point_views}
+                        </details> }
+                    }).collect_view();
+                    let layer_views = [
+                        ("Radix intra-chart", layers.radix_intra, 0_u8),
+                        ("Comparison intra-chart", layers.comparison_intra, 1_u8),
+                        ("Cross-chart", layers.cross_chart, 2_u8),
+                    ].into_iter().map(|(label, checked, layer)| {
+                        let on_layer_change = move |event| {
+                            let mut patch=ViewDisplayPatchV1::default(); let value=event_target_checked(&event);
+                            match layer { 0 => patch.radix_intra_aspects=Some(value), 1 => patch.comparison_intra_aspects=Some(value), _ => patch.cross_chart_aspects=Some(value) }
+                            dispatcher.dispatch(AppIntent::ApplyViewDisplayPatch { view_id, patch });
+                        };
+                        view! { <label class="check-field"><input type="checkbox" prop:checked=checked
+                            on:change=on_layer_change/><span>{label}</span></label> }
+                    }).collect_view();
+                    let advanced_views = [
+                        ("Zodiac boundaries", wheel.zodiac_boundaries, 0_u8),
+                        ("Zodiac labels", wheel.zodiac_labels, 1_u8),
+                        ("House cusps", wheel.house_cusps, 2_u8),
+                        ("House numbers", wheel.house_numbers, 3_u8),
+                        ("Degree labels", wheel.degree_labels, 4_u8),
+                        ("Retrograde markers", wheel.retrograde_markers, 5_u8),
+                    ].into_iter().map(|(label, checked, field)| {
+                        let on_advanced_change = move |event| {
+                            let mut patch=ViewDisplayPatchV1::default(); let value=Some(event_target_checked(&event));
+                            match field { 0 => patch.zodiac_boundaries=value, 1 => patch.zodiac_labels=value, 2 => patch.house_cusps=value, 3 => patch.house_numbers=value, 4 => patch.degree_labels=value, _ => patch.retrograde_markers=value }
+                            dispatcher.dispatch(AppIntent::ApplyViewDisplayPatch { view_id, patch });
+                        };
+                        view! { <label class="check-field"><input type="checkbox" prop:checked=checked on:change=on_advanced_change/><span>{label}</span></label> }
+                    }).collect_view();
+                    view! {
+                        <h4>"Per-ring visibility"</h4>
+                        {slot_views}
+                        <h4>"Aspect layers"</h4>
+                        {layer_views}
+                        <details class="display-advanced">
+                            <summary>"Advanced display"</summary>
+                            {advanced_views}
+                            <label>"Rotation (degrees)"<input type="number" step="1" prop:value=display.rotation.map_or_else(|| "0".into(), |value| value.degrees().to_string())
+                                on:change=move |event| if let Ok(value)=event_target_value(&event).parse() {
+                                    let patch=ViewDisplayPatchV1 { rotation_degrees: Some(value), ..ViewDisplayPatchV1::default() };
+                                    dispatcher.dispatch(AppIntent::ApplyViewDisplayPatch { view_id, patch });
+                                }/></label>
+                            <label>"Theme"<select on:change=move |event| {
+                                let patch=ViewDisplayPatchV1 { theme: Some(if event_target_value(&event) == "light" { ThemeSelectionV1::HighContrastLight } else { ThemeSelectionV1::MirabileDark }), ..ViewDisplayPatchV1::default() };
+                                dispatcher.dispatch(AppIntent::ApplyViewDisplayPatch { view_id, patch });
+                            }><option value="dark">"Mirabile Dark"</option><option value="light">"High Contrast Light"</option></select></label>
+                        </details>
+                    }
                 })}
             </section>
 

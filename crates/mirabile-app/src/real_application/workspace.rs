@@ -741,14 +741,42 @@ impl RealState {
                     "Chart opened in the working document and activated; save the workspace to persist membership",
                 ))
             }
-            AppIntent::CloseChart { instance_id } => Ok((
-                Command::CloseChart {
-                    instance_id: *instance_id,
-                },
-                true,
-                false,
-                "Chart closed in the working document; selection and slots were repaired and the workspace is dirty",
-            )),
+            AppIntent::CloseChart { instance_id } => {
+                for view in &workspace.views {
+                    let document = resolve_typed_binding(
+                        &view.document,
+                        &self.catalog,
+                        ConfigurationLayer::View,
+                    )
+                    .map_err(|error| {
+                        AppError::new(AppErrorKind::InvalidIntent, error.to_string())
+                    })?;
+                    let required_slots = document
+                        .value
+                        .chart_slots
+                        .iter()
+                        .filter(|slot| slot.required)
+                        .count();
+                    if required_slots > 1
+                        && document.value.chart_slots.iter().any(|slot| {
+                            slot.required && view.charts.get(&slot.id) == Some(instance_id)
+                        })
+                    {
+                        return Err(AppError::new(
+                            AppErrorKind::InvalidIntent,
+                            "A chart assigned to a required view slot cannot be closed; reassign or remove the view first",
+                        ));
+                    }
+                }
+                Ok((
+                    Command::CloseChart {
+                        instance_id: *instance_id,
+                    },
+                    true,
+                    false,
+                    "Chart closed in the working document; selection and slots were repaired and the workspace is dirty",
+                ))
+            }
             AppIntent::ActivateChart { instance_id } => Ok((
                 Command::SetActiveChart {
                     instance_id: Some(*instance_id),
@@ -814,6 +842,24 @@ impl RealState {
                         "A required chart slot cannot be cleared",
                     ));
                 }
+                let required_slot_count = document
+                    .value
+                    .chart_slots
+                    .iter()
+                    .filter(|slot| slot.required)
+                    .count();
+                if required_slot_count > 1
+                    && chart.is_some_and(|chart| {
+                        view.charts.iter().any(|(candidate_slot, candidate_chart)| {
+                            candidate_slot != slot && *candidate_chart == chart
+                        })
+                    })
+                {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "The same chart cannot be assigned to both biwheel roles",
+                    ));
+                }
                 let notice = if chart.is_some_and(|chart| {
                     self.session
                         .as_ref()
@@ -847,7 +893,10 @@ impl RealState {
                     "Workspace Aspect Set binding changed; the workspace is dirty and analysis is refreshing",
                 ))
             }
-            AppIntent::BeginNewChart
+            AppIntent::CreateWheelView { .. }
+            | AppIntent::ApplyViewDisplay { .. }
+            | AppIntent::ApplyViewDisplayPatch { .. }
+            | AppIntent::BeginNewChart
             | AppIntent::BeginSavedChartEdit { .. }
             | AppIntent::ApplyChartMutation(_)
             | AppIntent::SaveChartEditor

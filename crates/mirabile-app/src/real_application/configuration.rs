@@ -5,6 +5,7 @@ use super::{
 };
 
 impl RealState {
+    #[allow(clippy::too_many_lines)]
     pub(super) fn effective_configuration(
         &self,
         calculation_spec: &CalculationSpec,
@@ -22,10 +23,18 @@ impl RealState {
             editor_preview: None,
         }
         .resolve();
+        let points_binding = view
+            .points
+            .as_ref()
+            .unwrap_or(&workspace.profile.displayed_points);
         let mut displayed_points = resolve_typed_binding(
-            &workspace.profile.displayed_points,
+            points_binding,
             &self.catalog,
-            ConfigurationLayer::Workspace,
+            if view.points.is_some() {
+                ConfigurationLayer::View
+            } else {
+                ConfigurationLayer::Workspace
+            },
         )
         .map_err(view_resolution_error)?;
         let effective_overrides = self
@@ -52,10 +61,15 @@ impl RealState {
             ConfigurationLayer::Workspace,
         )
         .map_err(view_resolution_error)?;
+        let aspect_binding = view.aspects.as_ref().unwrap_or(&workspace.profile.aspects);
         let mut aspect_set = resolve_typed_binding(
-            &workspace.profile.aspects,
+            aspect_binding,
             &self.catalog,
-            ConfigurationLayer::Workspace,
+            if view.aspects.is_some() {
+                ConfigurationLayer::View
+            } else {
+                ConfigurationLayer::Workspace
+            },
         )
         .map_err(view_resolution_error)?;
         if let Some(editor) = &self.editor
@@ -67,22 +81,40 @@ impl RealState {
                 source: ValueSource::Inline,
             };
         }
+        let analysis_binding = view
+            .analysis
+            .as_ref()
+            .unwrap_or(&workspace.profile.analysis);
         let analysis = resolve_typed_binding(
-            &workspace.profile.analysis,
+            analysis_binding,
             &self.catalog,
-            ConfigurationLayer::Workspace,
+            if view.analysis.is_some() {
+                ConfigurationLayer::View
+            } else {
+                ConfigurationLayer::Workspace
+            },
         )
         .map_err(view_resolution_error)?;
+        let wheel_binding = view.wheel.as_ref().unwrap_or(&workspace.profile.wheel);
         let wheel = resolve_typed_binding(
-            &workspace.profile.wheel,
+            wheel_binding,
             &self.catalog,
-            ConfigurationLayer::Workspace,
+            if view.wheel.is_some() {
+                ConfigurationLayer::View
+            } else {
+                ConfigurationLayer::Workspace
+            },
         )
         .map_err(view_resolution_error)?;
+        let theme_binding = view.theme.as_ref().unwrap_or(&workspace.profile.theme);
         let theme = resolve_typed_binding(
-            &workspace.profile.theme,
+            theme_binding,
             &self.catalog,
-            ConfigurationLayer::Workspace,
+            if view.theme.is_some() {
+                ConfigurationLayer::View
+            } else {
+                ConfigurationLayer::Workspace
+            },
         )
         .map_err(view_resolution_error)?;
         Ok(EffectiveConfiguration {

@@ -28,6 +28,7 @@ def bridge_call(client: CDPClient, method: str, *arguments: Any) -> dict[str, An
     if method not in {
         "controls",
         "execute",
+        "executeWorkflow",
         "replayMacro",
         "peerInitialize",
         "peerReplayMacro",
@@ -35,6 +36,7 @@ def bridge_call(client: CDPClient, method: str, *arguments: Any) -> dict[str, An
         "setActionSource",
         "snapshot",
         "trace",
+        "workflowResult",
     }:
         raise CDPError(f"bridge method {method!r} is not whitelisted")
     args = ",".join(json.dumps(argument) for argument in arguments)
@@ -171,6 +173,17 @@ def wait_peer_settled(client: CDPClient, timeout: float) -> dict[str, Any]:
     raise CDPError(f"peer workbench did not settle within {timeout:.1f}s")
 
 
+def wait_workflow(client: CDPClient, timeout: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = bridge_call(client, "workflowResult")
+        value = result.get("value")
+        if isinstance(value, dict) and value.get("status") in {"succeeded", "failed"}:
+            return result
+        time.sleep(0.05)
+    raise CDPError(f"workflow did not finish within {timeout:.1f}s")
+
+
 def load_json(value: str) -> Any:
     path = Path(value)
     text = path.read_text(encoding="utf-8") if path.is_file() else value
@@ -294,6 +307,15 @@ def perform(client: CDPClient, command: str, options: dict[str, Any]) -> Any:
     if command == "replay":
         macro = options["macro"]
         return bridge_call(client, "replayMacro", json.dumps(macro, separators=(",", ":")))
+    if command == "workflow":
+        workflow = options["workflow"]
+        if isinstance(workflow, str):
+            workflow = load_json(workflow)
+        return bridge_call(client, "executeWorkflow", json.dumps(workflow, separators=(",", ":")))
+    if command == "workflow_result":
+        return bridge_call(client, "workflowResult")
+    if command == "workflow_wait":
+        return wait_workflow(client, float(options.get("timeout", 30.0)))
     if command == "peer_initialize":
         return bridge_call(client, "peerInitialize")
     if command == "peer_replay":
@@ -352,6 +374,8 @@ def result_path(value: Any, path: str) -> Any:
     for segment in path.split(".") if path else []:
         if isinstance(current, dict) and segment in current:
             current = current[segment]
+        elif isinstance(current, list) and segment.isdigit() and int(segment) < len(current):
+            current = current[int(segment)]
         else:
             raise CDPError(f"binding result path {path!r} was not found")
     return current
@@ -420,7 +444,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser()
     root.add_argument("--port", type=int, required=True)
     subcommands = root.add_subparsers(dest="command", required=True)
-    for command in ("snapshot", "controls", "trace", "dom", "layout", "browser_errors"):
+    for command in ("snapshot", "controls", "trace", "workflow_result", "dom", "layout", "browser_errors"):
         subcommands.add_parser(command)
     get = subcommands.add_parser("get")
     get.add_argument("address")
@@ -440,6 +464,10 @@ def parser() -> argparse.ArgumentParser:
     execute = subcommands.add_parser("execute")
     execute.add_argument("request")
     execute.add_argument("--source", default="agent")
+    workflow = subcommands.add_parser("workflow")
+    workflow.add_argument("workflow")
+    workflow_wait = subcommands.add_parser("workflow_wait")
+    workflow_wait.add_argument("--timeout", type=float, default=30.0)
     wait = subcommands.add_parser("wait")
     wait.add_argument("--timeout", type=float, default=10.0)
     screenshot = subcommands.add_parser("screenshot")
@@ -461,6 +489,8 @@ def main() -> int:
         options = vars(arguments).copy()
         if command == "execute":
             options["request"] = load_json(arguments.request)
+        elif command == "workflow":
+            options["workflow"] = load_json(arguments.workflow)
         elif command == "check":
             options["value"] = arguments.value == "true"
         if command == "run":

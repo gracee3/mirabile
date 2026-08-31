@@ -1,12 +1,15 @@
 use std::collections::BTreeMap;
 
 use mirabile_core::{
-    Angle, AspectClass, DomainValidate, PointId, PointSelector, PointSet, Theme, WheelTemplate,
+    Angle, AspectClass, DomainValidate, PointId, PointSelector, PointSet, RingGeometry, Theme,
+    WheelTemplate,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{AspectHit, ChartAnalysis, ChartSnapshot, KeyError, LayoutKey, RenderKey};
+use crate::{
+    AspectHit, ChartAnalysis, ChartSnapshot, KeyError, LayoutKey, RelationshipAnalysis, RenderKey,
+};
 
 const REGULAR_SIZE: f64 = 520.0;
 const CANVAS_MARGIN: f64 = 12.0;
@@ -46,6 +49,10 @@ pub struct LineGeometry {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PointMarker {
     pub point: PointId,
+    #[serde(default)]
+    pub chart_slot: Option<mirabile_core::ChartSlotId>,
+    #[serde(default)]
+    pub ring_role: Option<mirabile_core::PointRole>,
     pub x: f64,
     pub y: f64,
     pub label_x: f64,
@@ -99,6 +106,12 @@ pub enum AspectVisualStyle {
 pub struct AspectSegment {
     pub lhs: PointId,
     pub rhs: PointId,
+    #[serde(default)]
+    pub lhs_slot: Option<mirabile_core::ChartSlotId>,
+    #[serde(default)]
+    pub rhs_slot: Option<mirabile_core::ChartSlotId>,
+    #[serde(default)]
+    pub layer: AspectLayer,
     pub x1: f64,
     pub y1: f64,
     pub x2: f64,
@@ -119,6 +132,33 @@ pub struct AspectSegment {
     pub draw_chord: bool,
     #[serde(default)]
     pub style: AspectVisualStyle,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AspectLayer {
+    #[default]
+    RadixIntra,
+    ComparisonIntra,
+    CrossChart,
+}
+
+impl AspectLayer {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RadixIntra => "radix_intra",
+            Self::ComparisonIntra => "comparison_intra",
+            Self::CrossChart => "cross_chart",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct RingMetadata {
+    pub chart_slot: mirabile_core::ChartSlotId,
+    pub role: mirabile_core::PointRole,
+    pub anchor_radius: f64,
+    pub labels_external: bool,
 }
 
 const fn default_aspect_classification() -> AspectClass {
@@ -195,6 +235,8 @@ pub struct WheelLayout {
     pub angles: Vec<ChartAngleMarker>,
     pub points: Vec<PointMarker>,
     pub aspects: Vec<AspectSegment>,
+    #[serde(default)]
+    pub rings: Vec<RingMetadata>,
 }
 
 #[derive(Serialize)]
@@ -242,6 +284,170 @@ pub fn layout_wheel_with_rotation(
         rotation,
         WheelLayoutBounds::default(),
     )
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub fn layout_biwheel_in_bounds(
+    radix_slot: mirabile_core::ChartSlotId,
+    radix: &ChartSnapshot,
+    radix_analysis: &ChartAnalysis,
+    comparison_slot: mirabile_core::ChartSlotId,
+    comparison: &ChartSnapshot,
+    comparison_analysis: &ChartAnalysis,
+    relationship: &RelationshipAnalysis,
+    displayed_points: &PointSet,
+    wheel: &WheelTemplate,
+    rotation_override: Option<Angle>,
+    bounds: WheelLayoutBounds,
+) -> Result<WheelLayout, LayoutError> {
+    let ring_for = |slot: &mirabile_core::ChartSlotId, fallback: RingGeometry| {
+        wheel
+            .rings
+            .iter()
+            .find(|ring| &ring.chart_slot == slot)
+            .cloned()
+            .unwrap_or(mirabile_core::RingSpec {
+                chart_slot: slot.clone(),
+                point_role: if slot == &radix_slot {
+                    mirabile_core::PointRole::Primary
+                } else {
+                    mirabile_core::PointRole::Comparison
+                },
+                geometry: fallback,
+            })
+    };
+    let radix_ring = ring_for(
+        &radix_slot,
+        RingGeometry {
+            inner_radius: 108.0,
+            outer_radius: 124.0,
+        },
+    );
+    let comparison_ring = ring_for(
+        &comparison_slot,
+        RingGeometry {
+            inner_radius: 134.0,
+            outer_radius: 150.0,
+        },
+    );
+    let mut radix_wheel = wheel.clone();
+    radix_wheel.rings = vec![radix_ring.clone()];
+    let mut comparison_wheel = wheel.clone();
+    comparison_wheel.rings = vec![comparison_ring.clone()];
+    let radix_rotation = rotation_override.or_else(|| {
+        radix
+            .calculation
+            .angles
+            .ascendant
+            .and_then(|ascendant| Angle::from_degrees(270.0 - ascendant.degrees()).ok())
+    });
+    let mut output = layout_wheel_in_bounds(
+        radix,
+        radix_analysis,
+        displayed_points,
+        &radix_wheel,
+        radix_rotation,
+        bounds,
+    )?;
+    let comparison_layout = layout_wheel_in_bounds(
+        comparison,
+        comparison_analysis,
+        displayed_points,
+        &comparison_wheel,
+        radix_rotation,
+        bounds,
+    )?;
+    for point in &mut output.points {
+        point.chart_slot = Some(radix_slot.clone());
+        point.ring_role = Some(mirabile_core::PointRole::Primary);
+    }
+    for aspect in &mut output.aspects {
+        aspect.lhs_slot = Some(radix_slot.clone());
+        aspect.rhs_slot = Some(radix_slot.clone());
+        aspect.layer = AspectLayer::RadixIntra;
+    }
+    let mut comparison_points = comparison_layout.points;
+    for point in &mut comparison_points {
+        point.chart_slot = Some(comparison_slot.clone());
+        point.ring_role = Some(mirabile_core::PointRole::Comparison);
+    }
+    let mut comparison_aspects = comparison_layout.aspects;
+    for aspect in &mut comparison_aspects {
+        aspect.lhs_slot = Some(comparison_slot.clone());
+        aspect.rhs_slot = Some(comparison_slot.clone());
+        aspect.layer = AspectLayer::ComparisonIntra;
+    }
+    let anchors = output
+        .points
+        .iter()
+        .chain(comparison_points.iter())
+        .filter_map(|point| {
+            point
+                .chart_slot
+                .as_ref()
+                .map(|slot| ((slot.clone(), point.point.clone()), (point.x, point.y)))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut cross = relationship
+        .cross_aspects
+        .iter()
+        .map(|hit| {
+            let lhs = anchors
+                .get(&(hit.lhs.slot.clone(), hit.lhs.point.clone()))
+                .copied();
+            let rhs = anchors
+                .get(&(hit.rhs.slot.clone(), hit.rhs.point.clone()))
+                .copied();
+            let ((x1, y1), (x2, y2)) = lhs.zip(rhs).unwrap_or(((0.0, 0.0), (0.0, 0.0)));
+            let style = aspect_style_for_id(hit.aspect.as_str());
+            AspectSegment {
+                lhs: hit.lhs.point.clone(),
+                rhs: hit.rhs.point.clone(),
+                lhs_slot: Some(hit.lhs.slot.clone()),
+                rhs_slot: Some(hit.rhs.slot.clone()),
+                layer: AspectLayer::CrossChart,
+                x1,
+                y1,
+                x2,
+                y2,
+                aspect_id: hit.aspect.to_string(),
+                name: hit.name.clone(),
+                classification: hit.classification,
+                separation_degrees: hit.separation.degrees(),
+                orb_degrees: hit.orb.degrees(),
+                applying: hit.applying,
+                draw_chord: !matches!(style, AspectVisualStyle::Conjunction)
+                    && lhs.is_some()
+                    && rhs.is_some(),
+                style,
+            }
+        })
+        .collect::<Vec<_>>();
+    output.points.extend(comparison_points);
+    output.aspects.append(&mut comparison_aspects);
+    output.aspects.append(&mut cross);
+    output.rings = vec![
+        RingMetadata {
+            chart_slot: radix_slot,
+            role: mirabile_core::PointRole::Primary,
+            anchor_radius: f64::midpoint(
+                radix_ring.geometry.inner_radius,
+                radix_ring.geometry.outer_radius,
+            ),
+            labels_external: false,
+        },
+        RingMetadata {
+            chart_slot: comparison_slot,
+            role: mirabile_core::PointRole::Comparison,
+            anchor_radius: f64::midpoint(
+                comparison_ring.geometry.inner_radius,
+                comparison_ring.geometry.outer_radius,
+            ),
+            labels_external: true,
+        },
+    ];
+    output.key = LayoutKey::derive(&output, "professional-biwheel-layout-v1")?;
+    Ok(output)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -335,6 +541,19 @@ pub fn layout_wheel_in_bounds(
         .map(|point| (point.point.clone(), (point.x, point.y)))
         .collect::<BTreeMap<_, _>>();
     let aspects = aspect_segments(analysis, &point_anchors, center_x, center_y, aspect_radius);
+    let rings = wheel
+        .rings
+        .iter()
+        .map(|ring| RingMetadata {
+            chart_slot: ring.chart_slot.clone(),
+            role: ring.point_role,
+            anchor_radius: f64::midpoint(
+                ring.geometry.inner_radius * scale,
+                ring.geometry.outer_radius * scale,
+            ),
+            labels_external: !matches!(ring.point_role, mirabile_core::PointRole::Primary),
+        })
+        .collect::<Vec<_>>();
 
     let key = LayoutKey::derive(
         &LayoutMaterial {
@@ -367,6 +586,7 @@ pub fn layout_wheel_in_bounds(
         angles,
         points,
         aspects,
+        rings,
     })
 }
 
@@ -647,6 +867,8 @@ fn point_markers(
         });
         output.push(PointMarker {
             point: pending.point.clone(),
+            chart_slot: None,
+            ring_role: None,
             x,
             y,
             label_x,
@@ -786,6 +1008,9 @@ fn aspect_segments(
             AspectSegment {
                 lhs: hit.lhs.clone(),
                 rhs: hit.rhs.clone(),
+                lhs_slot: None,
+                rhs_slot: None,
+                layer: AspectLayer::RadixIntra,
                 x1,
                 y1,
                 x2,
@@ -806,7 +1031,11 @@ fn aspect_segments(
 }
 
 fn aspect_style(hit: &AspectHit) -> AspectVisualStyle {
-    match hit.aspect.as_str() {
+    aspect_style_for_id(hit.aspect.as_str())
+}
+
+fn aspect_style_for_id(id: &str) -> AspectVisualStyle {
+    match id {
         "conjunction" => AspectVisualStyle::Conjunction,
         "opposition" => AspectVisualStyle::Opposition,
         "square" => AspectVisualStyle::Square,
@@ -1004,6 +1233,10 @@ pub struct Scene {
     pub points: Vec<PointMarker>,
     #[serde(default)]
     pub aspects: Vec<AspectSegment>,
+    #[serde(default)]
+    pub rings: Vec<RingMetadata>,
+    #[serde(default)]
+    pub theme: Option<Theme>,
 }
 
 impl Scene {
@@ -1016,6 +1249,7 @@ impl Scene {
             angles: layout.angles.clone(),
             points: layout.points.clone(),
             aspects: layout.aspects.clone(),
+            rings: layout.rings.clone(),
             ..Self::default()
         };
         scene.circles.extend([
@@ -1042,6 +1276,11 @@ impl Scene {
             },
         ]);
         scene
+    }
+
+    pub fn with_theme(mut self, theme: Theme) -> Self {
+        self.theme = Some(theme);
+        self
     }
 }
 

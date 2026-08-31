@@ -251,11 +251,29 @@ fn collect_workspace_references(
         workspace.profile.wheel.id(),
     ];
     if bindings.into_iter().flatten().any(|id| id == target)
-        || workspace
-            .views
-            .iter()
-            .filter_map(|view| view.document.id())
+        || workspace.views.iter().any(|view| {
+            [
+                view.document.id(),
+                view.points
+                    .as_ref()
+                    .and_then(mirabile_core::ResourceBinding::id),
+                view.aspects
+                    .as_ref()
+                    .and_then(mirabile_core::ResourceBinding::id),
+                view.analysis
+                    .as_ref()
+                    .and_then(mirabile_core::ResourceBinding::id),
+                view.wheel
+                    .as_ref()
+                    .and_then(mirabile_core::ResourceBinding::id),
+                view.theme
+                    .as_ref()
+                    .and_then(mirabile_core::ResourceBinding::id),
+            ]
+            .into_iter()
+            .flatten()
             .any(|id| id == target)
+        })
     {
         output.push(format!("{owner} binds this resource"));
     }

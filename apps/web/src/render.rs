@@ -15,6 +15,18 @@ pub fn WheelScene(scene: Scene, title: String, description: &'static str) -> imp
         400.0
     };
     let view_box = format!("0 0 {width} {height}");
+    let theme_style = scene.theme.as_ref().map(|theme| {
+        format!(
+            "--scene-background:{};--scene-foreground:{};--scene-muted:{};--scene-accent:{};--scene-aspect:{};background:{};color:{}",
+            theme.background,
+            theme.foreground,
+            theme.muted,
+            theme.accent,
+            theme.aspect_color,
+            theme.background,
+            theme.foreground,
+        )
+    });
 
     let circles = scene
         .circles
@@ -118,6 +130,9 @@ pub fn WheelScene(scene: Scene, title: String, description: &'static str) -> imp
         view! {
             <g data-aspect-id=aspect.aspect_id data-aspect-lhs=aspect.lhs.to_string()
                 data-aspect-rhs=aspect.rhs.to_string()
+                data-aspect-lhs-slot=aspect.lhs_slot.as_ref().map(ToString::to_string)
+                data-aspect-rhs-slot=aspect.rhs_slot.as_ref().map(ToString::to_string)
+                data-aspect-layer=aspect.layer.as_str()
                 data-aspect-classification=aspect_class_name(aspect.classification)
                 data-aspect-applying=applying_value(aspect.applying)
                 data-aspect-chord=aspect.draw_chord.to_string()
@@ -145,6 +160,8 @@ pub fn WheelScene(scene: Scene, title: String, description: &'static str) -> imp
         };
         view! {
             <g data-point-id=point_id data-point-retrograde=point.retrograde.to_string()
+                data-chart-slot=point.chart_slot.as_ref().map(ToString::to_string)
+                data-ring-role=point.ring_role.map(|role| format!("{role:?}").to_lowercase())
                 data-glyph-fallback=point.glyph_fallback.to_string()
                 aria-label=accessible_name role="group">
                 <circle cx=point.x cy=point.y r="3.5" class="point-true-anchor"
@@ -168,7 +185,7 @@ pub fn WheelScene(scene: Scene, title: String, description: &'static str) -> imp
         <svg class="wheel-scene" viewBox=view_box role="img"
             aria-labelledby="active-scene-title active-scene-description"
             preserveAspectRatio="xMidYMid meet" data-scene-width=width.to_string()
-            data-scene-height=height.to_string()>
+            data-scene-height=height.to_string() style=theme_style>
             <title id="active-scene-title">{title}</title>
             <desc id="active-scene-description">{description}</desc>
             <g data-wheel-group="compatibility-primitives" aria-hidden="true">

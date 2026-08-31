@@ -170,6 +170,29 @@ pub(super) fn install(
     set_function(&bridge, "replayMacro", &replay);
     replay.forget();
 
+    let execute_workflow = Closure::<dyn Fn(String) -> String>::new(move |json: String| {
+        let document = match mirabile_app::WorkflowDocumentV1::from_json(&json) {
+            Ok(document) => document,
+            Err(errors) => {
+                coordinator.reject_workflow(errors);
+                return json_error("execute_workflow", "workflow validation failed");
+            }
+        };
+        if coordinator.read_model().running {
+            return json_error("execute_workflow", "only one workflow may run at once");
+        }
+        coordinator.execute_workflow(document);
+        json_ok("execute_workflow")
+    });
+    set_function(&bridge, "executeWorkflow", &execute_workflow);
+    execute_workflow.forget();
+
+    let workflow_result = Closure::<dyn Fn() -> String>::new(move || {
+        json_envelope("workflow_result", coordinator.workflow_result())
+    });
+    set_function(&bridge, "workflowResult", &workflow_result);
+    workflow_result.forget();
+
     let peer_initialize = Closure::<dyn Fn() -> String>::new(move || {
         peer.initialize();
         json_ok("peer_initialize")

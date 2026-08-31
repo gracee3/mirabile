@@ -213,7 +213,7 @@ impl AutomationSnapshotV1 {
             authoring: model.authoring.clone(),
             chart_editor: model.chart_editor.clone(),
             resource_editor: model.resource_editor.clone(),
-            semantic_output: AutomationSemanticOutput::capture(&model.semantic_output),
+            semantic_output: AutomationSemanticOutput::capture(model),
             controls,
             coordinator,
             recent_trace,
@@ -231,10 +231,41 @@ pub struct AutomationSemanticOutput {
     pub aspects: Vec<AutomationSemanticAspect>,
     pub provenance: Vec<AutomationProvenanceEntry>,
     pub unavailable_reason: Option<String>,
+    #[serde(default)]
+    pub slots: Vec<AutomationSlotSemanticOutput>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct AutomationSlotSemanticOutput {
+    pub slot: String,
+    pub points: Vec<AutomationSemanticPoint>,
 }
 
 impl AutomationSemanticOutput {
-    fn capture(value: &crate::SemanticOutputReadModel) -> Self {
+    fn capture(model: &AppReadModel) -> Self {
+        let value = &model.semantic_output;
+        let mut slots = std::collections::BTreeMap::<String, Vec<AutomationSemanticPoint>>::new();
+        if let Some(scene) = model
+            .active_view
+            .as_ref()
+            .and_then(|view| view.scene.as_ref())
+        {
+            for point in scene
+                .points
+                .iter()
+                .filter_map(|point| point.chart_slot.as_ref().map(|slot| (slot, point)))
+            {
+                slots
+                    .entry(point.0.to_string())
+                    .or_default()
+                    .push(AutomationSemanticPoint {
+                        point_id: point.1.point.to_string(),
+                        longitude_degrees: point.1.longitude_degrees,
+                        retrograde: point.1.retrograde,
+                        derived: false,
+                    });
+            }
+        }
         Self {
             points: value
                 .points
@@ -288,6 +319,13 @@ impl AutomationSemanticOutput {
                 })
                 .collect(),
             unavailable_reason: value.unavailable_reason.clone(),
+            slots: slots
+                .into_iter()
+                .map(|(slot, mut points)| {
+                    points.sort_by(|lhs, rhs| lhs.point_id.cmp(&rhs.point_id));
+                    AutomationSlotSemanticOutput { slot, points }
+                })
+                .collect(),
         }
     }
 }
@@ -370,6 +408,8 @@ pub struct AutomationViewSnapshot {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AutomationSceneManifest {
+    pub ring_count: usize,
+    pub rings: Vec<AutomationSceneRing>,
     pub zodiac_count: usize,
     pub house_count: usize,
     pub angle_count: usize,
@@ -385,6 +425,16 @@ pub struct AutomationSceneManifest {
 impl AutomationSceneManifest {
     fn capture(scene: &Scene) -> Self {
         Self {
+            ring_count: scene.rings.len(),
+            rings: scene
+                .rings
+                .iter()
+                .map(|ring| AutomationSceneRing {
+                    slot: ring.chart_slot.to_string(),
+                    role: format!("{:?}", ring.role).to_lowercase(),
+                    labels_external: ring.labels_external,
+                })
+                .collect(),
             zodiac_count: scene.zodiac.len(),
             house_count: scene.houses.len(),
             angle_count: scene.angles.len(),
@@ -421,6 +471,10 @@ impl AutomationSceneManifest {
                 .take(AUTOMATION_SEMANTIC_ROW_LIMIT)
                 .map(|point| AutomationScenePoint {
                     point_id: point.point.to_string(),
+                    slot: point.chart_slot.as_ref().map(ToString::to_string),
+                    role: point
+                        .ring_role
+                        .map(|role| format!("{role:?}").to_lowercase()),
                     label: point.display_label.clone(),
                     formatted_position: point.formatted_position.clone(),
                     retrograde: point.retrograde,
@@ -437,6 +491,9 @@ impl AutomationSceneManifest {
                     aspect_id: aspect.aspect_id.clone(),
                     lhs: aspect.lhs.to_string(),
                     rhs: aspect.rhs.to_string(),
+                    lhs_slot: aspect.lhs_slot.as_ref().map(ToString::to_string),
+                    rhs_slot: aspect.rhs_slot.as_ref().map(ToString::to_string),
+                    layer: aspect.layer.as_str().into(),
                     classification: format!("{:?}", aspect.classification).to_lowercase(),
                     chord: aspect.draw_chord,
                     applying: aspect.applying,
@@ -444,6 +501,13 @@ impl AutomationSceneManifest {
                 .collect(),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AutomationSceneRing {
+    pub slot: String,
+    pub role: String,
+    pub labels_external: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -463,6 +527,8 @@ pub struct AutomationSceneAngle {
 #[allow(clippy::struct_excessive_bools)]
 pub struct AutomationScenePoint {
     pub point_id: String,
+    pub slot: Option<String>,
+    pub role: Option<String>,
     pub label: String,
     pub formatted_position: String,
     pub retrograde: bool,
@@ -476,6 +542,9 @@ pub struct AutomationSceneAspect {
     pub aspect_id: String,
     pub lhs: String,
     pub rhs: String,
+    pub lhs_slot: Option<String>,
+    pub rhs_slot: Option<String>,
+    pub layer: String,
     pub classification: String,
     pub chord: bool,
     pub applying: Option<bool>,

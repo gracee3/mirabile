@@ -12,10 +12,12 @@ matching `mirabile-workbench-e2e-*` or `mirabile-workbench-dev-*`. A normal buil
 the `mirabile` IndexedDB database and has no bridge object.
 
 The versioned bridge whitelist exposes snapshot, controls, typed execute, settlement, trace, macro
-replay, and one-shot action-source metadata. The test-only peer exposes initialization, settled
-snapshot/wait, and typed macro replay against the same isolated database. All mutations still pass
-through `WorkbenchCoordinator` and `Application`; neither bridge has repository-write or arbitrary
-evaluation access.
+replay, workflow execution/result, and one-shot action-source metadata. The test-only peer exposes
+initialization, settled snapshot/wait, typed macro replay, and the same versioned workflow runner
+against the isolated database. All mutations still pass through `WorkbenchCoordinator` and
+`Application`; neither bridge has repository-write or arbitrary evaluation access. A workflow is a
+bounded sequence of named typed actions, only one workflow can run at a time, and entity references
+are stable IDs or validated prior-step bindings rather than titles.
 
 ## Semantic controls and snapshots
 
@@ -39,7 +41,7 @@ not a portable-resource or database dump.
 `scripts/workbench-control.py` attaches only to Chromium's loopback debugging endpoint through the
 standard-library client in `scripts/cdp_client.py`. Its stable JSON commands are `snapshot`,
 `controls`, `get`, `set`, `click`, `select`, `check`, `key`, `execute`, `wait`, `trace`, `dom`,
-`screenshot`, and `run`. Native interaction resolves `[data-mirabile-address]` internally after
+`screenshot`, `workflow`, `workflow_result`, `workflow_wait`, and `run`. Native interaction resolves `[data-mirabile-address]` internally after
 validating the semantic address; the CLI deliberately exposes no arbitrary-evaluate command.
 
 The scenario runner accepts checked-in JSON steps, waits for authoritative settlement, and returns

@@ -106,6 +106,16 @@ impl RealState {
                 })
             })
             .collect::<Vec<_>>();
+        operations.extend(self.views.iter().flat_map(|(view_id, runtime)| {
+            runtime.multi.iter().flat_map(move |multi| {
+                multi.expected.values().map(move |expected| {
+                    PendingOperationReadModel::ViewCalculation {
+                        view_id: *view_id,
+                        request_id: expected.request_id.get(),
+                    }
+                })
+            })
+        }));
         operations.extend(self.saving_chart_drafts.iter().map(|instance_id| {
             PendingOperationReadModel::ChartCreate {
                 instance_id: *instance_id,
@@ -135,9 +145,9 @@ impl RealState {
             super::PendingWork::LoadDemoBundle { .. } => {
                 Some(PendingOperationReadModel::DemoLoading)
             }
-            super::PendingWork::CompleteCachedView(_) | super::PendingWork::CreateChart { .. } => {
-                None
-            }
+            super::PendingWork::CompleteCachedView(_)
+            | super::PendingWork::CompleteCachedMulti(_)
+            | super::PendingWork::CreateChart { .. } => None,
         }));
 
         if operations.is_empty() {

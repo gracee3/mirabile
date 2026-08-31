@@ -175,7 +175,7 @@ fn ReadyShell(
 
         <div class="workstation professional-workstation" aria-label="Live chart wheel and supporting controls">
             <ViewHost model />
-            <details class="surface-drawer workspace-surface">
+            <details class="surface-drawer workspace-surface" open>
                 <summary
                     class="surface-summary"
                     data-mirabile-control=ControlId::SURFACE_WORKSPACE.to_string()
@@ -188,7 +188,7 @@ fn ReadyShell(
                 </summary>
                 <WorkspaceRail model dispatcher />
             </details>
-            <details class="surface-drawer inspector-surface">
+            <details class="surface-drawer inspector-surface" open>
                 <summary
                     class="surface-summary"
                     data-mirabile-control=ControlId::SURFACE_INSPECTOR.to_string()
@@ -211,7 +211,7 @@ fn ReadyShell(
                 data-mirabile-kind=ControlKind::Action.as_str()
                 data-mirabile-enabled="true"
             >
-                <span>"Control cockpit & builders"</span>
+                <span>"Developer Tools · control cockpit & builders"</span>
                 <small>"All typed authoring surfaces remain mounted"</small>
             </summary>
             <Cockpit model dispatcher />
@@ -225,7 +225,7 @@ fn ReadyShell(
                 data-mirabile-kind=ControlKind::Action.as_str()
                 data-mirabile-enabled="true"
             >
-                <span>"Diagnostics & macros"</span>
+                <span>"Developer Tools · diagnostics & macros"</span>
                 <small>"Semantic output, trace, snapshots, replay"</small>
             </summary>
             <Diagnostics model dispatcher />

@@ -451,6 +451,18 @@ impl MockState {
                             DisplayValueSource::Durable
                         },
                     }],
+                    slots: Vec::new(),
+                    aspect_layers: mirabile_app::AspectLayerVisibility::default(),
+                    wheel: mirabile_app::WheelDisplayReadModel {
+                        zodiac_boundaries: true,
+                        zodiac_labels: true,
+                        house_cusps: true,
+                        house_numbers: true,
+                        degree_labels: true,
+                        retrograde_markers: true,
+                    },
+                    theme: mirabile_app::Theme::mirabile_dark(),
+                    rotation: None,
                     has_temporary_override: self.workspace.temporary_display_override,
                     promotion: if self.workspace.temporary_display_override {
                         Availability::Enabled
@@ -658,6 +670,12 @@ impl MockState {
     fn apply(&mut self, intent: AppIntent) -> AppResult<()> {
         self.notice = None;
         match intent {
+            AppIntent::CreateWheelView { .. }
+            | AppIntent::ApplyViewDisplay { .. }
+            | AppIntent::ApplyViewDisplayPatch { .. } => Err(AppError::new(
+                AppErrorKind::Unavailable,
+                "Multi-chart view authoring is provided by the real application adapter",
+            )),
             AppIntent::BeginNewChart
             | AppIntent::BeginSavedChartEdit { .. }
             | AppIntent::ApplyChartMutation(_)

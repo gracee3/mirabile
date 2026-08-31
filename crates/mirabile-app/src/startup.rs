@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 
 use mirabile_core::{
-    AnalysisProfile, AspectFieldSpec, AspectSet, CalculationSpec, CalendarSpec, ChartRecord,
-    ChartSlot, ChartSlotId, CivilDate, CivilDateTime, CivilTime, CoordinateSystem, CorrectionSpec,
-    EventKind, HouseDisplaySpec, HouseSystem, InstanceId, LabelSpec, ObjectFrame, PageLayout,
-    PointId, PointRole, PointSelector, PointSet, ResourceBinding, ResourceId, RingGeometry,
-    RingSpec, SourceProvenance, SourceType, TemporalAssertion, Theme, TimeZoneAssertion,
-    ViewDocument, ViewInstance, ViewInstanceId, ViewObject, ViewOverrides, WheelObject,
-    WheelTemplate, WorkspaceDocument, WorkspaceProfile, ZodiacDisplaySpec, ZodiacSpec,
+    AnalysisProfile, Angle, AspectClass, AspectDefinition, AspectFieldSpec, AspectId, AspectSet,
+    CalculationSpec, CalendarSpec, ChartRecord, ChartSlot, ChartSlotId, CivilDate, CivilDateTime,
+    CivilTime, CoordinateSystem, CorrectionSpec, EventKind, HouseDisplaySpec, HouseSystem,
+    InstanceId, LabelSpec, ObjectFrame, OrbPolicy, PageLayout, PointId, PointRole, PointSelector,
+    PointSet, ResourceBinding, ResourceId, RingGeometry, RingSpec, SourceProvenance, SourceType,
+    TemporalAssertion, Theme, TimeZoneAssertion, ViewDocument, ViewInstance, ViewInstanceId,
+    ViewObject, ViewOverrides, WheelObject, WheelTemplate, WorkspaceDocument, WorkspaceProfile,
+    ZodiacDisplaySpec, ZodiacSpec,
 };
 
 use crate::{ChartDraft, WorkspaceSession, WorkspaceSessionDraftChart};
@@ -132,10 +133,16 @@ pub(crate) fn current_transits_session(
         chart_instances: Vec::new(),
         views: vec![ViewInstance {
             id: view_id,
+            title: "Current Transits".into(),
             document: ResourceBinding::Inline {
                 value: view_document,
             },
             charts: BTreeMap::new(),
+            points: None,
+            aspects: None,
+            analysis: None,
+            wheel: None,
+            theme: None,
             overrides: ViewOverrides::default(),
         }],
         profile: session_profile(slot.clone()),
@@ -167,7 +174,30 @@ fn session_profile(slot: ChartSlotId) -> WorkspaceProfile {
         transit_points: ResourceBinding::Inline { value: points },
         aspects: ResourceBinding::Inline {
             value: AspectSet {
-                aspects: Vec::new(),
+                aspects: vec![
+                    AspectDefinition {
+                        id: AspectId::new("conjunction").expect("built-in aspect ID"),
+                        name: "Conjunction".into(),
+                        angle: Angle::from_degrees(0.0).expect("built-in aspect angle"),
+                        enabled: true,
+                        orbs: OrbPolicy {
+                            maximum: Angle::from_degrees(8.0).expect("built-in aspect orb"),
+                            applying_multiplier: 1.0,
+                        },
+                        classification: AspectClass::Major,
+                    },
+                    AspectDefinition {
+                        id: AspectId::new("square").expect("built-in aspect ID"),
+                        name: "Square".into(),
+                        angle: Angle::from_degrees(90.0).expect("built-in aspect angle"),
+                        enabled: true,
+                        orbs: OrbPolicy {
+                            maximum: Angle::from_degrees(6.0).expect("built-in aspect orb"),
+                            applying_multiplier: 1.0,
+                        },
+                        classification: AspectClass::Major,
+                    },
+                ],
             },
         },
         analysis: ResourceBinding::Inline {

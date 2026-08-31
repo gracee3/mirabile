@@ -322,6 +322,18 @@ impl RealState {
             computation: runtime.computation,
             display: ViewDisplayReadModel {
                 points: Vec::new(),
+                slots: Vec::new(),
+                aspect_layers: mirabile_core::AspectLayerVisibility::default(),
+                wheel: crate::WheelDisplayReadModel {
+                    zodiac_boundaries: true,
+                    zodiac_labels: true,
+                    house_cusps: true,
+                    house_numbers: true,
+                    degree_labels: true,
+                    retrograde_markers: true,
+                },
+                theme: mirabile_core::Theme::mirabile_dark(),
+                rotation: None,
                 has_temporary_override: false,
                 promotion: disabled(
                     "Display state is unavailable until capabilities are projected",
@@ -392,24 +404,78 @@ impl RealState {
             })?;
         let temporary = session.temporary_view_overrides.get(&view_id);
         let effective = temporary.unwrap_or(&view.overrides);
-        Ok(ViewDisplayReadModel {
-            points: supported_points
+        let workspace = &session.document;
+        let wheel = resolve_typed_binding(
+            view.wheel.as_ref().unwrap_or(&workspace.profile.wheel),
+            &self.catalog,
+            ConfigurationLayer::View,
+        )
+        .map_err(|error| AppError::new(AppErrorKind::NotFound, error.to_string()))?
+        .value;
+        let theme = resolve_typed_binding(
+            view.theme.as_ref().unwrap_or(&workspace.profile.theme),
+            &self.catalog,
+            ConfigurationLayer::View,
+        )
+        .map_err(|error| AppError::new(AppErrorKind::NotFound, error.to_string()))?
+        .value;
+        let point_rows = |slot: Option<&mirabile_core::ChartSlotId>| {
+            supported_points
                 .iter()
                 .filter(|option| option.enabled)
-                .map(|option| PointVisibilityReadModel {
-                    point_id: option.value.clone(),
-                    label: option.label.clone(),
-                    visible: !effective.hidden_points.contains(&option.value),
-                    durable_visible: !view.overrides.hidden_points.contains(&option.value),
-                    temporary_visible: temporary
-                        .map(|overrides| !overrides.hidden_points.contains(&option.value)),
-                    source: if temporary.is_some() {
-                        DisplayValueSource::Temporary
-                    } else {
-                        DisplayValueSource::Durable
-                    },
+                .map(|option| {
+                    let slot_hidden =
+                        slot.and_then(|slot| effective.hidden_points_by_slot.get(slot));
+                    let durable_slot_hidden =
+                        slot.and_then(|slot| view.overrides.hidden_points_by_slot.get(slot));
+                    PointVisibilityReadModel {
+                        point_id: option.value.clone(),
+                        label: option.label.clone(),
+                        visible: !effective.hidden_points.contains(&option.value)
+                            && !slot_hidden.is_some_and(|points| points.contains(&option.value)),
+                        durable_visible: !view.overrides.hidden_points.contains(&option.value)
+                            && !durable_slot_hidden
+                                .is_some_and(|points| points.contains(&option.value)),
+                        temporary_visible: temporary.map(|overrides| {
+                            !overrides.hidden_points.contains(&option.value)
+                                && !slot
+                                    .and_then(|slot| overrides.hidden_points_by_slot.get(slot))
+                                    .is_some_and(|points| points.contains(&option.value))
+                        }),
+                        source: if temporary.is_some() {
+                            DisplayValueSource::Temporary
+                        } else {
+                            DisplayValueSource::Durable
+                        },
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        Ok(ViewDisplayReadModel {
+            points: point_rows(None),
+            slots: resolve_typed_binding(&view.document, &self.catalog, ConfigurationLayer::View)
+                .map_err(|error| AppError::new(AppErrorKind::NotFound, error.to_string()))?
+                .value
+                .chart_slots
+                .into_iter()
+                .map(|slot| crate::SlotDisplayReadModel {
+                    visible: !effective.hidden_rings.contains(&slot.id),
+                    points: point_rows(Some(&slot.id)),
+                    slot: slot.id,
+                    label: slot.label,
                 })
                 .collect(),
+            aspect_layers: effective.aspect_layers.clone(),
+            wheel: crate::WheelDisplayReadModel {
+                zodiac_boundaries: wheel.zodiac.show_boundaries,
+                zodiac_labels: wheel.zodiac.show_labels,
+                house_cusps: wheel.houses.show_cusps,
+                house_numbers: wheel.houses.show_numbers,
+                degree_labels: wheel.labels.show_degrees,
+                retrograde_markers: wheel.labels.show_retrograde,
+            },
+            theme,
+            rotation: effective.rotation,
             has_temporary_override: temporary.is_some(),
             promotion: if temporary.is_some() {
                 Availability::Enabled
@@ -646,15 +712,9 @@ fn semantic_output(state: &RealState) -> crate::SemanticOutputReadModel {
             ..Default::default()
         };
     };
-    if runtime.last_expected.is_none() {
-        return SemanticOutputReadModel {
-            unavailable_reason: Some("The active view has not completed a calculation".into()),
-            ..Default::default()
-        };
-    }
     let Some(calculation) = runtime.semantic_calculation.as_ref() else {
         return SemanticOutputReadModel {
-            unavailable_reason: Some("No last-good semantic calculation is available".into()),
+            unavailable_reason: Some("The active view has not completed a calculation".into()),
             ..Default::default()
         };
     };

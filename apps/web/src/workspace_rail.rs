@@ -21,6 +21,8 @@ pub(super) fn WorkspaceRail(
 ) -> impl IntoView {
     let title_buffer = RwSignal::new(String::new());
     let title_error = RwSignal::new(None::<String>);
+    let radix_selection = RwSignal::new(String::new());
+    let comparison_selection = RwSignal::new(String::new());
     let invalid_buffers = invalid_buffer_registry();
     view! {
         <nav
@@ -36,6 +38,56 @@ pub(super) fn WorkspaceRail(
                 </div>
                 <span class="count-badge">{move || model.get().workspace.charts.len()}</span>
             </div>
+            <button
+                class="button primary full-width new-chart-primary"
+                type="button"
+                disabled=move || !model.get().availability(AppAction::BeginNewChart).is_enabled()
+                on:click=move |_| dispatcher.dispatch_from(
+                    AppIntent::BeginNewChart,
+                    ActionSource::Human,
+                    None,
+                )
+            >"＋ New Chart"</button>
+
+            <section class="biwheel-creator" aria-labelledby="new-biwheel-title">
+                <h3 id="new-biwheel-title">"New Biwheel"</h3>
+                <label>"Radix"
+                    <select on:change=move |event| radix_selection.set(event_target_value(&event))>
+                        <option value="">"Select saved chart"</option>
+                        {move || model.get().workspace.charts.into_iter().filter(|chart| matches!(chart.persistence, ChartPersistence::Saved { .. })).map(|chart| view! {
+                            <option value=chart.instance_id.to_string()>{chart.title}</option>
+                        }).collect_view()}
+                    </select>
+                </label>
+                <label>"Comparison"
+                    <select on:change=move |event| comparison_selection.set(event_target_value(&event))>
+                        <option value="">"Select a different chart"</option>
+                        {move || model.get().workspace.charts.into_iter().filter(|chart| matches!(chart.persistence, ChartPersistence::Saved { .. })).map(|chart| view! {
+                            <option value=chart.instance_id.to_string()>{chart.title}</option>
+                        }).collect_view()}
+                    </select>
+                </label>
+                <button
+                    class="button secondary full-width"
+                    type="button"
+                    disabled=move || {
+                        let radix=radix_selection.get(); let comparison=comparison_selection.get();
+                        radix.is_empty() || comparison.is_empty() || radix == comparison
+                    }
+                    on:click=move |_| {
+                        let Ok(radix) = radix_selection.get_untracked().parse() else { return; };
+                        let Ok(comparison) = comparison_selection.get_untracked().parse() else { return; };
+                        dispatcher.dispatch_from(
+                            AppIntent::CreateWheelView {
+                                title: "Radix × Comparison".into(), radix, comparison: Some(comparison),
+                            },
+                            ActionSource::Human,
+                            None,
+                        );
+                    }
+                >"Create Radix × Comparison"</button>
+                <small>"Requires two distinct saved, open charts."</small>
+            </section>
             <div class="workspace-management">
                 <BufferedTextField
                     address=ControlAddress::new(ControlId::WORKSPACE_TITLE).to_string()

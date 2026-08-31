@@ -1,12 +1,13 @@
 use super::{
     AnalysisKey, AppError, AppErrorKind, AppNotice, AppNoticeKind, AppResult, AspectAnalyzer,
-    CalculationEngine, CalculationOutcome, CalculationRuntime, CalculationRuntimeError,
+    BTreeMap, CalculationEngine, CalculationOutcome, CalculationRuntime, CalculationRuntimeError,
     CalculationWorkerRequest, CalculationWorkerResult, ChartSource, ConfigurationLayer,
-    ExpectedCalculation, PendingCachedView, PendingViewCalculation, PendingWork,
-    PreparedCalculation, ProjectionVersion, RealApplication, RealState, ResourceRepository, Scene,
-    SnapshotContext, ViewCalculationPlan, ViewComputationState, ViewInstanceId,
-    WorkerProtocolVersion, info, not_found_for_view, render_key, resolve_typed_binding, success,
-    view_computation_error, view_resolution_error, worker_failure_error,
+    ExpectedCalculation, MultiViewRuntime, PendingCachedMulti, PendingCachedView,
+    PendingViewCalculation, PendingWork, PreparedCalculation, ProjectionVersion, RealApplication,
+    RealState, ResourceRepository, Scene, SnapshotContext, ViewCalculationPlan,
+    ViewComputationState, ViewInstanceId, WorkerProtocolVersion, info, not_found_for_view,
+    render_key, resolve_typed_binding, success, view_computation_error, view_resolution_error,
+    worker_failure_error,
 };
 
 impl<R, C> RealApplication<R, C>
@@ -41,6 +42,7 @@ where
         let pending = self.state.borrow_mut().pending.pop_front();
         match pending {
             Some(PendingWork::CompleteCachedView(pending)) => self.complete_cached_view(*pending),
+            Some(PendingWork::CompleteCachedMulti(pending)) => self.complete_cached_multi(*pending),
             Some(PendingWork::SaveAspectSet {
                 expected_revision,
                 next,
@@ -133,6 +135,9 @@ where
         let Some(pending) = state.inflight.remove(&result.request_id) else {
             return Ok(());
         };
+        if pending.slot.is_some() {
+            return self.accept_multi_worker_result(&mut state, pending, result);
+        }
         let Some(expected) = state
             .views
             .get(&pending.view_id)
@@ -205,12 +210,117 @@ where
         }
     }
 
+    pub(super) fn complete_cached_multi(&self, pending: PendingCachedMulti) -> AppResult<()> {
+        let mut state = self.state.borrow_mut();
+        let Some(multi) = state
+            .views
+            .get_mut(&pending.view_id)
+            .and_then(|runtime| runtime.multi.as_mut())
+        else {
+            return Ok(());
+        };
+        if multi.generation != pending.generation
+            || multi.expected.get(&pending.slot) != Some(&pending.expected)
+        {
+            return Ok(());
+        }
+        multi.calculations.insert(pending.slot, pending.calculation);
+        Self::finish_multi_if_ready(&mut state, pending.view_id)
+    }
+
+    fn accept_multi_worker_result(
+        &self,
+        state: &mut RealState,
+        pending: PendingViewCalculation,
+        result: CalculationWorkerResult,
+    ) -> AppResult<()> {
+        let slot = pending.slot.expect("multi-chart pending work has a slot");
+        let current = state
+            .views
+            .get(&pending.view_id)
+            .and_then(|runtime| runtime.multi.as_ref())
+            .filter(|multi| multi.generation == pending.generation)
+            .and_then(|multi| multi.expected.get(&slot))
+            .cloned();
+        let Some(expected) = current else {
+            return Ok(());
+        };
+        if expected.request_id != result.request_id || expected.calc_key != result.calc_key {
+            return Self::fail_multi_view(
+                state,
+                pending.view_id,
+                "Multi-chart calculation integrity failure",
+            );
+        }
+        if result.protocol_version != WorkerProtocolVersion::CURRENT {
+            return Self::fail_multi_view(
+                state,
+                pending.view_id,
+                "Multi-chart Worker protocol mismatch",
+            );
+        }
+        let calculation = match result.outcome {
+            CalculationOutcome::Success(value) => self
+                .engine
+                .complete(&pending.prepared, *value)
+                .map_err(view_computation_error),
+            CalculationOutcome::Failure(failure) => Err(worker_failure_error(&failure)),
+        };
+        match calculation {
+            Ok(calculation) => {
+                state
+                    .cache
+                    .insert_calculation(expected.calc_key, calculation.clone());
+                if let Some(multi) = state
+                    .views
+                    .get_mut(&pending.view_id)
+                    .and_then(|runtime| runtime.multi.as_mut())
+                    .filter(|multi| multi.generation == pending.generation)
+                {
+                    multi.calculations.insert(slot, calculation);
+                }
+                Self::finish_multi_if_ready(state, pending.view_id)
+            }
+            Err(error) => Self::fail_multi_view(state, pending.view_id, &error.message),
+        }
+    }
+
+    fn fail_multi_view(
+        state: &mut RealState,
+        view_id: ViewInstanceId,
+        message: &str,
+    ) -> AppResult<()> {
+        let generation = state
+            .views
+            .get(&view_id)
+            .and_then(|runtime| runtime.multi.as_ref())
+            .map(|multi| multi.generation);
+        if let Some(generation) = generation {
+            state.inflight.retain(|_, pending| {
+                pending.view_id != view_id || pending.generation != generation
+            });
+        }
+        let runtime = state.views.entry(view_id).or_default();
+        runtime.multi = None;
+        runtime.computation =
+            ViewComputationState::Failed(AppError::new(AppErrorKind::ViewComputation, message));
+        state.notice = Some(AppNotice {
+            kind: AppNoticeKind::Warning,
+            message: format!(
+                "Biwheel refresh failed; the complete last good Scene remains visible: {message}"
+            ),
+        });
+        state.advance()
+    }
+
     pub(super) fn accept_runtime_failure(&self, error: &CalculationRuntimeError) -> AppResult<()> {
         let mut state = self.state.borrow_mut();
         let affected = state
             .views
             .iter()
-            .filter_map(|(view_id, runtime)| runtime.expected.as_ref().map(|_| *view_id))
+            .filter_map(|(view_id, runtime)| {
+                (runtime.expected.is_some() || runtime.multi.is_some()).then_some(*view_id)
+            })
             .collect::<Vec<_>>();
         if affected.is_empty() {
             return Ok(());
@@ -226,11 +336,15 @@ where
             }
             let runtime = state.views.entry(*view_id).or_default();
             runtime.expected = None;
+            runtime.multi = None;
             runtime.computation = ViewComputationState::Failed(AppError::new(
                 AppErrorKind::ViewComputation,
                 format!("Calculation runtime failed: {}", error.message),
             ));
         }
+        state
+            .inflight
+            .retain(|_, pending| !affected.contains(&pending.view_id));
         state.notice = Some(AppNotice {
             kind: AppNoticeKind::Warning,
             message: format!(
@@ -268,6 +382,7 @@ where
         state.advance()
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn submit_active_view_refresh(&self, state: &mut RealState) -> AppResult<()> {
         let Some(view_id) = state
             .session
@@ -293,6 +408,33 @@ where
                 message: error.message,
             });
             return Ok(());
+        }
+        let is_biwheel = state
+            .session
+            .as_ref()
+            .and_then(|session| {
+                session
+                    .document
+                    .views
+                    .iter()
+                    .find(|view| view.id == view_id)
+            })
+            .and_then(|view| {
+                resolve_typed_binding(&view.document, &state.catalog, ConfigurationLayer::View)
+                    .ok()
+                    .map(|document| {
+                        document
+                            .value
+                            .chart_slots
+                            .iter()
+                            .filter(|slot| slot.required)
+                            .count()
+                            > 1
+                    })
+            })
+            .unwrap_or(false);
+        if is_biwheel {
+            return self.submit_biwheel_refresh(state, view_id);
         }
         let (prepared, plan) = self.prepare_view_calculation(state, view_id)?;
         let request_id = state.next_request_id;
@@ -354,6 +496,8 @@ where
                 request_id,
                 PendingViewCalculation {
                     view_id,
+                    slot: None,
+                    generation: 0,
                     prepared,
                     plan,
                 },
@@ -537,6 +681,308 @@ where
         ))
     }
 
+    #[allow(clippy::too_many_lines)]
+    fn submit_biwheel_refresh(
+        &self,
+        state: &mut RealState,
+        view_id: ViewInstanceId,
+    ) -> AppResult<()> {
+        let session = state.session.as_ref().ok_or_else(|| {
+            AppError::new(
+                AppErrorKind::ViewComputation,
+                "No workspace session is active",
+            )
+        })?;
+        let view = session
+            .document
+            .views
+            .iter()
+            .find(|view| view.id == view_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::new(
+                    AppErrorKind::NotFound,
+                    format!("View {view_id} was not found"),
+                )
+            })?;
+        let document =
+            resolve_typed_binding(&view.document, &state.catalog, ConfigurationLayer::View)
+                .map_err(view_resolution_error)?;
+        let assignments = session.effective_chart_assignments(view_id);
+        let required = document
+            .value
+            .chart_slots
+            .iter()
+            .filter(|slot| slot.required)
+            .map(|slot| {
+                assignments
+                    .get(&slot.id)
+                    .copied()
+                    .map(|chart| (slot.id.clone(), chart))
+                    .ok_or_else(|| {
+                        AppError::new(
+                            AppErrorKind::InvalidIntent,
+                            format!("Required slot {} is unassigned", slot.id),
+                        )
+                    })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        if required.len() != 2 || required[0].1 == required[1].1 {
+            return Err(AppError::new(
+                AppErrorKind::InvalidIntent,
+                "A biwheel requires exactly two distinct saved chart assignments",
+            ));
+        }
+        let mut prepared = BTreeMap::new();
+        let mut plan = None;
+        for (slot, instance_id) in &required {
+            let workspace_chart = session
+                .document
+                .chart_instances
+                .iter()
+                .find(|chart| chart.instance_id() == *instance_id)
+                .ok_or_else(|| {
+                    AppError::new(AppErrorKind::InvalidIntent, "Biwheel charts must be saved")
+                })?;
+            let mut definition = state
+                .catalog
+                .chart_definition(workspace_chart.definition)
+                .cloned()
+                .ok_or_else(|| not_found_for_view("ChartDefinition", workspace_chart.definition))?;
+            let record_id = match definition.payload.source {
+                ChartSource::Radix { record } => record,
+                ChartSource::Derived { .. } => {
+                    return Err(AppError::new(
+                        AppErrorKind::InvalidIntent,
+                        "Derived biwheel charts are not supported",
+                    ));
+                }
+            };
+            let record = state
+                .catalog
+                .chart_record(record_id)
+                .cloned()
+                .ok_or_else(|| not_found_for_view("ChartRecord", record_id))?;
+            let effective =
+                state.effective_configuration(&definition.payload.calculation, &view)?;
+            definition.payload.calculation = effective.calculation.value.clone();
+            let slot_prepared = self
+                .engine
+                .prepare(
+                    &definition,
+                    &record,
+                    &effective.displayed_points.value,
+                    &effective.aspected_points.value,
+                )
+                .map_err(view_computation_error)?;
+            if plan.is_none() {
+                plan = Some(ViewCalculationPlan {
+                    displayed_points: effective.displayed_points.value,
+                    aspected_points: effective.aspected_points.value,
+                    aspect_set: effective.aspect_set.value,
+                    analysis: effective.analysis.value,
+                    wheel: effective.wheel.value,
+                    theme: effective.theme.value,
+                    rotation: view.overrides.rotation,
+                });
+            }
+            prepared.insert(slot.clone(), slot_prepared);
+        }
+        let plan = plan.expect("two required slots produce a plan");
+        let generation = state
+            .views
+            .get(&view_id)
+            .and_then(|runtime| runtime.multi.as_ref())
+            .map_or(1, |multi| multi.generation.saturating_add(1));
+        state
+            .inflight
+            .retain(|_, pending| pending.view_id != view_id);
+        let mut expected_map = BTreeMap::new();
+        let mut cached = Vec::new();
+        for (slot, slot_prepared) in &prepared {
+            let request_id = state.next_request_id;
+            state.next_request_id = request_id
+                .next()
+                .map_err(|error| AppError::new(AppErrorKind::Unavailable, error.to_string()))?;
+            let expected = ExpectedCalculation {
+                request_id,
+                calc_key: slot_prepared.calc_key.clone(),
+                analysis_key: AnalysisKey::derive(
+                    std::slice::from_ref(&slot_prepared.calc_key),
+                    &plan.aspected_points,
+                    &plan.aspect_set,
+                    &plan.analysis,
+                )
+                .map_err(view_computation_error)?,
+            };
+            expected_map.insert(slot.clone(), expected.clone());
+            if let Some(calculation) = state.cache.calculation(&slot_prepared.calc_key).cloned() {
+                cached.push(PendingCachedMulti {
+                    view_id,
+                    slot: slot.clone(),
+                    generation,
+                    expected,
+                    calculation,
+                });
+            } else {
+                self.runtime
+                    .submit(CalculationWorkerRequest {
+                        protocol_version: WorkerProtocolVersion::CURRENT,
+                        request_id,
+                        calc_key: slot_prepared.calc_key.clone(),
+                        backend: self.engine.backend_descriptor().fingerprint.clone(),
+                        request: slot_prepared.request.clone(),
+                    })
+                    .map_err(|error| AppError::new(AppErrorKind::ViewComputation, error.message))?;
+                state.inflight.insert(
+                    request_id,
+                    PendingViewCalculation {
+                        view_id,
+                        slot: Some(slot.clone()),
+                        generation,
+                        prepared: slot_prepared.clone(),
+                        plan: plan.clone(),
+                    },
+                );
+            }
+        }
+        let runtime = state.views.entry(view_id).or_default();
+        runtime.expected = None;
+        runtime.multi = Some(MultiViewRuntime {
+            generation,
+            expected: expected_map,
+            prepared,
+            calculations: BTreeMap::new(),
+            plan,
+        });
+        runtime.computation = if runtime.scene.is_some() {
+            ViewComputationState::Refreshing
+        } else {
+            ViewComputationState::Loading
+        };
+        for item in cached {
+            state
+                .pending
+                .push_back(PendingWork::CompleteCachedMulti(Box::new(item)));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn finish_multi_if_ready(state: &mut RealState, view_id: ViewInstanceId) -> AppResult<()> {
+        let Some(multi) = state
+            .views
+            .get(&view_id)
+            .and_then(|runtime| runtime.multi.as_ref())
+        else {
+            return Ok(());
+        };
+        if multi.calculations.len() != multi.expected.len() {
+            return state.advance();
+        }
+        let multi = multi.clone();
+        let mut slots = multi.prepared.keys().cloned().collect::<Vec<_>>();
+        slots.sort_by_key(|slot| i32::from(slot.as_str() != "radix"));
+        let radix_slot = slots[0].clone();
+        let comparison_slot = slots[1].clone();
+        let radix = CalculationEngine::snapshot(
+            multi.prepared.get(&radix_slot).expect("prepared radix"),
+            multi
+                .calculations
+                .get(&radix_slot)
+                .expect("calculated radix")
+                .clone(),
+        );
+        let comparison = CalculationEngine::snapshot(
+            multi
+                .prepared
+                .get(&comparison_slot)
+                .expect("prepared comparison"),
+            multi
+                .calculations
+                .get(&comparison_slot)
+                .expect("calculated comparison")
+                .clone(),
+        );
+        let radix_analysis = AspectAnalyzer::analyze(
+            &radix,
+            &multi.plan.aspected_points,
+            &multi.plan.aspect_set,
+            &multi.plan.analysis,
+        )
+        .map_err(view_computation_error)?;
+        let comparison_analysis = AspectAnalyzer::analyze(
+            &comparison,
+            &multi.plan.aspected_points,
+            &multi.plan.aspect_set,
+            &multi.plan.analysis,
+        )
+        .map_err(view_computation_error)?;
+        let relationship = AspectAnalyzer::analyze_relationship(
+            &radix_slot,
+            &radix,
+            &comparison_slot,
+            &comparison,
+            &multi.plan.aspected_points,
+            &multi.plan.aspect_set,
+            &multi.plan.analysis,
+        )
+        .map_err(view_computation_error)?;
+        let mut layout = mirabile_engine::layout_biwheel_in_bounds(
+            radix_slot.clone(),
+            &radix,
+            &radix_analysis,
+            comparison_slot.clone(),
+            &comparison,
+            &comparison_analysis,
+            &relationship,
+            &multi.plan.displayed_points,
+            &multi.plan.wheel,
+            multi.plan.rotation,
+            mirabile_engine::WheelLayoutBounds::default(),
+        )
+        .map_err(view_computation_error)?;
+        let overrides = state
+            .session
+            .as_ref()
+            .and_then(|session| {
+                session
+                    .document
+                    .views
+                    .iter()
+                    .find(|view| view.id == view_id)
+            })
+            .map(|view| view.overrides.clone())
+            .unwrap_or_default();
+        layout.points.retain(|point| {
+            point.chart_slot.as_ref().is_none_or(|slot| {
+                !overrides.hidden_rings.contains(slot)
+                    && !overrides
+                        .hidden_points_by_slot
+                        .get(slot)
+                        .is_some_and(|points| points.contains(&point.point))
+                    && !overrides.hidden_points.contains(&point.point)
+            })
+        });
+        layout.aspects.retain(|aspect| match aspect.layer {
+            mirabile_engine::AspectLayer::RadixIntra => overrides.aspect_layers.radix_intra,
+            mirabile_engine::AspectLayer::ComparisonIntra => {
+                overrides.aspect_layers.comparison_intra
+            }
+            mirabile_engine::AspectLayer::CrossChart => overrides.aspect_layers.cross_chart,
+        });
+        render_key(&layout, &multi.plan.theme).map_err(view_computation_error)?;
+        let scene = Scene::from_wheel(&layout).with_theme(multi.plan.theme.clone());
+        let runtime = state.views.entry(view_id).or_default();
+        runtime.scene = Some(scene);
+        runtime.semantic_calculation = multi.calculations.get(&radix_slot).cloned();
+        runtime.semantic_analysis = Some(radix_analysis);
+        runtime.multi = None;
+        runtime.computation = ViewComputationState::Fresh;
+        state.notice = Some(success("Biwheel computation completed"));
+        state.advance()
+    }
+
     pub(super) fn finish_scene(
         state: &mut RealState,
         prepared: &PreparedCalculation,
@@ -561,6 +1007,6 @@ where
         )
         .map_err(view_computation_error)?;
         render_key(&layout, &plan.theme).map_err(view_computation_error)?;
-        Ok(Scene::from_wheel(&layout))
+        Ok(Scene::from_wheel(&layout).with_theme(plan.theme.clone()))
     }
 }

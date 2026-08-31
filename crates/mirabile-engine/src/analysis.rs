@@ -57,7 +57,27 @@ pub struct ChartAnalysis {
 pub struct RelationshipAnalysis {
     pub lhs: crate::CalcKey,
     pub rhs: crate::CalcKey,
-    pub cross_aspects: Vec<AspectHit>,
+    pub cross_aspects: Vec<RelationshipAspectHit>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OwnedPointRef {
+    pub slot: mirabile_core::ChartSlotId,
+    pub point: PointId,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct RelationshipAspectHit {
+    pub lhs: OwnedPointRef,
+    pub rhs: OwnedPointRef,
+    pub aspect: AspectId,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default = "default_aspect_classification")]
+    pub classification: AspectClass,
+    pub separation: Angle,
+    pub orb: Angle,
+    pub applying: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -126,6 +146,79 @@ impl AspectAnalyzer {
             patterns: Vec::new(),
             midpoints: midpoint_index(&selected)?,
             houses: HouseAnalysis::default(),
+        })
+    }
+
+    pub fn analyze_relationship(
+        lhs_slot: &mirabile_core::ChartSlotId,
+        lhs: &ChartSnapshot,
+        rhs_slot: &mirabile_core::ChartSlotId,
+        rhs: &ChartSnapshot,
+        points: &PointSet,
+        aspects: &AspectSet,
+        profile: &AnalysisProfile,
+    ) -> Result<RelationshipAnalysis, AnalysisError> {
+        let mut lhs_points: Vec<_> = points
+            .direct_points()
+            .filter_map(|id| lhs.calculation.point_entry(id))
+            .collect();
+        let mut rhs_points: Vec<_> = points
+            .direct_points()
+            .filter_map(|id| rhs.calculation.point_entry(id))
+            .collect();
+        lhs_points.sort_by_key(|(id, _)| *id);
+        rhs_points.sort_by_key(|(id, _)| *id);
+        let mut hits = Vec::new();
+        for (lhs_id, lhs_state) in lhs_points {
+            for (rhs_id, rhs_state) in &rhs_points {
+                let separation = lhs_state.longitude.separation(rhs_state.longitude);
+                for definition in aspects.aspects.iter().filter(|aspect| aspect.enabled) {
+                    let orb_degrees = (separation.degrees() - definition.angle.degrees()).abs();
+                    let is_applying = applying(lhs_state, rhs_state, definition.angle.degrees());
+                    let multiplier = if is_applying {
+                        definition.orbs.applying_multiplier
+                    } else {
+                        1.0
+                    };
+                    if orb_degrees <= definition.orbs.maximum.degrees() * multiplier {
+                        hits.push(RelationshipAspectHit {
+                            lhs: OwnedPointRef {
+                                slot: lhs_slot.clone(),
+                                point: lhs_id.clone(),
+                            },
+                            rhs: OwnedPointRef {
+                                slot: rhs_slot.clone(),
+                                point: (*rhs_id).clone(),
+                            },
+                            aspect: definition.id.clone(),
+                            name: definition.name.clone(),
+                            classification: definition.classification,
+                            separation,
+                            orb: Angle::from_degrees(orb_degrees)
+                                .map_err(|_| AnalysisError::NonFiniteAngle)?,
+                            applying: profile.include_applying_state.then_some(is_applying),
+                        });
+                    }
+                }
+            }
+        }
+        hits.sort_by(|lhs, rhs| {
+            lhs.orb
+                .degrees()
+                .total_cmp(&rhs.orb.degrees())
+                .then_with(|| lhs.lhs.slot.cmp(&rhs.lhs.slot))
+                .then_with(|| lhs.lhs.point.cmp(&rhs.lhs.point))
+                .then_with(|| lhs.rhs.slot.cmp(&rhs.rhs.slot))
+                .then_with(|| lhs.rhs.point.cmp(&rhs.rhs.point))
+                .then_with(|| lhs.aspect.cmp(&rhs.aspect))
+        });
+        if let Some(maximum) = profile.maximum_hits {
+            hits.truncate(maximum as usize);
+        }
+        Ok(RelationshipAnalysis {
+            lhs: lhs.calc_key.clone(),
+            rhs: rhs.calc_key.clone(),
+            cross_aspects: hits,
         })
     }
 }

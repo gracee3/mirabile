@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Angle, AppError, AspectId, CalculationDiagnosticsReadModel, ChartEditorReadModel, ChartSlotId,
-    InstanceId, PointId, ResourceId, Revision, Scene, ViewInstanceId,
+    InstanceId, PointId, ResourceId, Revision, Scene, Theme, ViewInstanceId,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -594,11 +594,35 @@ pub struct ViewReadModel {
     pub slots: Vec<ChartSlotAssignment>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ViewDisplayReadModel {
     pub points: Vec<PointVisibilityReadModel>,
+    pub slots: Vec<SlotDisplayReadModel>,
+    pub aspect_layers: mirabile_core::AspectLayerVisibility,
+    pub wheel: WheelDisplayReadModel,
+    pub theme: Theme,
+    pub rotation: Option<Angle>,
     pub has_temporary_override: bool,
     pub promotion: Availability,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SlotDisplayReadModel {
+    pub slot: ChartSlotId,
+    pub label: String,
+    pub visible: bool,
+    pub points: Vec<PointVisibilityReadModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct WheelDisplayReadModel {
+    pub zodiac_boundaries: bool,
+    pub zodiac_labels: bool,
+    pub house_cusps: bool,
+    pub house_numbers: bool,
+    pub degree_labels: bool,
+    pub retrograde_markers: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
