@@ -70,13 +70,6 @@ pub(super) fn WorkspaceRail(
                 <button
                     class="button secondary full-width"
                     type="button"
-                    data-mirabile-control=ControlId::WORKSPACE_VIEW_ADD.to_string()
-                    data-mirabile-address=ControlAddress::qualified(ControlId::WORKSPACE_VIEW_ADD, [("mode", "biwheel")]).expect("biwheel address").to_string()
-                    data-mirabile-kind=ControlKind::Action.as_str()
-                    data-mirabile-enabled=move || {
-                        let radix=radix_selection.get(); let comparison=comparison_selection.get();
-                        (!radix.is_empty() && !comparison.is_empty() && radix != comparison).to_string()
-                    }
                     disabled=move || {
                         let radix=radix_selection.get(); let comparison=comparison_selection.get();
                         radix.is_empty() || comparison.is_empty() || radix == comparison
@@ -89,7 +82,7 @@ pub(super) fn WorkspaceRail(
                                 title: "Radix × Comparison".into(), radix, comparison: Some(comparison),
                             },
                             ActionSource::Human,
-                            ControlAddress::qualified(ControlId::WORKSPACE_VIEW_ADD, [("mode", "biwheel")]).ok(),
+                            None,
                         );
                     }
                 >"Create Radix × Comparison"</button>
