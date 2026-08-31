@@ -175,7 +175,16 @@ class CDPClient:
         return value
 
     def screenshot(self, path: Path) -> None:
-        result = self.call("Page.captureScreenshot", {"format": "png"})
+        result: dict[str, Any] | None = None
+        for attempt in range(3):
+            try:
+                result = self.call("Page.captureScreenshot", {"format": "png"})
+                break
+            except CDPError as error:
+                if attempt == 2 or "Internal error" not in str(error):
+                    raise
+                time.sleep(0.1 * (attempt + 1))
+        assert result is not None
         data = result.get("data")
         if not isinstance(data, str):
             raise CDPError("screenshot response omitted PNG data")
