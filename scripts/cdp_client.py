@@ -176,14 +176,14 @@ class CDPClient:
 
     def screenshot(self, path: Path) -> None:
         result: dict[str, Any] | None = None
-        for attempt in range(3):
+        for attempt in range(10):
             try:
                 result = self.call("Page.captureScreenshot", {"format": "png"})
                 break
             except CDPError as error:
-                if attempt == 2 or "Internal error" not in str(error):
+                if attempt == 9 or "Internal error" not in str(error):
                     raise
-                time.sleep(0.1 * (attempt + 1))
+                time.sleep(0.25 * (attempt + 1))
         assert result is not None
         data = result.get("data")
         if not isinstance(data, str):
