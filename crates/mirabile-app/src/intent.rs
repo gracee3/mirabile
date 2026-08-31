@@ -4,6 +4,27 @@ use crate::{
     WorkspaceSwitchAction,
 };
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ViewDisplayMutation {
+    SetPointHidden {
+        slot: ChartSlotId,
+        point_id: PointId,
+        hidden: bool,
+    },
+    SetRingHidden {
+        slot: ChartSlotId,
+        hidden: bool,
+    },
+    SetAspectLayer {
+        layer: mirabile_core::AspectLayerKind,
+        visible: bool,
+    },
+    SetRotation(Option<Angle>),
+    SetWheel(mirabile_core::WheelTemplate),
+    SetAspectSet(mirabile_core::AspectSet),
+    SetTheme(mirabile_core::Theme),
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkspaceBindingSlot {
     DisplayedPoints,
@@ -59,6 +80,19 @@ pub enum WorkspaceCompositionMutation {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppIntent {
+    CreateWheelView {
+        title: String,
+        radix: InstanceId,
+        comparison: Option<InstanceId>,
+    },
+    ApplyViewDisplay {
+        view_id: ViewInstanceId,
+        mutation: ViewDisplayMutation,
+    },
+    ApplyViewDisplayPatch {
+        view_id: ViewInstanceId,
+        patch: crate::ViewDisplayPatchV1,
+    },
     BeginNewChart,
     BeginSavedChartEdit {
         instance_id: InstanceId,
@@ -206,6 +240,19 @@ impl AppIntent {
     #[allow(clippy::too_many_lines)]
     pub fn semantic_summary(&self) -> String {
         match self {
+            Self::CreateWheelView { comparison, .. } => {
+                if comparison.is_some() {
+                    "view.create-biwheel".into()
+                } else {
+                    "view.create-wheel".into()
+                }
+            }
+            Self::ApplyViewDisplay { view_id, mutation } => {
+                format!("view.display[{view_id}]={mutation:?}")
+            }
+            Self::ApplyViewDisplayPatch { view_id, .. } => {
+                format!("view.display-patch[{view_id}]")
+            }
             Self::BeginNewChart | Self::StartChartDraft { .. } => "chart.begin-new".into(),
             Self::BeginSavedChartEdit { instance_id } => {
                 format!("chart.begin-saved-edit[{instance_id}]")

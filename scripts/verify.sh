@@ -72,6 +72,11 @@ run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario aspect-set-contr
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario session-slots-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario diagnostics-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario professional-wheel-control --mode control --viewport 1366x768
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario professional-wheel-control --mode control --viewport 1920x1080
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario professional-wheel-control --mode control --viewport 800x900
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario live-workflow-agent --mode semantic --viewport 1920x1080
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario live-workflow-agent --mode semantic --viewport 1366x768
+run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario live-workflow-agent --mode semantic --viewport 800x900
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario cockpit-manifest-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario resource-authoring-control --mode control
 run "${workspace_dir}/scripts/test-workbench-e2e.sh" --scenario nested-builder-control --mode control

@@ -1,0 +1,21 @@
+{
+  "name": "live-workflow-agent",
+  "steps": [
+    {"command": "wait", "timeout": 20},
+    {"command": "workflow", "workflow": "scripts/workflow-fixtures/live-workflow-v1.json"},
+    {"command": "workflow_wait", "timeout": 60, "expect": {"value.status": "succeeded"}, "bind": "biwheel", "bind_path": "value.created_view_ids.0"},
+    {"command": "workflow_result", "bind": "workspace", "bind_path": "value.created_workspace_ids.0"},
+    {"command": "snapshot", "expect": {"value.workspace.title": "Live Workflow Golden", "value.workspace.dirty": false, "value.view.scene_manifest.ring_count": 2}},
+    {"command": "browser_errors", "expect": {"count": 0}},
+    {"command": "reload"},
+    {"command": "wait", "timeout": 30},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "open_workspace", "resource_id": "${workspace}"}}},
+    {"command": "wait", "timeout": 30},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "resolve_workspace_switch", "resolution": "discard_and_switch"}}},
+    {"command": "wait", "timeout": 30},
+    {"command": "execute", "source": "test", "request": {"action": {"action": "set_active_view", "view_id": "${biwheel}"}}},
+    {"command": "wait", "timeout": 30},
+    {"command": "snapshot", "expect": {"value.workspace.title": "Live Workflow Golden", "value.view.scene_manifest.ring_count": 2, "value.view.title": "Radix × Comparison"}},
+    {"command": "browser_errors", "expect": {"count": 0}}
+  ]
+}

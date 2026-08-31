@@ -272,8 +272,14 @@ fn workspace(ids: DemoIds) -> WorkspaceDocument {
     };
     let view = ViewInstance {
         id: ids.view,
+        title: "Example Natal".into(),
         document: ResourceBinding::Inline { value: document },
         charts: BTreeMap::from([(radix.clone(), ids.chart_instance_a)]),
+        points: None,
+        aspects: None,
+        analysis: None,
+        wheel: None,
+        theme: None,
         overrides: ViewOverrides::default(),
     };
 

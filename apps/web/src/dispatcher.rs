@@ -10,6 +10,11 @@ use mirabile_app::{
     MacroCoordinatorState, MacroDocumentV1, MacroError, MacroRecorder, PendingTransition,
     TraceHistory,
 };
+#[cfg(target_arch = "wasm32")]
+use mirabile_app::{
+    WorkflowActionV1, WorkflowDocumentV1, WorkflowExecutionStatusV1, WorkflowResultV1,
+    WorkflowValidationError,
+};
 use wasm_bindgen::JsCast;
 
 use crate::commands::CommandId;
@@ -19,6 +24,14 @@ struct QueuedAction {
     intent: AppIntent,
     source: ActionSource,
     origin_control: Option<ControlAddress>,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy)]
+enum WorkflowBindingValue {
+    Chart(mirabile_app::InstanceId),
+    View(mirabile_app::ViewInstanceId),
+    Workspace(mirabile_app::ResourceId),
 }
 
 #[derive(Clone)]
@@ -32,6 +45,8 @@ struct CoordinatorState {
     trace: RwSignal<TraceHistory>,
     recorder: RwSignal<Option<MacroRecorder>>,
     macro_document: RwSignal<Option<MacroDocumentV1>>,
+    #[cfg(target_arch = "wasm32")]
+    workflow_result: RwSignal<Option<WorkflowResultV1>>,
 }
 
 impl CoordinatorState {
@@ -269,6 +284,260 @@ impl CoordinatorState {
         self.drain_queue().await;
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn execute_workflow(&self, document: WorkflowDocumentV1) {
+        if self.running.replace(true) {
+            self.workflow_result.set(Some(WorkflowResultV1 {
+                schema_version: mirabile_app::WORKFLOW_DOCUMENT_VERSION,
+                status: WorkflowExecutionStatusV1::Failed,
+                failed_step: None,
+                errors: vec![workflow_error(
+                    None,
+                    "workflow",
+                    "already_running",
+                    "Only one workflow may run at once",
+                )],
+                final_projection: Some(self.model.get_untracked().version),
+                created_chart_ids: Vec::new(),
+                created_definition_ids: Vec::new(),
+                created_view_ids: Vec::new(),
+                created_workspace_ids: Vec::new(),
+            }));
+            return;
+        }
+        self.workflow_result.set(Some(WorkflowResultV1::running(
+            self.model.get_untracked().version,
+        )));
+        let state = self.clone();
+        leptos::task::spawn_local(async move {
+            state.run_workflow(document).await;
+            state.running.set(false);
+            state.coordinator.update(|value| {
+                value.running = false;
+                value.current_source = None;
+            });
+            state.drain_queue().await;
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn run_workflow(&self, document: WorkflowDocumentV1) {
+        let mut bindings = std::collections::BTreeMap::<String, WorkflowBindingValue>::new();
+        for step in document.steps {
+            let result = self.run_workflow_step(&step.action, &bindings).await;
+            match result {
+                Ok(binding) => {
+                    bindings.insert(step.name.clone(), binding);
+                    self.workflow_result.update(|result| {
+                        if let Some(result) = result {
+                            result.final_projection = Some(self.model.get_untracked().version);
+                            match binding {
+                                WorkflowBindingValue::Chart(id)
+                                    if !result.created_chart_ids.contains(&id) =>
+                                {
+                                    result.created_chart_ids.push(id)
+                                }
+                                WorkflowBindingValue::View(id)
+                                    if !result.created_view_ids.contains(&id) =>
+                                {
+                                    result.created_view_ids.push(id)
+                                }
+                                WorkflowBindingValue::Workspace(id)
+                                    if !result.created_workspace_ids.contains(&id) =>
+                                {
+                                    result.created_workspace_ids.push(id)
+                                }
+                                _ => {}
+                            }
+                            if let WorkflowBindingValue::Chart(instance_id) = binding
+                                && let Some(chart) = self
+                                    .model
+                                    .get_untracked()
+                                    .workspace
+                                    .charts
+                                    .iter()
+                                    .find(|chart| chart.instance_id == instance_id)
+                                && let mirabile_app::ChartPersistence::Saved { definition_id } =
+                                    chart.persistence
+                                && !result.created_definition_ids.contains(&definition_id)
+                            {
+                                result.created_definition_ids.push(definition_id);
+                            }
+                        }
+                    });
+                }
+                Err(message) => {
+                    self.workflow_result.update(|result| {
+                        if let Some(result) = result {
+                            result.status = WorkflowExecutionStatusV1::Failed;
+                            result.failed_step = Some(step.name.clone());
+                            result.errors.push(workflow_error(
+                                Some(&step.name),
+                                "action",
+                                "execution_failed",
+                                message,
+                            ));
+                            result.final_projection = Some(self.model.get_untracked().version);
+                        }
+                    });
+                    return;
+                }
+            }
+        }
+        self.workflow_result.update(|result| {
+            if let Some(result) = result {
+                result.status = WorkflowExecutionStatusV1::Succeeded;
+                result.final_projection = Some(self.model.get_untracked().version);
+            }
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn run_workflow_step(
+        &self,
+        action: &WorkflowActionV1,
+        bindings: &std::collections::BTreeMap<String, WorkflowBindingValue>,
+    ) -> Result<WorkflowBindingValue, String> {
+        match action {
+            WorkflowActionV1::CreateChart { input, save } => {
+                self.workflow_intent(AppIntent::BeginNewChart).await?;
+                let instance_id = match self
+                    .model
+                    .get_untracked()
+                    .chart_editor
+                    .as_ref()
+                    .map(|editor| &editor.target)
+                {
+                    Some(mirabile_app::ChartEditorTarget::New { instance_id }) => *instance_id,
+                    _ => {
+                        return Err("New chart editor did not expose its stable instance ID".into());
+                    }
+                };
+                for intent in input.intents().map_err(|error| error.message)? {
+                    self.workflow_intent(intent).await?;
+                }
+                if *save {
+                    self.workflow_intent(AppIntent::SaveChartEditor).await?;
+                }
+                Ok(WorkflowBindingValue::Chart(instance_id))
+            }
+            WorkflowActionV1::EditChart { chart, patch, save } => {
+                let chart = resolve_chart(chart, bindings)?;
+                self.workflow_intent(AppIntent::BeginSavedChartEdit { instance_id: chart })
+                    .await?;
+                for intent in chart_patch_intents(patch, &self.model.get_untracked())? {
+                    self.workflow_intent(intent).await?;
+                }
+                if *save {
+                    self.workflow_intent(AppIntent::SaveChartEditor).await?;
+                }
+                Ok(WorkflowBindingValue::Chart(chart))
+            }
+            WorkflowActionV1::CreateBiwheelView {
+                title,
+                radix,
+                comparison,
+            } => {
+                let radix = resolve_chart(radix, bindings)?;
+                let comparison = resolve_chart(comparison, bindings)?;
+                self.workflow_intent(AppIntent::CreateWheelView {
+                    title: title.clone(),
+                    radix,
+                    comparison: Some(comparison),
+                })
+                .await?;
+                self.model
+                    .get_untracked()
+                    .workspace
+                    .active_view
+                    .map(WorkflowBindingValue::View)
+                    .ok_or_else(|| "Created view was not activated".into())
+            }
+            WorkflowActionV1::ConfigureViewDisplay { view, patch } => {
+                let view = resolve_view(view, bindings)?;
+                self.workflow_intent(AppIntent::ApplyViewDisplayPatch {
+                    view_id: view,
+                    patch: patch.clone(),
+                })
+                .await?;
+                Ok(WorkflowBindingValue::View(view))
+            }
+            WorkflowActionV1::SaveWorkspace {
+                title,
+                description,
+                tags,
+            } => {
+                let model = self.model.get_untracked();
+                if model.workspace.title != *title {
+                    self.workflow_intent(AppIntent::RenameWorkspace {
+                        title: title.clone(),
+                    })
+                    .await?;
+                }
+                if model.workspace.description != *description {
+                    self.workflow_intent(AppIntent::SetWorkspaceDescription {
+                        description: description.clone(),
+                    })
+                    .await?;
+                }
+                if model.workspace.tags != *tags {
+                    self.workflow_intent(AppIntent::SetWorkspaceTags { tags: tags.clone() })
+                        .await?;
+                }
+                self.workflow_intent(AppIntent::SaveWorkspace).await?;
+                self.model
+                    .get_untracked()
+                    .workspace
+                    .document_id
+                    .map(WorkflowBindingValue::Workspace)
+                    .ok_or_else(|| "Workspace save completed without a resource ID".into())
+            }
+            WorkflowActionV1::OpenWorkspace {
+                workspace,
+                dirty_policy,
+            } => {
+                let workspace = resolve_workspace(workspace, bindings)?;
+                if self.model.get_untracked().workspace.document_dirty {
+                    match dirty_policy {
+                        mirabile_app::DirtyPolicyV1::Reject => {
+                            return Err(
+                                "Workspace has unsaved changes and dirty_policy is reject".into()
+                            );
+                        }
+                        mirabile_app::DirtyPolicyV1::Save => {
+                            self.workflow_intent(AppIntent::SaveWorkspace).await?
+                        }
+                        mirabile_app::DirtyPolicyV1::Discard => {
+                            self.workflow_intent(AppIntent::DiscardWorkspaceChanges)
+                                .await?
+                        }
+                    }
+                }
+                self.workflow_intent(AppIntent::OpenWorkspace {
+                    resource_id: workspace,
+                })
+                .await?;
+                Ok(WorkflowBindingValue::Workspace(workspace))
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn workflow_intent(&self, intent: AppIntent) -> Result<(), String> {
+        let outcome = self
+            .execute_action(QueuedAction {
+                intent,
+                source: ActionSource::Agent,
+                origin_control: None,
+            })
+            .await;
+        match outcome {
+            ExecutionOutcome::Settled => Ok(()),
+            ExecutionOutcome::Rejected { message, .. }
+            | ExecutionOutcome::Failed { message, .. } => Err(message),
+        }
+    }
+
     fn fail_macro(&self, step: usize, message: String, origin: Option<ControlAddress>) {
         self.running.set(false);
         self.coordinator.update(|state| {
@@ -353,6 +622,8 @@ impl WorkbenchCoordinator {
                 trace: RwSignal::new(TraceHistory::default()),
                 recorder: RwSignal::new(None),
                 macro_document: RwSignal::new(None),
+                #[cfg(target_arch = "wasm32")]
+                workflow_result: RwSignal::new(None),
             }),
         }
     }
@@ -465,6 +736,189 @@ impl WorkbenchCoordinator {
         self.stored
             .with_value(|coordinator| coordinator.replay(document));
     }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn execute_workflow(self, document: WorkflowDocumentV1) {
+        self.stored
+            .with_value(|coordinator| coordinator.execute_workflow(document));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn workflow_result(self) -> Option<WorkflowResultV1> {
+        self.stored
+            .with_value(|coordinator| coordinator.workflow_result.get_untracked())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn reject_workflow(self, errors: Vec<WorkflowValidationError>) {
+        self.stored.with_value(|coordinator| {
+            coordinator.workflow_result.set(Some(WorkflowResultV1 {
+                schema_version: mirabile_app::WORKFLOW_DOCUMENT_VERSION,
+                status: WorkflowExecutionStatusV1::Failed,
+                failed_step: errors.first().and_then(|error| error.step.clone()),
+                errors,
+                final_projection: Some(coordinator.model.get_untracked().version),
+                created_chart_ids: Vec::new(),
+                created_definition_ids: Vec::new(),
+                created_view_ids: Vec::new(),
+                created_workspace_ids: Vec::new(),
+            }));
+        });
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn workflow_error(
+    step: Option<&str>,
+    field: &str,
+    code: &str,
+    message: impl Into<String>,
+) -> WorkflowValidationError {
+    WorkflowValidationError {
+        step: step.map(str::to_owned),
+        field: field.into(),
+        code: code.into(),
+        message: message.into(),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn resolve_chart(
+    value: &mirabile_app::ChartReferenceV1,
+    bindings: &std::collections::BTreeMap<String, WorkflowBindingValue>,
+) -> Result<mirabile_app::InstanceId, String> {
+    match value {
+        mirabile_app::ChartReferenceV1::Id(id) => Ok(*id),
+        mirabile_app::ChartReferenceV1::Binding(name) => match bindings.get(name) {
+            Some(WorkflowBindingValue::Chart(id)) => Ok(*id),
+            _ => Err(format!("Chart binding {name} was not resolved")),
+        },
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn resolve_view(
+    value: &mirabile_app::ViewReferenceV1,
+    bindings: &std::collections::BTreeMap<String, WorkflowBindingValue>,
+) -> Result<mirabile_app::ViewInstanceId, String> {
+    match value {
+        mirabile_app::ViewReferenceV1::Id(id) => Ok(*id),
+        mirabile_app::ViewReferenceV1::Binding(name) => match bindings.get(name) {
+            Some(WorkflowBindingValue::View(id)) => Ok(*id),
+            _ => Err(format!("View binding {name} was not resolved")),
+        },
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn resolve_workspace(
+    value: &mirabile_app::WorkspaceReferenceV1,
+    bindings: &std::collections::BTreeMap<String, WorkflowBindingValue>,
+) -> Result<mirabile_app::ResourceId, String> {
+    match value {
+        mirabile_app::WorkspaceReferenceV1::Id(id) => Ok(*id),
+        mirabile_app::WorkspaceReferenceV1::Binding(name) => match bindings.get(name) {
+            Some(WorkflowBindingValue::Workspace(id)) => Ok(*id),
+            _ => Err(format!("Workspace binding {name} was not resolved")),
+        },
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn chart_patch_intents(
+    patch: &mirabile_app::ChartInputPatchV1,
+    model: &AppReadModel,
+) -> Result<Vec<AppIntent>, String> {
+    use mirabile_app::{ChartMutation, ChartTimezone};
+    let mut intents = Vec::new();
+    if let Some(value) = &patch.title {
+        intents.push(AppIntent::ApplyChartMutation(ChartMutation::SetTitle(
+            value.clone(),
+        )));
+    }
+    if let Some(value) = &patch.event_kind {
+        intents.push(AppIntent::ApplyChartMutation(ChartMutation::SetEventKind(
+            value.clone(),
+        )));
+    }
+    if let Some(value) = &patch.subject {
+        intents.push(AppIntent::ApplyChartMutation(
+            ChartMutation::SetSubjectName(value.clone()),
+        ));
+    }
+    if let Some(value) = patch.date {
+        intents.push(AppIntent::ApplyChartMutation(ChartMutation::SetCivilDate(
+            value,
+        )));
+    }
+    if let Some(value) = patch.time {
+        intents.push(AppIntent::ApplyChartMutation(ChartMutation::SetCivilTime(
+            value,
+        )));
+    }
+    if let Some(value) = &patch.timezone {
+        let timezone = match value {
+            mirabile_app::WorkflowTimezoneV1::Utc => ChartTimezone::UniversalTime,
+            mirabile_app::WorkflowTimezoneV1::FixedOffset { seconds } => {
+                ChartTimezone::FixedOffset(
+                    mirabile_app::Offset::from_seconds(*seconds)
+                        .map_err(|error| error.to_string())?,
+                )
+            }
+        };
+        intents.push(AppIntent::ApplyChartMutation(ChartMutation::SetTimezone(
+            timezone,
+        )));
+    }
+    if let Some(value) = &patch.place_label {
+        intents.push(AppIntent::ApplyChartMutation(
+            ChartMutation::SetLocationName(value.clone()),
+        ));
+    }
+    if let Some(value) = &patch.country {
+        intents.push(AppIntent::ApplyChartMutation(
+            ChartMutation::SetCountryRegion(value.clone()),
+        ));
+    }
+    if let Some(value) = patch.latitude {
+        intents.push(AppIntent::ApplyChartMutation(ChartMutation::SetLatitude(
+            Some(value),
+        )));
+    }
+    if let Some(value) = patch.longitude {
+        intents.push(AppIntent::ApplyChartMutation(ChartMutation::SetLongitude(
+            Some(value),
+        )));
+    }
+    if let Some(value) = &patch.zodiac {
+        intents.push(AppIntent::ApplyChartMutation(ChartMutation::SetZodiac(
+            value.clone(),
+        )));
+    }
+    if let Some(value) = patch.houses {
+        intents.push(AppIntent::ApplyChartMutation(
+            ChartMutation::SetHouseSystem(value),
+        ));
+    }
+    if let Some(value) = patch.coordinates {
+        intents.push(AppIntent::ApplyChartMutation(
+            ChartMutation::SetCoordinateSystem(value),
+        ));
+    }
+    if let Some(value) = &patch.corrections {
+        let mut calculation = model
+            .chart_editor
+            .as_ref()
+            .ok_or_else(|| "Chart editor is unavailable".to_owned())?
+            .fields
+            .calculation
+            .clone();
+        calculation.corrections = value.clone();
+        intents.push(AppIntent::ApplyChartMutation(
+            ChartMutation::SetCalculation(calculation),
+        ));
+    }
+    Ok(intents)
 }
 
 fn outcome_message(outcome: &ExecutionOutcome) -> String {

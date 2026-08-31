@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "steps": [
+    {
+      "name": "j2000",
+      "action": "create_chart",
+      "save": true,
+      "input": {
+        "title": "J2000 Oracle",
+        "event_kind": "event",
+        "subject": null,
+        "date": {"year": 2000, "month": 1, "day": 1},
+        "time": {"hour": 12, "minute": 0, "second": 0},
+        "timezone": {"kind": "utc"},
+        "place_label": "J2000 Oracle",
+        "country": null,
+        "latitude": 28.0,
+        "longitude": 73.85,
+        "zodiac": {"type": "tropical"},
+        "houses": "placidus",
+        "coordinates": "geocentric",
+        "corrections": {"aberration": true, "light_time": true, "nutation": true}
+      }
+    },
+    {
+      "name": "j2000_equal",
+      "action": "edit_chart",
+      "chart": {"ref": "binding", "value": "j2000"},
+      "patch": {"houses": "equal"},
+      "save": true
+    },
+    {
+      "name": "comparison",
+      "action": "create_chart",
+      "save": true,
+      "input": {
+        "title": "New York Comparison",
+        "event_kind": "event",
+        "subject": null,
+        "date": {"year": 1985, "month": 7, "day": 4},
+        "time": {"hour": 9, "minute": 30, "second": 0},
+        "timezone": {"kind": "fixed_offset", "seconds": -14400},
+        "place_label": "New York",
+        "country": "US",
+        "latitude": 40.7128,
+        "longitude": -74.006,
+        "zodiac": {"type": "tropical"},
+        "houses": "equal",
+        "coordinates": "geocentric",
+        "corrections": {"aberration": true, "light_time": true, "nutation": true}
+      }
+    },
+    {
+      "name": "biwheel",
+      "action": "create_biwheel_view",
+      "title": "Radix × Comparison",
+      "radix": {"ref": "binding", "value": "j2000_equal"},
+      "comparison": {"ref": "binding", "value": "comparison"}
+    },
+    {
+      "name": "configured_biwheel",
+      "action": "configure_view_display",
+      "view": {"ref": "binding", "value": "biwheel"},
+      "patch": {
+        "point_visibility": {"comparison": {"hidden": {"sun": true}}},
+        "ring_visibility": {"radix": true, "comparison": true},
+        "rotation_degrees": 12.0,
+        "zodiac_boundaries": true,
+        "zodiac_labels": true,
+        "house_cusps": true,
+        "house_numbers": true,
+        "degree_labels": true,
+        "retrograde_markers": true,
+        "radix_intra_aspects": true,
+        "comparison_intra_aspects": true,
+        "cross_chart_aspects": true,
+        "aspect_orbs_degrees": {"square": 3.0},
+        "theme": {"kind": "high_contrast_light"}
+      }
+    },
+    {
+      "name": "saved_workspace",
+      "action": "save_workspace",
+      "title": "Live Workflow Golden",
+      "description": "Human and agent parity fixture",
+      "tags": ["golden", "live-workflow"]
+    }
+  ]
+}

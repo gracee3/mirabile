@@ -200,6 +200,7 @@ pub enum MacroQueryTreeMutationV1 {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "mutation", content = "value", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum MacroResourceMutationV1 {
     ChartRecordEventKind(crate::EventKind),
     ChartRecordSubject(Option<mirabile_core::SubjectInfo>),
@@ -831,7 +832,10 @@ impl SemanticActionV1 {
             }
             AppIntent::SaveResourceDraft { kind } => Self::SaveResourceDraft { kind: *kind },
             AppIntent::CancelResourceDraft { kind } => Self::CancelResourceDraft { kind: *kind },
-            AppIntent::StartChartDraft { .. }
+            AppIntent::CreateWheelView { .. }
+            | AppIntent::ApplyViewDisplay { .. }
+            | AppIntent::ApplyViewDisplayPatch { .. }
+            | AppIntent::StartChartDraft { .. }
             | AppIntent::SaveChartDraft { .. }
             | AppIntent::CancelChartDraft { .. }
             | AppIntent::SelectRepositoryResource { .. }

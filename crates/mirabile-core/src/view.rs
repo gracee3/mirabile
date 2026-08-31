@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Angle, ChartSlotId, InstanceId, PointId, ResourceBinding, ViewInstanceId};
+use crate::{
+    Angle, AspectSet, ChartSlotId, InstanceId, PointId, PointSet, ResourceBinding, ViewInstanceId,
+};
 use crate::{
     DomainValidate, DomainValidationError, DomainValidationIssue,
     validation::{finite, nonempty, positive},
@@ -168,15 +170,83 @@ pub struct PageLayout {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ViewInstance {
     pub id: ViewInstanceId,
+    #[serde(default)]
+    pub title: String,
     pub document: ResourceBinding<ViewDocument>,
     pub charts: BTreeMap<ChartSlotId, InstanceId>,
+    #[serde(default)]
+    pub points: Option<ResourceBinding<PointSet>>,
+    #[serde(default)]
+    pub aspects: Option<ResourceBinding<AspectSet>>,
+    #[serde(default)]
+    pub analysis: Option<ResourceBinding<AnalysisProfile>>,
+    #[serde(default)]
+    pub wheel: Option<ResourceBinding<WheelTemplate>>,
+    #[serde(default)]
+    pub theme: Option<ResourceBinding<Theme>>,
+    #[serde(default)]
     pub overrides: ViewOverrides,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ViewOverrides {
     pub rotation: Option<Angle>,
+    /// Legacy global fallback. New views use `hidden_points_by_slot`.
+    #[serde(default)]
     pub hidden_points: Vec<PointId>,
+    #[serde(default)]
+    pub hidden_points_by_slot: BTreeMap<ChartSlotId, Vec<PointId>>,
+    #[serde(default)]
+    pub hidden_rings: Vec<ChartSlotId>,
+    #[serde(default)]
+    pub aspect_layers: AspectLayerVisibility,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AspectLayerVisibility {
+    pub radix_intra: bool,
+    pub comparison_intra: bool,
+    pub cross_chart: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AspectLayerKind {
+    RadixIntra,
+    ComparisonIntra,
+    CrossChart,
+}
+
+impl Default for AspectLayerVisibility {
+    fn default() -> Self {
+        Self {
+            radix_intra: true,
+            comparison_intra: false,
+            cross_chart: false,
+        }
+    }
+}
+
+impl Theme {
+    pub fn mirabile_dark() -> Self {
+        Self {
+            background: "#121416".into(),
+            foreground: "#f4f1e8".into(),
+            muted: "#7f8790".into(),
+            accent: "#c79a5b".into(),
+            aspect_color: "#a96772".into(),
+        }
+    }
+
+    pub fn high_contrast_light() -> Self {
+        Self {
+            background: "#ffffff".into(),
+            foreground: "#111111".into(),
+            muted: "#555555".into(),
+            accent: "#7a4b00".into(),
+            aspect_color: "#8b1e3f".into(),
+        }
+    }
 }
 
 impl DomainValidate for AnalysisProfile {

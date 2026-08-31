@@ -257,13 +257,42 @@ kbd {
 
 .workstation {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(12rem, 14.5rem) minmax(12rem, 14.5rem);
+  grid-template-areas: "workspace wheel inspector";
+  grid-template-columns: minmax(14rem, 17rem) minmax(0, 1fr) minmax(15rem, 19rem);
   gap: 0.75rem;
   align-items: start;
   min-height: max(39rem, calc(100vh - 6.3rem));
   height: auto;
   padding: 0.75rem;
   background: #060e18;
+}
+
+.professional-workstation > .view-host { grid-area: wheel; }
+.professional-workstation > .workspace-surface { grid-area: workspace; }
+.professional-workstation > .inspector-surface { grid-area: inspector; }
+
+.biwheel-creator,
+.display-ring,
+.display-advanced {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.7rem;
+  background: var(--surface-2);
+}
+
+.inspector-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin-top: 0.65rem;
+}
+
+.inspector-tabs [aria-selected="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .surface-drawer,
@@ -1004,19 +1033,19 @@ kbd {
 }
 
 .scene-stroke-foreground {
-  stroke: #e5d8bf;
+  stroke: var(--scene-foreground, #e5d8bf);
 }
 
 .scene-stroke-muted {
-  stroke: #3c566e;
+  stroke: var(--scene-muted, #3c566e);
 }
 
 .scene-stroke-accent {
-  stroke: var(--cyan);
+  stroke: var(--scene-accent, var(--cyan));
 }
 
 .scene-stroke-aspect {
-  stroke: #c99ba5;
+  stroke: var(--scene-aspect, #c99ba5);
   opacity: 0.75;
 }
 
@@ -1025,15 +1054,15 @@ kbd {
 }
 
 .scene-fill-background {
-  fill: #091522;
+  fill: var(--scene-background, #091522);
 }
 
 .scene-fill-foreground {
-  fill: #f2eadc;
+  fill: var(--scene-foreground, #f2eadc);
 }
 
 .scene-fill-accent {
-  fill: var(--accent);
+  fill: var(--scene-accent, var(--accent));
 }
 
 .zodiac-boundary {
@@ -1084,7 +1113,7 @@ kbd {
 }
 
 .point-label {
-  fill: #f2eadc;
+  fill: var(--scene-foreground, #f2eadc);
   font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", system-ui, sans-serif;
   font-size: 9.5px !important;
   font-weight: 620 !important;
@@ -1104,7 +1133,7 @@ kbd {
 
 .aspect-style-opposition,
 .aspect-style-square {
-  stroke: #c98d98;
+  stroke: var(--scene-aspect, #c98d98);
 }
 
 .aspect-style-trine,
@@ -1411,6 +1440,7 @@ input[type="text"] {
   }
 
   .workstation {
+    grid-template-areas: "wheel" "workspace" "inspector";
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
   }

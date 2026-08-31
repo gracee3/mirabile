@@ -405,6 +405,17 @@ where
         }
 
         match intent {
+            AppIntent::CreateWheelView {
+                title,
+                radix,
+                comparison,
+            } => self.create_wheel_view(&title, radix, comparison)?,
+            AppIntent::ApplyViewDisplay { view_id, mutation } => {
+                self.apply_view_display(view_id, mutation)?;
+            }
+            AppIntent::ApplyViewDisplayPatch { view_id, patch } => {
+                self.apply_view_display_patch(view_id, patch)?;
+            }
             AppIntent::BeginNewChart => self.begin_new_chart()?,
             AppIntent::BeginSavedChartEdit { instance_id } => {
                 self.begin_saved_chart_edit(instance_id)?;
@@ -588,6 +599,7 @@ struct ViewRuntime {
     computation: ViewComputationState,
     expected: Option<ExpectedCalculation>,
     last_expected: Option<ExpectedCalculation>,
+    multi: Option<MultiViewRuntime>,
 }
 
 impl Default for ViewRuntime {
@@ -599,6 +611,7 @@ impl Default for ViewRuntime {
             computation: ViewComputationState::Loading,
             expected: None,
             last_expected: None,
+            multi: None,
         }
     }
 }
@@ -612,10 +625,13 @@ struct ExpectedCalculation {
 
 struct PendingViewCalculation {
     view_id: ViewInstanceId,
+    slot: Option<mirabile_core::ChartSlotId>,
+    generation: u64,
     prepared: PreparedCalculation,
     plan: ViewCalculationPlan,
 }
 
+#[derive(Clone)]
 struct ViewCalculationPlan {
     displayed_points: PointSet,
     aspected_points: PointSet,
@@ -624,6 +640,15 @@ struct ViewCalculationPlan {
     wheel: WheelTemplate,
     theme: Theme,
     rotation: Option<mirabile_core::Angle>,
+}
+
+#[derive(Clone)]
+struct MultiViewRuntime {
+    generation: u64,
+    expected: BTreeMap<mirabile_core::ChartSlotId, ExpectedCalculation>,
+    prepared: BTreeMap<mirabile_core::ChartSlotId, PreparedCalculation>,
+    calculations: BTreeMap<mirabile_core::ChartSlotId, mirabile_engine::CalculationValue>,
+    plan: ViewCalculationPlan,
 }
 
 struct AspectSetEditor {
@@ -668,6 +693,7 @@ impl AspectSetEditor {
 
 enum PendingWork {
     CompleteCachedView(Box<PendingCachedView>),
+    CompleteCachedMulti(Box<PendingCachedMulti>),
     SaveAspectSet {
         expected_revision: Option<Revision>,
         next: ResourceEnvelope<AspectSet>,
@@ -701,6 +727,14 @@ struct PendingCachedView {
     expected: ExpectedCalculation,
     prepared: PreparedCalculation,
     plan: ViewCalculationPlan,
+    calculation: mirabile_engine::CalculationValue,
+}
+
+struct PendingCachedMulti {
+    view_id: ViewInstanceId,
+    slot: mirabile_core::ChartSlotId,
+    generation: u64,
+    expected: ExpectedCalculation,
     calculation: mirabile_engine::CalculationValue,
 }
 
@@ -753,6 +787,9 @@ fn resource_title(
 }
 
 fn view_title(view: &ViewInstance, catalog: &Catalog) -> AppResult<String> {
+    if !view.title.trim().is_empty() {
+        return Ok(view.title.clone());
+    }
     match &view.document {
         ResourceBinding::Inline { .. } => Ok("Single wheel".into()),
         ResourceBinding::Follow { id } => resource_title(catalog, *id, None),

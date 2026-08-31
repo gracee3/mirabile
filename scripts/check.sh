@@ -25,6 +25,7 @@ run cargo fmt --all -- --check
 run cargo test --workspace
 run cargo clippy --workspace --all-targets -- -D warnings
 run python3 -m unittest scripts/test_cdp_client.py
+run python3 -m unittest discover -s scripts -p 'test_workflow_assertions.py'
 run git diff --check
 run git diff --cached --check
 

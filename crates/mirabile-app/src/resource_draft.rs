@@ -97,6 +97,7 @@ pub enum ResourceMetadataMutation {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum ResourceMutation {
     ChartRecord(ChartRecordMutation),
     ChartDefinition(ChartDefinitionMutation),
@@ -311,6 +312,7 @@ pub enum QueryTreeMutation {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum WorkspaceDocumentMutation {
     Metadata(ResourceMetadataMutation),
     ChartInstances(DraftListMutation<WorkspaceDocumentChart>),
