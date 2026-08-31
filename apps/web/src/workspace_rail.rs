@@ -41,15 +41,11 @@ pub(super) fn WorkspaceRail(
             <button
                 class="button primary full-width new-chart-primary"
                 type="button"
-                data-mirabile-control=ControlId::CHART_NEW.to_string()
-                data-mirabile-address=ControlAddress::new(ControlId::CHART_NEW).to_string()
-                data-mirabile-kind=ControlKind::Action.as_str()
-                data-mirabile-enabled=move || model.get().availability(AppAction::BeginNewChart).is_enabled().to_string()
                 disabled=move || !model.get().availability(AppAction::BeginNewChart).is_enabled()
                 on:click=move |_| dispatcher.dispatch_from(
                     AppIntent::BeginNewChart,
                     ActionSource::Human,
-                    Some(ControlAddress::new(ControlId::CHART_NEW)),
+                    None,
                 )
             >"＋ New Chart"</button>
 
