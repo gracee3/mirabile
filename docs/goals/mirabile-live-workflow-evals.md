@@ -50,5 +50,9 @@
 - `live-workflow-agent` at 1366x768: passed create/configure/save/reload/reopen with two owned rings,
   radix houses/angles, comparison retrograde Jupiter, per-slot point visibility, layer ownership,
   and zero browser errors.
-- Exact-head disk-gated `scripts/verify.sh`, final commit identity, remote branch identity, and PR head
-  are recorded at handoff after those gates complete.
+- Exact-head `scripts/verify.sh` reached the browser suite and exposed two control-discovery
+  regressions; both were corrected and their focused native control journeys passed. Subsequent
+  complete retries were blocked by the host Snap Chromium process exiting with `SIGTRAP` even for
+  the unchanged smoke scenario (with and without screenshot capture), with matching system
+  coredumps. The branch must remain draft until that environmental browser gate is rerun cleanly.
+- Final local commit identity, remote branch identity, and draft PR head are verified at handoff.
